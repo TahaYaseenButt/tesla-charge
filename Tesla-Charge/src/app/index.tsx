@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
   Alert,
   Platform,
   Image,
+  Animated,
+  Easing,
 } from 'react-native';
 import { doc, onSnapshot, collection, addDoc, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -35,8 +37,100 @@ export default function HomeScreen() {
   const [selectedConnector, setSelectedConnector] = useState<number>(1);
   const [qrActionMsg, setQrActionMsg] = useState<string | null>(null);
 
-  // Manual state override for preview testing (or 'auto' for live charger sync)
+  // Manual state override for car positions (or 'auto' for live charger sync)
   const [stateMode, setStateMode] = useState<'auto' | CarState>('auto');
+
+  // Manual motion graphics state preview (or 'live' for real-time hardware status)
+  const [motionPreview, setMotionPreview] = useState<'live' | 'Charging' | 'Preparing' | 'SuspendedEV' | 'Finishing' | 'Available'>('live');
+
+  // Motion Graphics Animation Values
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const ringAnim1 = useRef(new Animated.Value(0)).current;
+  const ringAnim2 = useRef(new Animated.Value(0)).current;
+  const scanAnim = useRef(new Animated.Value(0)).current;
+  const flowAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // 1. Continuous Breathing Pulse
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 1200,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    // 2. Continuous Rotation
+    Animated.loop(
+      Animated.timing(rotateAnim, {
+        toValue: 1,
+        duration: 4000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+
+    // 3. Concentric Ripple Ring 1
+    Animated.loop(
+      Animated.timing(ringAnim1, {
+        toValue: 1,
+        duration: 2400,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      })
+    ).start();
+
+    // 4. Staggered Ripple Ring 2
+    Animated.loop(
+      Animated.sequence([
+        Animated.delay(1200),
+        Animated.timing(ringAnim2, {
+          toValue: 1,
+          duration: 2400,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    // 5. Horizontal Radar Sweep (for Preparing)
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanAnim, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scanAnim, {
+          toValue: -1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    // 6. Energy Flow Stream
+    Animated.loop(
+      Animated.timing(flowAnim, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, []);
 
   // 1. Listen to the Charger document in real-time
   useEffect(() => {
@@ -109,7 +203,7 @@ export default function HomeScreen() {
     autoState = 'right';
   }
 
-  // Active state to render (uses manual override if selected, else auto)
+  // Active state to render
   const activeState: CarState = stateMode === 'auto' ? autoState : stateMode;
 
   const stateTitles: Record<CarState, string> = {
@@ -121,6 +215,103 @@ export default function HomeScreen() {
 
   const isOnline = chargerData?.status === 'Online';
   const isCharging = activeState !== 'idle' || activeTxData !== null;
+
+  // Determine effective motion graphic status
+  const effectiveStatus = motionPreview === 'live' ? status1 : motionPreview;
+
+  // Motion Graphics configuration per OCPP state
+  const STATUS_THEMES: Record<string, {
+    color: string;
+    secondaryColor: string;
+    glowColor: string;
+    softBg: string;
+    borderColor: string;
+    badgeText: string;
+    subText: string;
+    icon: string;
+  }> = {
+    Charging: {
+      color: '#10B981',
+      secondaryColor: '#06B6D4',
+      glowColor: 'rgba(16, 185, 129, 0.35)',
+      softBg: '#ECFDF5',
+      borderColor: '#A7F3D0',
+      badgeText: '⚡ ACTIVE CHARGING',
+      subText: 'High-voltage energy stream flowing • 21kW 3-Phase',
+      icon: '⚡',
+    },
+    Preparing: {
+      color: '#F59E0B',
+      secondaryColor: '#FBBF24',
+      glowColor: 'rgba(245, 158, 11, 0.35)',
+      softBg: '#FFFBEB',
+      borderColor: '#FDE68A',
+      badgeText: '🔄 VEHICLE HANDSHAKE',
+      subText: 'Pilot signal active • Checking cable lock & battery BMS',
+      icon: '🔄',
+    },
+    SuspendedEV: {
+      color: '#8B5CF6',
+      secondaryColor: '#A78BFA',
+      glowColor: 'rgba(139, 92, 246, 0.35)',
+      softBg: '#F5F3FF',
+      borderColor: '#DDD6FE',
+      badgeText: '⏸️ SUSPENDED BY EV',
+      subText: 'Vehicle target reached or onboard BMS paused input',
+      icon: '⏸️',
+    },
+    SuspendedEVSE: {
+      color: '#8B5CF6',
+      secondaryColor: '#A78BFA',
+      glowColor: 'rgba(139, 92, 246, 0.35)',
+      softBg: '#F5F3FF',
+      borderColor: '#DDD6FE',
+      badgeText: '⏸️ SUSPENDED BY STATION',
+      subText: 'Station holds power delivery on pilot line',
+      icon: '⏸️',
+    },
+    Finishing: {
+      color: '#0284C7',
+      secondaryColor: '#38BDF8',
+      glowColor: 'rgba(2, 132, 199, 0.35)',
+      softBg: '#F0F9FF',
+      borderColor: '#BAE6FD',
+      badgeText: '🏁 SESSION FINISHING',
+      subText: 'Current ramped down • Unlocking connector solenoid',
+      icon: '🏁',
+    },
+    Available: {
+      color: '#059669',
+      secondaryColor: '#64748B',
+      glowColor: 'rgba(16, 185, 129, 0.15)',
+      softBg: '#F8FAFC',
+      borderColor: '#E2E8F0',
+      badgeText: '🟢 STATION READY',
+      subText: 'Connector available • Plug in vehicle to begin',
+      icon: '🟢',
+    },
+    Faulted: {
+      color: '#EF4444',
+      secondaryColor: '#F87171',
+      glowColor: 'rgba(239, 68, 68, 0.4)',
+      softBg: '#FEF2F2',
+      borderColor: '#FECACA',
+      badgeText: '⚠️ STATION FAULTED',
+      subText: 'Safety cutoff active • Check connector cable',
+      icon: '⚠️',
+    },
+  };
+
+  const currentTheme = STATUS_THEMES[effectiveStatus] || STATUS_THEMES.Available;
+
+  // Interpolations for motion graphics
+  const ringScale1 = ringAnim1.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.45] });
+  const ringOpacity1 = ringAnim1.interpolate({ inputRange: [0, 0.25, 0.8, 1], outputRange: [0, 0.65, 0.2, 0] });
+  const ringScale2 = ringAnim2.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.45] });
+  const ringOpacity2 = ringAnim2.interpolate({ inputRange: [0, 0.25, 0.8, 1], outputRange: [0, 0.55, 0.15, 0] });
+  const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.05] });
+  const pulseGlow = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.85] });
+  const scanTranslateX = scanAnim.interpolate({ inputRange: [-1, 1], outputRange: [-120, 120] });
 
   // Live telemetry metrics from physical hardware
   const tel1 = connector1Data?.telemetry;
@@ -244,18 +435,123 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* 3D Visualizer with 4 State Images */}
+      {/* 3D Visualizer with 4 State Images & Motion Graphics */}
       <View style={styles.visualizerCard}>
-        <View style={styles.visualizerHeader}>
-          <Text style={styles.stateTag}>{stateTitles[activeState]}</Text>
-          <View style={styles.liveIndicator}>
-            <View style={[styles.liveDot, isCharging ? styles.chargingDot : styles.idleDot]} />
-            <Text style={styles.liveIndicatorText}>{isCharging ? 'CHARGING' : 'STANDBY'}</Text>
+        {/* Dynamic Motion Graphics State Banner */}
+        <View style={[styles.motionBanner, { backgroundColor: currentTheme.softBg, borderColor: currentTheme.borderColor }]}>
+          <View style={styles.motionBannerTop}>
+            <View style={styles.motionBadgeGroup}>
+              <Animated.View
+                style={[
+                  styles.motionPulseRing,
+                  {
+                    backgroundColor: currentTheme.glowColor,
+                    transform: [{ scale: pulseScale }],
+                  },
+                ]}
+              >
+                <View style={[styles.motionPulseDot, { backgroundColor: currentTheme.color }]} />
+              </Animated.View>
+              <Text style={[styles.motionBadgeText, { color: currentTheme.color }]}>
+                {currentTheme.badgeText}
+              </Text>
+            </View>
+            <View style={styles.motionModeTag}>
+              <Text style={styles.motionModeTagText}>
+                {motionPreview === 'live' ? 'HARDWARE SYNC' : 'PREVIEW MODE'}
+              </Text>
+            </View>
           </View>
+          <Text style={styles.motionSubText}>{currentTheme.subText}</Text>
         </View>
 
-        {/* Selected State Image */}
+        {/* Selected State Image with Motion Graphics Aura */}
         <View style={styles.imageWrapper}>
+          {/* Animated Outer Concentric Ripple Ring 1 */}
+          <Animated.View
+            style={[
+              styles.motionRing,
+              {
+                borderColor: currentTheme.color,
+                backgroundColor: currentTheme.glowColor,
+                opacity: ringOpacity1,
+                transform: [{ scale: ringScale1 }],
+              },
+            ]}
+          />
+
+          {/* Animated Inner Concentric Ripple Ring 2 */}
+          <Animated.View
+            style={[
+              styles.motionRing,
+              {
+                borderColor: currentTheme.secondaryColor,
+                backgroundColor: currentTheme.glowColor,
+                opacity: ringOpacity2,
+                transform: [{ scale: ringScale2 }],
+              },
+            ]}
+          />
+
+          {/* Center Breathing Aura Halo */}
+          <Animated.View
+            style={[
+              styles.motionCoreHalo,
+              {
+                backgroundColor: currentTheme.glowColor,
+                opacity: pulseGlow,
+                transform: [{ scale: pulseScale }],
+              },
+            ]}
+          />
+
+          {/* State-Specific Motion Effects */}
+          {effectiveStatus === 'Preparing' ? (
+            <Animated.View
+              style={[
+                styles.radarBeam,
+                {
+                  transform: [{ translateX: scanTranslateX }],
+                },
+              ]}
+            >
+              <View style={styles.radarLight} />
+            </Animated.View>
+          ) : null}
+
+          {effectiveStatus === 'Charging' ? (
+            <>
+              {/* Left Gun Energy Pulse Beacon */}
+              <Animated.View
+                style={[
+                  styles.portEnergyBeacon,
+                  styles.leftPortBeacon,
+                  {
+                    transform: [{ scale: pulseScale }],
+                    opacity: pulseGlow,
+                  },
+                ]}
+              >
+                <View style={styles.beaconCore} />
+              </Animated.View>
+
+              {/* Right Gun Energy Pulse Beacon */}
+              <Animated.View
+                style={[
+                  styles.portEnergyBeacon,
+                  styles.rightPortBeacon,
+                  {
+                    transform: [{ scale: pulseScale }],
+                    opacity: pulseGlow,
+                  },
+                ]}
+              >
+                <View style={styles.beaconCore} />
+              </Animated.View>
+            </>
+          ) : null}
+
+          {/* Vehicle / Charger State Image (Blends seamlessly on pure white) */}
           <Image
             source={STATE_IMAGES[activeState]}
             style={styles.stateImage}
@@ -263,7 +559,7 @@ export default function HomeScreen() {
           />
         </View>
 
-        {/* State Switcher Tabs */}
+        {/* State Position Tabs */}
         <View style={styles.modeTabsRow}>
           <TouchableOpacity
             style={[styles.modeTab, stateMode === 'auto' && styles.activeModeTab]}
@@ -307,6 +603,54 @@ export default function HomeScreen() {
           >
             <Text style={[styles.modeTabText, stateMode === 'both' && styles.activeModeTabText]}>
               4. Both
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Motion Graphics State Switcher */}
+        <View style={styles.motionTabsRow}>
+          <TouchableOpacity
+            style={[styles.motionTab, motionPreview === 'live' && styles.activeMotionTab]}
+            onPress={() => setMotionPreview('live')}
+          >
+            <Text style={[styles.motionTabText, motionPreview === 'live' && styles.activeMotionTabText]}>
+              ⚡ Live Sync
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.motionTab, motionPreview === 'Charging' && styles.activeMotionTab]}
+            onPress={() => setMotionPreview('Charging')}
+          >
+            <Text style={[styles.motionTabText, motionPreview === 'Charging' && { color: '#059669', fontWeight: '800' }]}>
+              Charging
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.motionTab, motionPreview === 'Preparing' && styles.activeMotionTab]}
+            onPress={() => setMotionPreview('Preparing')}
+          >
+            <Text style={[styles.motionTabText, motionPreview === 'Preparing' && { color: '#D97706', fontWeight: '800' }]}>
+              Preparing
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.motionTab, motionPreview === 'SuspendedEV' && styles.activeMotionTab]}
+            onPress={() => setMotionPreview('SuspendedEV')}
+          >
+            <Text style={[styles.motionTabText, motionPreview === 'SuspendedEV' && { color: '#7C3AED', fontWeight: '800' }]}>
+              Suspended
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.motionTab, motionPreview === 'Finishing' && styles.activeMotionTab]}
+            onPress={() => setMotionPreview('Finishing')}
+          >
+            <Text style={[styles.motionTabText, motionPreview === 'Finishing' && { color: '#0284C7', fontWeight: '800' }]}>
+              Finishing
             </Text>
           </TouchableOpacity>
         </View>
@@ -677,45 +1021,59 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     alignItems: 'center',
   },
-  visualizerHeader: {
+  motionBanner: {
+    width: '100%',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    marginBottom: 6,
+  },
+  motionBannerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
-    marginBottom: 6,
-    paddingHorizontal: 4,
+    marginBottom: 2,
   },
-  stateTag: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  liveIndicator: {
+  motionBadgeGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    gap: 8,
+  },
+  motionPulseRing: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  motionPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  motionBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  motionModeTag: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 5,
-  },
-  chargingDot: {
-    backgroundColor: '#10B981',
-  },
-  idleDot: {
-    backgroundColor: '#94A3B8',
-  },
-  liveIndicatorText: {
-    fontSize: 10,
+  motionModeTagText: {
+    fontSize: 8,
     fontWeight: '800',
+    color: '#64748B',
+  },
+  motionSubText: {
+    fontSize: 10,
     color: '#475569',
+    fontWeight: '500',
   },
   imageWrapper: {
     width: '100%',
@@ -724,43 +1082,140 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 4,
+    overflow: 'hidden',
+  },
+  motionRing: {
+    position: 'absolute',
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    borderWidth: 2,
+  },
+  motionCoreHalo: {
+    position: 'absolute',
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+  },
+  radarBeam: {
+    position: 'absolute',
+    width: 6,
+    height: 200,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  radarLight: {
+    width: 3,
+    height: 190,
+    borderRadius: 2,
+    backgroundColor: '#F59E0B',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  portEnergyBeacon: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(16, 185, 129, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  leftPortBeacon: {
+    left: '26%',
+    top: '46%',
+  },
+  rightPortBeacon: {
+    right: '26%',
+    top: '46%',
+  },
+  beaconCore: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   stateImage: {
     width: '100%',
     height: '100%',
+    zIndex: 3,
   },
   modeTabsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginTop: 10,
+    marginTop: 8,
     backgroundColor: '#F8FAFC',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 3,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   modeTab: {
     flex: 1,
-    paddingVertical: 7,
+    paddingVertical: 6,
     alignItems: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
   },
   activeModeTab: {
     backgroundColor: '#FFFFFF',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
-    shadowRadius: 4,
+    shadowRadius: 2,
     elevation: 1,
   },
   modeTabText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     color: '#64748B',
   },
   activeModeTabText: {
     color: '#0284C7',
+    fontWeight: '800',
+  },
+  motionTabsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 6,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  motionTab: {
+    flex: 1,
+    paddingVertical: 5,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  activeMotionTab: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  motionTabText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  activeMotionTabText: {
+    color: '#0F172A',
     fontWeight: '800',
   },
   activeTxCard: {
