@@ -24,5 +24,10 @@ yarn-error.log*
 *.log
 /logs/
 
+# Secrets
+.env
+.env.local
+
+
 
 
