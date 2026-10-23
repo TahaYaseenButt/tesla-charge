@@ -134,11 +134,11 @@ export default function HistoryScreen() {
                   </View>
                 </View>
 
-                {tx.reason && (
+                {Boolean(tx.reason) ? (
                   <Text style={styles.txReason}>
-                    Stop Reason: {tx.reason}
+                    Stop Reason: {String(tx.reason)}
                   </Text>
-                )}
+                ) : null}
               </View>
             );
           })}

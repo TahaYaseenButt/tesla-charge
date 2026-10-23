@@ -313,7 +313,7 @@ export default function HomeScreen() {
       </View>
 
       {/* Active Charging Transaction Banner */}
-      {activeTxData && (
+      {Boolean(activeTxData) ? (
         <View style={styles.activeTxCard}>
           <View style={styles.activeTxHeader}>
             <View style={styles.activeTxBadge}>
@@ -343,7 +343,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      ) : null}
 
       {/* Live Power & Meter Values Card */}
       <View style={styles.powerCard}>
@@ -555,11 +555,11 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {qrActionMsg && (
+        {Boolean(qrActionMsg) ? (
           <View style={styles.qrMsgBox}>
             <Text style={styles.qrMsgText}>{qrActionMsg}</Text>
           </View>
-        )}
+        ) : null}
       </View>
 
       {/* Station Hardware Specifications */}
