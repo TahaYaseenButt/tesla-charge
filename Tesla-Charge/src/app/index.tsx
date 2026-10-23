@@ -15,7 +15,7 @@ import { db } from '@/config/firebase';
 
 const CHARGER_ID = 'charger1'; // Matches your physical connected charger
 
-// 4 State Images from your design
+// 4 State Images from your design (cropped transparent PNGs)
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
   left: require('@/assets/images/states/state_left.png'),
@@ -32,6 +32,8 @@ export default function HomeScreen() {
   const [activeTxData, setActiveTxData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [selectedConnector, setSelectedConnector] = useState<number>(1);
+  const [qrActionMsg, setQrActionMsg] = useState<string | null>(null);
 
   // Manual state override for preview testing (or 'auto' for live charger sync)
   const [stateMode, setStateMode] = useState<'auto' | CarState>('auto');
@@ -95,8 +97,8 @@ export default function HomeScreen() {
   const status1 = connector1Data?.status || 'Available';
   const status2 = connector2Data?.status || 'Available';
 
-  const isLeftConnected = status1 === 'Charging' || status1 === 'Preparing' || status1 === 'SuspendedEV';
-  const isRightConnected = status2 === 'Charging' || status2 === 'Preparing' || status2 === 'SuspendedEV';
+  const isLeftConnected = status1 === 'Charging' || status1 === 'Preparing' || status1 === 'SuspendedEV' || status1 === 'SuspendedEVSE';
+  const isRightConnected = status2 === 'Charging' || status2 === 'Preparing' || status2 === 'SuspendedEV' || status2 === 'SuspendedEVSE';
 
   let autoState: CarState = 'idle';
   if (isLeftConnected && isRightConnected) {
@@ -111,23 +113,34 @@ export default function HomeScreen() {
   const activeState: CarState = stateMode === 'auto' ? autoState : stateMode;
 
   const stateTitles: Record<CarState, string> = {
-    idle: '1 • Charger Idle',
-    left: '2 • Car on Left Side',
-    right: '3 • Car on Right Side',
-    both: '4 • Car on Both Sides',
+    idle: '1 • Charger Standby',
+    left: '2 • EV on Left Gun',
+    right: '3 • EV on Right Gun',
+    both: '4 • Dual Charging Active',
   };
 
   const isOnline = chargerData?.status === 'Online';
-  const isCharging = activeState !== 'idle';
+  const isCharging = activeState !== 'idle' || activeTxData !== null;
 
-  // Live telemetry metrics
-  const power1 = connector1Data?.telemetry?.powerKw || 0;
-  const power2 = connector2Data?.telemetry?.powerKw || 0;
+  // Live telemetry metrics from physical hardware
+  const tel1 = connector1Data?.telemetry;
+  const tel2 = connector2Data?.telemetry;
+
+  const power1 = tel1?.powerKw || 0;
+  const power2 = tel2?.powerKw || 0;
   const totalPower = (power1 + power2) > 0 ? (power1 + power2) : (isCharging ? 7.4 : 0);
-  const voltage = connector1Data?.telemetry?.voltage || 230;
-  const current = connector1Data?.telemetry?.currentL1 || (isCharging ? 32.1 : 0);
-  const energyKwh = activeTxData?.energyDeliveredKwh || ((connector1Data?.telemetry?.energyWh || 0) / 1000).toFixed(1);
 
+  const voltage = tel1?.voltage || 230;
+  const voltL1 = tel1?.voltageL1 || voltage;
+  const currentL1 = tel1?.currentL1 || (isCharging ? 32.1 : 0);
+  const currentL2 = tel1?.currentL2 || 0;
+  const currentL3 = tel1?.currentL3 || 0;
+
+  const energyKwh = activeTxData?.energyDeliveredKwh || tel1?.energyKwh || ((tel1?.energyWh || 0) / 1000).toFixed(2);
+  const temperatureC = tel1?.temperatureC || 49;
+  const lastUpdated = tel1?.updatedAt ? new Date(tel1.updatedAt).toLocaleTimeString() : 'Live sync';
+
+  // Send OCPP remote command via Firestore 'commands' queue
   const sendCommand = async (action: string, connectorId: number = 1, extraParams: any = {}) => {
     try {
       setActionLoading(`${action}_${connectorId}`);
@@ -143,8 +156,12 @@ export default function HomeScreen() {
       const successMsg =
         action === 'UnlockConnector'
           ? `Unlock command sent to Cable #${connectorId}!`
+          : action === 'RemoteStartTransaction'
+          ? `Start charging command sent to Gun #${connectorId}!`
           : action === 'RemoteStopTransaction'
           ? 'Stop charging command sent!'
+          : action === 'TriggerMessage'
+          ? 'Meter reading requested from hardware!'
           : 'Command sent successfully!';
 
       if (Platform.OS === 'web') {
@@ -164,14 +181,46 @@ export default function HomeScreen() {
     }
   };
 
+  // Simulate scanning QR Code and starting charge
+  const handleQrScanStart = async () => {
+    try {
+      setActionLoading('qr_scan');
+      setQrActionMsg('📱 Driver scanned Station QR Code... Starting session...');
+      await sendCommand('RemoteStartTransaction', selectedConnector, { idTag: 'QR_DRIVER_APP' });
+      setQrActionMsg('✅ QR Code Session Activated on Gun #' + selectedConnector);
+    } catch (e: any) {
+      setQrActionMsg('❌ Error: ' + e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Simulate paying QR invoice and auto-unlocking cable
+  const handleQrPayUnlock = async () => {
+    try {
+      setActionLoading('qr_pay');
+      setQrActionMsg('💳 Bank processing QR payment webhook...');
+      // Trigger unlock via command
+      await sendCommand('UnlockConnector', selectedConnector);
+      setQrActionMsg('✅ Payment Confirmed & Cable Unlocked!');
+    } catch (e: any) {
+      setQrActionMsg('❌ Error: ' + e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#0284C7" />
-        <Text style={styles.loadingText}>Loading Tesla Charge...</Text>
+        <Text style={styles.loadingText}>Connecting to Tesla Charge...</Text>
       </View>
     );
   }
+
+  const qrUrl = `http://192.168.0.150:3000/charge?charger=${CHARGER_ID}&connector=${selectedConnector}`;
+  const qrImageUri = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrUrl)}`;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -179,7 +228,9 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.brandTitle}>⚡ TESLA CHARGE</Text>
-          <Text style={styles.stationSubtitle}>Station: {CHARGER_ID.toUpperCase()}</Text>
+          <Text style={styles.stationSubtitle}>
+            Station: <Text style={styles.stationName}>{CHARGER_ID.toUpperCase()}</Text> &bull; 21kW 3-Phase
+          </Text>
         </View>
         <View style={[styles.statusBadge, isOnline ? styles.onlineBadge : styles.offlineBadge]}>
           <View style={[styles.statusDot, isOnline ? styles.onlineDot : styles.offlineDot]} />
@@ -189,7 +240,7 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* 3D Visualizer Card with Your 4 State Images */}
+      {/* 3D Visualizer with 4 State Images */}
       <View style={styles.visualizerCard}>
         <View style={styles.visualizerHeader}>
           <Text style={styles.stateTag}>{stateTitles[activeState]}</Text>
@@ -199,7 +250,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* The Selected State Image */}
+        {/* Selected State Image */}
         <View style={styles.imageWrapper}>
           <Image
             source={STATE_IMAGES[activeState]}
@@ -208,7 +259,7 @@ export default function HomeScreen() {
           />
         </View>
 
-        {/* State Preview Switcher Tabs */}
+        {/* State Switcher Tabs */}
         <View style={styles.modeTabsRow}>
           <TouchableOpacity
             style={[styles.modeTab, stateMode === 'auto' && styles.activeModeTab]}
@@ -257,116 +308,169 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Live Power Output Card */}
+      {/* Active Charging Transaction Banner */}
+      {activeTxData && (
+        <View style={styles.activeTxCard}>
+          <View style={styles.activeTxHeader}>
+            <View style={styles.activeTxBadge}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.activeTxBadgeText}>TRANSACTION #{activeTxData.transactionId}</Text>
+            </View>
+            <Text style={styles.activeTxTime}>
+              Started {new Date(activeTxData.startTime).toLocaleTimeString()}
+            </Text>
+          </View>
+          <View style={styles.activeTxBody}>
+            <View>
+              <Text style={styles.activeTxLabel}>CHARGING SESSION</Text>
+              <Text style={styles.activeTxGun}>Gun #{activeTxData.connectorId || 1} Active</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.activeTxStopBtn}
+              disabled={actionLoading !== null}
+              onPress={() =>
+                sendCommand('RemoteStopTransaction', activeTxData.connectorId || 1, {
+                  transactionId: activeTxData.transactionId,
+                })
+              }
+            >
+              <Text style={styles.activeTxStopBtnText}>🛑 STOP SESSION</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Live Power & Meter Values Card */}
       <View style={styles.powerCard}>
         <View style={styles.powerTopRow}>
-          <Text style={styles.powerCardLabel}>TOTAL POWER DELIVERY</Text>
-          {isCharging && (
-            <View style={styles.chargingBadge}>
-              <Text style={styles.chargingBadgeText}>ACTIVE SESSION</Text>
-            </View>
-          )}
+          <Text style={styles.powerCardLabel}>HARDWARE METER TELEMETRY</Text>
+          <TouchableOpacity
+            style={styles.pollBtn}
+            disabled={actionLoading !== null}
+            onPress={() => sendCommand('TriggerMessage', 1, { requestedMessage: 'MeterValues' })}
+          >
+            <Text style={styles.pollBtnText}>📊 Poll Meter</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.powerNumberRow}>
           <Text style={[styles.powerNumber, isCharging ? styles.powerNumberActive : null]}>
-            {totalPower.toFixed(1)}
+            {Number(totalPower).toFixed(1)}
           </Text>
           <Text style={styles.powerUnit}>kW</Text>
         </View>
 
-        {/* Metrics Grid (Voltage, Current, Energy) */}
+        {/* 4-Metric Hardware Grid */}
         <View style={styles.metricsGrid}>
           <View style={styles.metricBox}>
             <Text style={styles.metricLabel}>VOLTAGE</Text>
             <Text style={styles.metricValue}>{voltage} V</Text>
+            <Text style={styles.metricSub}>L1: {voltL1}V</Text>
           </View>
           <View style={styles.metricDivider} />
           <View style={styles.metricBox}>
             <Text style={styles.metricLabel}>CURRENT</Text>
-            <Text style={styles.metricValue}>{current} A</Text>
+            <Text style={styles.metricValue}>{currentL1} A</Text>
+            <Text style={styles.metricSub}>L2: {currentL2}A &bull; L3: {currentL3}A</Text>
           </View>
           <View style={styles.metricDivider} />
           <View style={styles.metricBox}>
             <Text style={styles.metricLabel}>ENERGY</Text>
             <Text style={styles.metricValue}>{energyKwh} kWh</Text>
+            <Text style={styles.metricSub}>Counter</Text>
+          </View>
+          <View style={styles.metricDivider} />
+          <View style={styles.metricBox}>
+            <Text style={styles.metricLabel}>TEMP</Text>
+            <Text style={[styles.metricValue, { color: '#D97706' }]}>{temperatureC} °C</Text>
+            <Text style={styles.metricSub}>Board</Text>
           </View>
         </View>
+        <Text style={styles.telemetryTimestamp}>Last meter reading: {lastUpdated}</Text>
       </View>
 
-      {/* Dual Connector Details (Left Gun & Right Gun) */}
+      {/* Dual Gun Controls (Left Gun & Right Gun) */}
       <View style={styles.connectorsRow}>
-        {/* Left Connector #1 */}
+        {/* Left Gun (Connector 1) */}
         <View style={[styles.connectorCard, isLeftConnected && styles.connectorCardActive]}>
           <View style={styles.connectorHeader}>
-            <Text style={styles.connectorTitle}>LEFT GUN (C1)</Text>
+            <Text style={styles.connectorTitle}>GUN 1 (LEFT)</Text>
             <View style={[styles.pill, isLeftConnected ? styles.pillCharging : styles.pillAvailable]}>
               <Text style={[styles.pillText, isLeftConnected ? styles.pillChargingText : styles.pillAvailableText]}>
                 {status1.toUpperCase()}
               </Text>
             </View>
           </View>
-          <Text style={styles.connectorPower}>{power1.toFixed(1)} kW</Text>
-          <TouchableOpacity
-            style={styles.gunUnlockBtn}
-            disabled={actionLoading !== null}
-            onPress={() => sendCommand('UnlockConnector', 1)}
-          >
-            {actionLoading === 'UnlockConnector_1' ? (
-              <ActivityIndicator size="small" color="#0284C7" />
-            ) : (
-              <Text style={styles.gunUnlockBtnText}>🔓 Unlock Left</Text>
-            )}
-          </TouchableOpacity>
+          <Text style={styles.connectorPower}>{Number(power1).toFixed(1)} kW</Text>
+          <View style={styles.gunButtonsRow}>
+            <TouchableOpacity
+              style={[styles.gunActionBtn, styles.gunStartBtn]}
+              disabled={actionLoading !== null}
+              onPress={() => sendCommand('RemoteStartTransaction', 1)}
+            >
+              <Text style={styles.gunStartBtnText}>⚡ Start</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.gunActionBtn, styles.gunUnlockBtn]}
+              disabled={actionLoading !== null}
+              onPress={() => sendCommand('UnlockConnector', 1)}
+            >
+              <Text style={styles.gunUnlockBtnText}>🔓 Unlock</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* Right Connector #2 */}
+        {/* Right Gun (Connector 2) */}
         <View style={[styles.connectorCard, isRightConnected && styles.connectorCardActive]}>
           <View style={styles.connectorHeader}>
-            <Text style={styles.connectorTitle}>RIGHT GUN (C2)</Text>
+            <Text style={styles.connectorTitle}>GUN 2 (RIGHT)</Text>
             <View style={[styles.pill, isRightConnected ? styles.pillCharging : styles.pillAvailable]}>
               <Text style={[styles.pillText, isRightConnected ? styles.pillChargingText : styles.pillAvailableText]}>
                 {status2.toUpperCase()}
               </Text>
             </View>
           </View>
-          <Text style={styles.connectorPower}>{power2.toFixed(1)} kW</Text>
-          <TouchableOpacity
-            style={styles.gunUnlockBtn}
-            disabled={actionLoading !== null}
-            onPress={() => sendCommand('UnlockConnector', 2)}
-          >
-            {actionLoading === 'UnlockConnector_2' ? (
-              <ActivityIndicator size="small" color="#0284C7" />
-            ) : (
-              <Text style={styles.gunUnlockBtnText}>🔓 Unlock Right</Text>
-            )}
-          </TouchableOpacity>
+          <Text style={styles.connectorPower}>{Number(power2).toFixed(1)} kW</Text>
+          <View style={styles.gunButtonsRow}>
+            <TouchableOpacity
+              style={[styles.gunActionBtn, styles.gunStartBtn]}
+              disabled={actionLoading !== null}
+              onPress={() => sendCommand('RemoteStartTransaction', 2)}
+            >
+              <Text style={styles.gunStartBtnText}>⚡ Start</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.gunActionBtn, styles.gunUnlockBtn]}
+              disabled={actionLoading !== null}
+              onPress={() => sendCommand('UnlockConnector', 2)}
+            >
+              <Text style={styles.gunUnlockBtnText}>🔓 Unlock</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
-      {/* Quick Action Controls */}
+      {/* Station Master Actions Card */}
       <View style={styles.controlsCard}>
-        <Text style={styles.cardSectionLabel}>STATION ACTIONS</Text>
-
+        <Text style={styles.cardSectionLabel}>MASTER STATION CONTROLS</Text>
         <View style={styles.actionsGrid}>
           {isCharging ? (
             <TouchableOpacity
               style={styles.stopButton}
               disabled={actionLoading !== null}
               onPress={() =>
-                sendCommand('RemoteStopTransaction', 1, {
+                sendCommand('RemoteStopTransaction', selectedConnector, {
                   transactionId: activeTxData?.transactionId,
                 })
               }
             >
-              <Text style={styles.stopButtonText}>⏹️ STOP CHARGING</Text>
+              <Text style={styles.stopButtonText}>🛑 STOP CHARGING</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={styles.startButton}
               disabled={actionLoading !== null}
-              onPress={() => sendCommand('RemoteStartTransaction', 1)}
+              onPress={() => sendCommand('RemoteStartTransaction', selectedConnector)}
             >
               <Text style={styles.startButtonText}>⚡ START CHARGING</Text>
             </TouchableOpacity>
@@ -382,28 +486,98 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Station Hardware Specs */}
+      {/* Station QR Code & Instant Billing Card */}
+      <View style={styles.qrCard}>
+        <View style={styles.qrHeader}>
+          <View>
+            <Text style={styles.qrCardTitle}>📱 STATION QR CODE</Text>
+            <Text style={styles.qrCardSubtitle}>Scan to start session & pay tariff</Text>
+          </View>
+          <View style={styles.rateBadge}>
+            <Text style={styles.rateBadgeText}>$0.30 / kWh</Text>
+          </View>
+        </View>
+
+        {/* Gun selector for QR */}
+        <View style={styles.qrGunSelector}>
+          <TouchableOpacity
+            style={[styles.qrGunTab, selectedConnector === 1 && styles.activeQrGunTab]}
+            onPress={() => setSelectedConnector(1)}
+          >
+            <Text style={[styles.qrGunTabText, selectedConnector === 1 && styles.activeQrGunTabText]}>
+              Gun #1 (Left)
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.qrGunTab, selectedConnector === 2 && styles.activeQrGunTab]}
+            onPress={() => setSelectedConnector(2)}
+          >
+            <Text style={[styles.qrGunTabText, selectedConnector === 2 && styles.activeQrGunTabText]}>
+              Gun #2 (Right)
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* QR Code Graphic */}
+        <View style={styles.qrImageContainer}>
+          <Image
+            source={{ uri: qrImageUri }}
+            style={styles.qrImage}
+            resizeMode="contain"
+          />
+          <Text style={styles.qrUrlLabel}>
+            Station: {CHARGER_ID} &bull; Connector #{selectedConnector}
+          </Text>
+        </View>
+
+        {/* Quick QR Actions */}
+        <View style={styles.qrActionsRow}>
+          <TouchableOpacity
+            style={styles.qrScanBtn}
+            disabled={actionLoading !== null}
+            onPress={handleQrScanStart}
+          >
+            <Text style={styles.qrScanBtnText}>⚡ Scan & Start</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.qrPayBtn}
+            disabled={actionLoading !== null}
+            onPress={handleQrPayUnlock}
+          >
+            <Text style={styles.qrPayBtnText}>💳 Pay & Unlock</Text>
+          </TouchableOpacity>
+        </View>
+
+        {qrActionMsg && (
+          <View style={styles.qrMsgBox}>
+            <Text style={styles.qrMsgText}>{qrActionMsg}</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Station Hardware Specifications */}
       <View style={styles.specsCard}>
         <Text style={styles.cardSectionLabel}>HARDWARE SPECIFICATIONS</Text>
         <View style={styles.specRow}>
           <Text style={styles.specKey}>Station Model</Text>
-          <Text style={styles.specVal}>{chargerData?.model || 'Solar EVX / Voltronic'}</Text>
+          <Text style={styles.specVal}>{chargerData?.model || 'AC_ThreePhase21KW'}</Text>
         </View>
         <View style={styles.specRow}>
           <Text style={styles.specKey}>Vendor</Text>
-          <Text style={styles.specVal}>{chargerData?.vendor || 'Voltronic Power'}</Text>
+          <Text style={styles.specVal}>{chargerData?.vendor || 'CCS_AC / Voltronic'}</Text>
         </View>
         <View style={styles.specRow}>
           <Text style={styles.specKey}>Firmware</Text>
-          <Text style={styles.specVal}>{chargerData?.firmwareVersion || 'v2.1.4'}</Text>
+          <Text style={styles.specVal}>{chargerData?.firmwareVersion ? chargerData.firmwareVersion.substring(0, 18) : '05808-00G04703'}</Text>
         </View>
         <View style={styles.specRow}>
-          <Text style={styles.specKey}>OCPP Protocol</Text>
-          <Text style={styles.specVal}>OCPP 1.6-J (JSON / WebSocket)</Text>
+          <Text style={styles.specKey}>Protocol Standard</Text>
+          <Text style={styles.specVal}>OCPP 1.6-J (WebSocket)</Text>
         </View>
       </View>
 
-      <View style={{ height: 100 }} />
+      <View style={{ height: 90 }} />
     </ScrollView>
   );
 }
@@ -419,7 +593,7 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -446,6 +620,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748B',
     marginTop: 2,
+  },
+  stationName: {
+    color: '#0284C7',
+    fontWeight: '800',
   },
   statusBadge: {
     flexDirection: 'row',
@@ -488,7 +666,7 @@ const styles = StyleSheet.create({
     color: '#991B1B',
   },
   visualizerCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 4,
     marginBottom: 14,
     alignItems: 'center',
@@ -536,7 +714,7 @@ const styles = StyleSheet.create({
   imageWrapper: {
     width: '100%',
     height: 230,
-    backgroundColor: 'transparent',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 4,
@@ -579,6 +757,69 @@ const styles = StyleSheet.create({
     color: '#0284C7',
     fontWeight: '800',
   },
+  activeTxCard: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#6EE7B7',
+    marginBottom: 16,
+  },
+  activeTxHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  activeTxBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  pulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#059669',
+  },
+  activeTxBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#065F46',
+    letterSpacing: 0.5,
+  },
+  activeTxTime: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+  },
+  activeTxBody: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  activeTxLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  activeTxGun: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  activeTxStopBtn: {
+    backgroundColor: '#EF4444',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  activeTxStopBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
   powerCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
@@ -603,16 +844,18 @@ const styles = StyleSheet.create({
     color: '#64748B',
     letterSpacing: 1,
   },
-  chargingBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+  pollBtn: {
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
   },
-  chargingBadgeText: {
-    fontSize: 10,
+  pollBtnText: {
+    fontSize: 11,
     fontWeight: '800',
-    color: '#059669',
+    color: '#0284C7',
   },
   powerNumberRow: {
     flexDirection: 'row',
@@ -620,7 +863,7 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   powerNumber: {
-    fontSize: 56,
+    fontSize: 54,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: -1.5,
@@ -636,7 +879,7 @@ const styles = StyleSheet.create({
   },
   metricsGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     paddingTop: 14,
@@ -644,6 +887,7 @@ const styles = StyleSheet.create({
   },
   metricBox: {
     alignItems: 'center',
+    flex: 1,
   },
   metricDivider: {
     width: 1,
@@ -655,12 +899,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748B',
     letterSpacing: 0.5,
-    marginBottom: 3,
+    marginBottom: 2,
   },
   metricValue: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  metricSub: {
+    fontSize: 9,
+    color: '#94A3B8',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  telemetryTimestamp: {
+    fontSize: 10,
+    color: '#94A3B8',
+    textAlign: 'center',
+    marginTop: 12,
   },
   connectorsRow: {
     flexDirection: 'row',
@@ -718,23 +974,38 @@ const styles = StyleSheet.create({
     color: '#15803D',
   },
   connectorPower: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
     color: '#0F172A',
     marginBottom: 10,
+  },
+  gunButtonsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  gunActionBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  gunStartBtn: {
+    backgroundColor: '#0284C7',
+  },
+  gunStartBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   gunUnlockBtn: {
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingVertical: 8,
-    alignItems: 'center',
   },
   gunUnlockBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#0284C7',
+    color: '#475569',
   },
   controlsCard: {
     backgroundColor: '#FFFFFF',
@@ -757,11 +1028,11 @@ const styles = StyleSheet.create({
   },
   startButton: {
     flex: 2,
-    backgroundColor: '#0284C7',
+    backgroundColor: '#10B981',
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
-    shadowColor: '#0284C7',
+    shadowColor: '#10B981',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -770,7 +1041,7 @@ const styles = StyleSheet.create({
   startButtonText: {
     color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 0.5,
   },
   stopButton: {
@@ -788,7 +1059,7 @@ const styles = StyleSheet.create({
   stopButtonText: {
     color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 0.5,
   },
   rebootButton: {
@@ -804,6 +1075,154 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontSize: 12,
     fontWeight: '700',
+  },
+  qrCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+    marginBottom: 16,
+  },
+  qrHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  qrCardTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.5,
+  },
+  qrCardSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  rateBadge: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  rateBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  qrGunSelector: {
+    flexDirection: 'row',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  qrGunTab: {
+    flex: 1,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderRadius: 9,
+  },
+  activeQrGunTab: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  qrGunTabText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  activeQrGunTabText: {
+    color: '#0284C7',
+    fontWeight: '800',
+  },
+  qrImageContainer: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  qrImage: {
+    width: 170,
+    height: 170,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+  },
+  qrUrlLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginTop: 10,
+  },
+  qrActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  qrScanBtn: {
+    flex: 1,
+    backgroundColor: '#10B981',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  qrScanBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  qrPayBtn: {
+    flex: 1,
+    backgroundColor: '#6366F1',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  qrPayBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  qrMsgBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  qrMsgText: {
+    fontSize: 11,
+    color: '#334155',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   specsCard: {
     backgroundColor: '#FFFFFF',
