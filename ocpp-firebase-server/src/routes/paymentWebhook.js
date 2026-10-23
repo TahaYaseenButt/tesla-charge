@@ -1,6 +1,6 @@
 import express from "express";
 import { ocppServer } from "../ocpp/OCPPServer.js";
-import { updateTransactionPayment } from "../services/firebaseSync.js";
+import { updateTransactionPayment, getChargerLiveState } from "../services/firebaseSync.js";
 
 export const apiRouter = express.Router();
 
@@ -151,13 +151,33 @@ apiRouter.post("/chargers/:chargePointId/trigger", async (req, res) => {
 });
 
 /**
- * Server status and connected chargers list
+ * Fetch live charger state including telemetry and active transaction from Firestore
  */
-apiRouter.get("/status", (_req, res) => {
+apiRouter.get("/chargers/:chargePointId/live", async (req, res) => {
+  const { chargePointId } = req.params;
+  const data = await getChargerLiveState(chargePointId);
+  return res.json({ success: true, ...data });
+});
+
+/**
+ * Server status, connected chargers list, and live telemetry
+ */
+apiRouter.get("/status", async (_req, res) => {
+  const connectedChargers = ocppServer.getConnectedChargers();
+  const chargersWithData = await Promise.all(
+    connectedChargers.map(async (c) => {
+      const live = await getChargerLiveState(c.chargePointId);
+      return {
+        ...c,
+        ...live,
+      };
+    })
+  );
+
   return res.json({
     server: "OCPP 1.6-J Firebase Server",
     status: "Online",
-    connectedChargers: ocppServer.getConnectedChargers(),
+    connectedChargers: chargersWithData,
     recentLogs: ocppServer.logs,
   });
 });

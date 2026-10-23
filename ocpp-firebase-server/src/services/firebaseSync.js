@@ -210,3 +210,41 @@ export async function updateTransactionPayment(transactionId, paymentStatus = "P
     console.error(`[Firestore Error] updateTransactionPayment:`, err.message);
   }
 }
+
+/**
+ * Fetch full live state of a charger (hardware info, connectors, telemetry, active transaction)
+ */
+export async function getChargerLiveState(chargePointId) {
+  try {
+    const chargerSnap = await getDoc(doc(db, "chargers", chargePointId));
+    const chargerData = chargerSnap.exists() ? chargerSnap.data() : null;
+
+    const { getDocs, query, where, limit } = await import("firebase/firestore");
+    const connSnaps = await getDocs(collection(db, "chargers", chargePointId, "connectors"));
+    const connectors = {};
+    connSnaps.forEach((docSnap) => {
+      connectors[docSnap.id] = docSnap.data();
+    });
+
+    const txQuery = query(
+      collection(db, "transactions"),
+      where("chargePointId", "==", chargePointId),
+      where("status", "==", "Charging"),
+      limit(1)
+    );
+    const txSnaps = await getDocs(txQuery);
+    let activeTransaction = null;
+    if (!txSnaps.empty) {
+      activeTransaction = txSnaps.docs[0].data();
+    }
+
+    return {
+      charger: chargerData,
+      connectors,
+      activeTransaction,
+    };
+  } catch (err) {
+    console.error(`[Firestore Error] getChargerLiveState:`, err.message);
+    return { charger: null, connectors: {}, activeTransaction: null, error: err.message };
+  }
+}

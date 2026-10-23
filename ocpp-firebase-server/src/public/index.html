@@ -3,250 +3,622 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>T-Charge | OCPP 1.6-J Firebase Gateway</title>
+  <title>T-Charge | OCPP 1.6-J Live Dashboard & Station Controller</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Lightweight QR Code generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
-    body { font-family: 'Inter', sans-serif; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .glass-card {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+    }
+    .glass-input {
+      background: rgba(2, 6, 23, 0.8);
+      border: 1px solid rgba(51, 65, 85, 0.8);
+    }
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.8; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.05); }
+    }
+    .animate-glow {
+      animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+<body class="bg-[#090D16] text-slate-100 min-h-screen flex flex-col selection:bg-emerald-500/30 selection:text-emerald-300">
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed top-5 right-5 z-50 transform transition-all duration-300 translate-y-[-120%] opacity-0 pointer-events-none">
+    <div id="toast-inner" class="px-5 py-3.5 rounded-2xl glass-card shadow-2xl flex items-center gap-3 border border-emerald-500/40 text-sm">
+      <span id="toast-icon">⚡</span>
+      <span id="toast-msg" class="font-medium">Action triggered successfully</span>
+    </div>
+  </div>
 
   <!-- Header -->
-  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50 px-6 py-4">
-    <div class="max-w-6xl mx-auto flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-bold shadow-lg shadow-emerald-500/20">
+  <header class="border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-xl sticky top-0 z-40 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3.5">
+        <div class="h-11 w-11 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-emerald-500/25">
           ⚡
         </div>
         <div>
-          <h1 class="text-lg font-bold tracking-tight">T-Charge OCPP Gateway</h1>
-          <p class="text-xs text-slate-400">OCPP 1.6-J &bull; Firebase Real-time Bridge</p>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-bold tracking-tight text-white">T-Charge EV Gateway</h1>
+            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">OCPP 1.6-J</span>
+          </div>
+          <p class="text-xs text-slate-400">Live Station Controller &bull; Telemetry &bull; QR Billing</p>
         </div>
       </div>
+
       <div class="flex items-center gap-3">
-        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
           <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          Gateway Online
-        </span>
-        <span class="text-xs bg-slate-800 border border-slate-700 px-3 py-1 rounded-full text-slate-300 font-mono">
-          Port: 3000
-        </span>
+          <span class="text-slate-300 font-medium">Server Online</span>
+          <span class="text-slate-600">|</span>
+          <span class="text-slate-400 font-mono">Port 3000</span>
+        </div>
+        <button onclick="fetchStatus()" class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700/80 transition flex items-center gap-1.5">
+          <span>🔄</span> Refresh
+        </button>
       </div>
     </div>
   </header>
 
-  <!-- Main Content -->
-  <main class="max-w-6xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-6 py-8 flex-1 w-full space-y-6">
 
-    <!-- Overview Banner -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div class="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 shadow-sm">
-        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Charger Connection URL</div>
-        <div class="mt-2 text-sm font-mono text-emerald-400 bg-slate-950/80 px-3 py-2 rounded-xl border border-slate-800 select-all truncate">
-          ws://tcharge.duckdns.org:3000/api/ocpp/version/1.6
+    <!-- Top Stats Row -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <!-- Active Charger -->
+      <div class="glass-card rounded-2xl p-5 shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+          <span>Target Charger</span>
+          <span id="badge-online" class="h-2 w-2 rounded-full bg-emerald-400 animate-ping"></span>
         </div>
-        <div class="text-[11px] text-slate-500 mt-1.5">Put this URL in your Voltronic charger settings</div>
-      </div>
-
-      <div class="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 shadow-sm">
-        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Chargers</div>
         <div class="mt-2 flex items-baseline gap-2">
-          <span id="chargers-count" class="text-3xl font-extrabold text-white">0</span>
-          <span class="text-xs text-slate-400">chargers online</span>
+          <span id="active-charger-id" class="text-2xl font-black text-white font-mono">charger1</span>
         </div>
-        <div class="text-[11px] text-slate-500 mt-1.5">Supports 10+ chargers simultaneously</div>
+        <div id="charger-hardware-info" class="text-[11px] text-slate-400 mt-1 truncate">
+          CCS_AC &bull; AC_ThreePhase21KW
+        </div>
       </div>
 
-      <div class="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 shadow-sm">
-        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Firebase Sync</div>
+      <!-- Connector Status -->
+      <div class="glass-card rounded-2xl p-5 shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connector 1 Status</div>
         <div class="mt-2 flex items-center gap-2">
-          <span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span>
-          <span class="text-sm font-medium text-slate-200">fir-85543</span>
+          <span id="status-indicator-dot" class="h-3 w-3 rounded-full bg-emerald-400"></span>
+          <span id="connector-status-badge" class="text-2xl font-black text-emerald-400">Available</span>
         </div>
-        <div class="text-[11px] text-slate-500 mt-1.5">Firestore collections: chargers, transactions, commands</div>
+        <div id="connector-error-code" class="text-[11px] text-slate-400 mt-1">Health: Clean (NoError)</div>
+      </div>
+
+      <!-- Live Power -->
+      <div class="glass-card rounded-2xl p-5 shadow-sm border-emerald-500/30">
+        <div class="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center justify-between">
+          <span>Live Charging Power</span>
+          <span>⚡</span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-1">
+          <span id="telemetry-power" class="text-3xl font-black text-white">0.00</span>
+          <span class="text-sm font-bold text-emerald-400">kW</span>
+        </div>
+        <div id="telemetry-current-summary" class="text-[11px] text-slate-400 mt-1">
+          L1: 0.0A &bull; L2: 0.0A &bull; L3: 0.0A
+        </div>
+      </div>
+
+      <!-- Total Energy Register -->
+      <div class="glass-card rounded-2xl p-5 shadow-sm">
+        <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+          <span>Meter Energy Counter</span>
+          <span>🔋</span>
+        </div>
+        <div class="mt-2 flex items-baseline gap-1">
+          <span id="telemetry-energy" class="text-3xl font-black text-white">0.00</span>
+          <span class="text-sm font-bold text-cyan-400">kWh</span>
+        </div>
+        <div id="telemetry-time" class="text-[11px] text-slate-400 mt-1 truncate">
+          Last reading: <span id="telemetry-timestamp">Waiting...</span>
+        </div>
       </div>
     </div>
 
-    <!-- Connected Chargers Section -->
-    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h2 class="text-base font-semibold text-white">Live EV Chargers</h2>
-          <p class="text-xs text-slate-400">Charging stations currently connected via WebSocket</p>
-        </div>
-        <button onclick="fetchStatus()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
-          Refresh List
-        </button>
-      </div>
+    <!-- Main Grid: Controls + Live Telemetry & QR Code -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-      <div id="chargers-list" class="space-y-3">
-        <div class="p-6 text-center text-slate-500 text-sm border border-dashed border-slate-800 rounded-xl">
-          Waiting for your Voltronic charger to connect to <code class="text-emerald-400">ws://tcharge.duckdns.org:3000/api/ocpp/version/1.6</code>...
-        </div>
-      </div>
-    </div>
+      <!-- LEFT COLUMN: Live Controls & Actions (7 Cols) -->
+      <div class="lg:col-span-7 space-y-6">
 
-    <!-- Quick Test Tools (Cable Unlock & Bank Payment Simulation) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      
-      <!-- Manual Unlock & Commands -->
-      <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-        <h3 class="text-sm font-semibold text-white mb-1">Direct Charger Command</h3>
-        <p class="text-xs text-slate-400 mb-4">Send instant OCPP commands to any connected charger</p>
-        
-        <div class="space-y-3">
-          <div>
-            <label class="text-xs text-slate-400">Charger ID (e.g. charger01):</label>
-            <input id="cmd-charger-id" type="text" value="charger01" class="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500 font-mono">
-          </div>
-          <div class="grid grid-cols-2 gap-2 pt-2">
-            <button onclick="triggerUnlock()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs py-2.5 px-4 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-1.5">
-              <span>🔓</span> Unlock Cable
-            </button>
-            <button onclick="triggerReset()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs py-2.5 px-4 rounded-xl border border-slate-700 transition flex items-center justify-center gap-1.5">
-              <span>🔄</span> Reboot Charger
-            </button>
-          </div>
-          <div id="cmd-result" class="text-xs text-slate-400 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 hidden"></div>
-        </div>
-      </div>
-
-      <!-- Bank Webhook Simulation -->
-      <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-        <h3 class="text-sm font-semibold text-white mb-1">Test Bank Payment Webhook</h3>
-        <p class="text-xs text-slate-400 mb-4">Simulate bank confirming QR code payment &rarr; Auto-unlocks cable</p>
-        
-        <div class="space-y-3">
-          <div class="grid grid-cols-2 gap-2">
+        <!-- Charging Session Controller Card -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-5">
             <div>
-              <label class="text-xs text-slate-400">Tx ID:</label>
-              <input id="sim-tx-id" type="number" value="101" class="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono">
+              <h2 class="text-base font-bold text-white flex items-center gap-2">
+                <span>🎮</span> Charging Session Controller
+              </h2>
+              <p class="text-xs text-slate-400">Remotely start, stop, unlock cable, or reset the charger</p>
+            </div>
+            <span class="text-xs font-mono bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg text-slate-300">
+              OCPP 1.6-J Core
+            </span>
+          </div>
+
+          <!-- Parameter inputs -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+            <div>
+              <label class="text-xs font-medium text-slate-400 block mb-1">Target Charger ID:</label>
+              <input id="input-charger-id" type="text" value="charger1" class="w-full glass-input rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-emerald-500 transition">
             </div>
             <div>
-              <label class="text-xs text-slate-400">Charger ID:</label>
-              <input id="sim-charger-id" type="text" value="charger01" class="mt-1 w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono">
+              <label class="text-xs font-medium text-slate-400 block mb-1">Connector ID:</label>
+              <select id="input-connector-id" class="w-full glass-input rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-emerald-500 transition">
+                <option value="1">Connector 1 (Main Gun)</option>
+                <option value="2">Connector 2 (Second Gun)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-slate-400 block mb-1">User ID Tag / RFID:</label>
+              <input id="input-id-tag" type="text" value="USER_QR_01" class="w-full glass-input rounded-xl px-3.5 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-emerald-500 transition">
             </div>
           </div>
-          <button onclick="simulateBankPayment()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-600/20 transition flex items-center justify-center gap-1.5">
-            <span>💳</span> Simulate Bank Paid &rarr; Auto-Unlock
-          </button>
-          <div id="sim-result" class="text-xs text-slate-400 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 hidden"></div>
+
+          <!-- Action Buttons Grid -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <!-- Start Charge -->
+            <button onclick="triggerStartCharge()" class="group relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 p-4 text-left shadow-lg shadow-emerald-600/25 transition active:scale-95">
+              <div class="text-xl mb-1">⚡</div>
+              <div class="text-xs font-bold text-white uppercase tracking-wider">Start Charge</div>
+              <div class="text-[10px] text-emerald-100/70 mt-0.5">RemoteStartTxn</div>
+            </button>
+
+            <!-- Stop Charge -->
+            <button onclick="triggerStopCharge()" class="group relative overflow-hidden rounded-2xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 p-4 text-left shadow-lg shadow-rose-600/25 transition active:scale-95">
+              <div class="text-xl mb-1">🛑</div>
+              <div class="text-xs font-bold text-white uppercase tracking-wider">Stop Charge</div>
+              <div class="text-[10px] text-rose-100/70 mt-0.5">RemoteStopTxn</div>
+            </button>
+
+            <!-- Unlock Cable -->
+            <button onclick="triggerUnlock()" class="group relative overflow-hidden rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 p-4 text-left transition active:scale-95">
+              <div class="text-xl mb-1">🔓</div>
+              <div class="text-xs font-bold text-slate-200 uppercase tracking-wider">Unlock Cable</div>
+              <div class="text-[10px] text-slate-400 mt-0.5">Release Solenoid</div>
+            </button>
+
+            <!-- Trigger Meter Reading -->
+            <button onclick="triggerMeterReading()" class="group relative overflow-hidden rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 p-4 text-left transition active:scale-95">
+              <div class="text-xl mb-1">📊</div>
+              <div class="text-xs font-bold text-cyan-300 uppercase tracking-wider">Poll Meter</div>
+              <div class="text-[10px] text-slate-400 mt-0.5">TriggerMessage</div>
+            </button>
+          </div>
+
+          <!-- Active Transaction Banner (dynamically shown when charging) -->
+          <div id="active-txn-banner" class="mt-4 p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between hidden">
+            <div class="flex items-center gap-3">
+              <span class="h-3 w-3 rounded-full bg-emerald-400 animate-ping"></span>
+              <div>
+                <div class="text-xs font-bold text-white">Active Charging Transaction #<span id="active-txn-id">--</span></div>
+                <div class="text-[11px] text-emerald-300/80">Started: <span id="active-txn-start">--</span></div>
+              </div>
+            </div>
+            <button onclick="triggerStopCharge()" class="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md transition">
+              Stop Session
+            </button>
+          </div>
         </div>
+
+        <!-- Live Meter Readings Detail Card -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4 mb-5">
+            <div>
+              <h2 class="text-base font-bold text-white flex items-center gap-2">
+                <span>📈</span> Real-Time Hardware Telemetry
+              </h2>
+              <p class="text-xs text-slate-400">Streamed from physical Voltronic 21kW 3-Phase Meter</p>
+            </div>
+            <button onclick="triggerMeterReading()" class="text-xs bg-slate-900 hover:bg-slate-800 text-cyan-400 border border-cyan-500/30 px-3 py-1.5 rounded-xl font-medium transition flex items-center gap-1.5">
+              <span>⚡</span> Request Instant Sample
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <!-- Voltage -->
+            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Line Voltage</div>
+              <div class="text-xl font-bold text-white mt-1"><span id="metric-voltage">0.0</span> <span class="text-xs font-normal text-slate-400">V</span></div>
+              <div class="text-[10px] text-slate-500 mt-1 font-mono">Phase L1: <span id="metric-volt-l1">0.0</span>V</div>
+            </div>
+
+            <!-- Current Phase L1 -->
+            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Current (L1)</div>
+              <div class="text-xl font-bold text-white mt-1"><span id="metric-cur-l1">0.0</span> <span class="text-xs font-normal text-slate-400">A</span></div>
+              <div class="text-[10px] text-slate-500 mt-1 font-mono">Max limit: 32A</div>
+            </div>
+
+            <!-- Current Phase L2/L3 -->
+            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Current (L2 / L3)</div>
+              <div class="text-xl font-bold text-white mt-1"><span id="metric-cur-l2">0.0</span> / <span id="metric-cur-l3">0.0</span> <span class="text-xs font-normal text-slate-400">A</span></div>
+              <div class="text-[10px] text-slate-500 mt-1 font-mono">3-Phase Balanced</div>
+            </div>
+
+            <!-- Board Temperature -->
+            <div class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Internal Temp</div>
+              <div class="text-xl font-bold text-amber-400 mt-1"><span id="metric-temp">47.0</span> <span class="text-xs font-normal text-slate-400">°C</span></div>
+              <div class="text-[10px] text-emerald-400 mt-1 font-mono">Thermal: Normal</div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
-    </div>
+      <!-- RIGHT COLUMN: Dynamic QR Code Payment & Live Logs (5 Cols) -->
+      <div class="lg:col-span-5 space-y-6">
 
-    <!-- Live Activity Log -->
-    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-white">Live Activity Log</h3>
-        <span class="text-[11px] text-slate-500">Auto-refreshes every 2 seconds</span>
+        <!-- Dynamic QR Code Payment Station Card -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800 flex flex-col items-center text-center">
+          <div class="w-full flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
+            <div class="text-left">
+              <h2 class="text-sm font-bold text-white flex items-center gap-1.5">
+                <span>📱</span> Scan & Charge QR Code
+              </h2>
+              <p class="text-[11px] text-slate-400">For customers to scan with mobile camera</p>
+            </div>
+            <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+              Dynamic
+            </span>
+          </div>
+
+          <!-- QR Code Container -->
+          <div class="relative p-4 rounded-3xl bg-white shadow-2xl shadow-emerald-500/10 my-2">
+            <div id="qrcode" class="flex items-center justify-center min-h-[180px] min-w-[180px]"></div>
+          </div>
+
+          <!-- Station & URL Info -->
+          <div class="w-full mt-3 space-y-2">
+            <div class="flex items-center justify-between text-xs px-2 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
+              <span class="text-slate-400">Station / Gun:</span>
+              <span id="qr-station-label" class="font-mono font-bold text-emerald-400">charger1 &bull; Gun #1</span>
+            </div>
+            <div class="flex items-center justify-between text-xs px-2 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
+              <span class="text-slate-400">Tariff Rate:</span>
+              <span class="font-bold text-slate-200">$0.30 / kWh</span>
+            </div>
+          </div>
+
+          <!-- Quick Actions on QR -->
+          <div class="w-full grid grid-cols-2 gap-2 mt-4">
+            <button onclick="simulateScanAndStart()" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-1.5">
+              <span>⚡</span> Scan & Start
+            </button>
+            <button onclick="simulateBankPayment()" class="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-1.5">
+              <span>💳</span> Pay & Unlock
+            </button>
+          </div>
+          <div id="qr-sim-result" class="w-full text-xs text-left text-slate-400 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 mt-2 hidden"></div>
+        </div>
+
+        <!-- Live Activity Log -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-white flex items-center gap-1.5">
+              <span>📜</span> OCPP Activity Stream
+            </h3>
+            <span class="text-[10px] text-slate-500 font-mono">Real-time</span>
+          </div>
+          <div id="logs-box" class="h-56 overflow-y-auto bg-slate-950/90 border border-slate-800/80 rounded-2xl p-3 text-xs font-mono text-slate-400 space-y-1.5 select-text">
+            <div class="text-slate-600 italic">Listening for OCPP 1.6-J messages...</div>
+          </div>
+        </div>
+
       </div>
-      <div id="logs-box" class="h-48 overflow-y-auto bg-slate-950 border border-slate-800/80 rounded-xl p-3 text-xs font-mono text-slate-400 space-y-1">
-        <div class="text-slate-600 italic">Listening for events...</div>
-      </div>
+
     </div>
 
   </main>
 
-  <footer class="border-t border-slate-800 py-4 text-center text-xs text-slate-500">
-    T-Charge &bull; Ready for your React Mobile App &bull; Powered by OCPP 1.6-J
+  <footer class="border-t border-slate-800/80 py-4 text-center text-xs text-slate-500 bg-slate-950/40">
+    T-Charge &bull; High-Performance OCPP 1.6-J Cloud Architecture &bull; Firebase Firestore Sync
   </footer>
 
   <script>
+    let qrcodeObj = null;
+    let currentChargerId = "charger1";
+    let currentActiveTxId = null;
+
+    // Toast helper
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-msg');
+      const toastIcon = document.getElementById('toast-icon');
+      const toastInner = document.getElementById('toast-inner');
+
+      toastMsg.textContent = msg;
+      toastIcon.textContent = isError ? '⚠️' : '✅';
+      toastInner.className = `px-5 py-3.5 rounded-2xl glass-card shadow-2xl flex items-center gap-3 border text-sm ${
+        isError ? 'border-rose-500/50 text-rose-200' : 'border-emerald-500/50 text-emerald-200'
+      }`;
+
+      toast.classList.remove('translate-y-[-120%]', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+
+      setTimeout(() => {
+        toast.classList.add('translate-y-[-120%]', 'opacity-0');
+        toast.classList.remove('translate-y-0', 'opacity-100');
+      }, 3500);
+    }
+
+    // Generate or update QR Code
+    function updateQrCode(chargerId, connectorId = 1) {
+      const qrContainer = document.getElementById('qrcode');
+      const stationLabel = document.getElementById('qr-station-label');
+      stationLabel.textContent = `${chargerId} • Gun #${connectorId}`;
+
+      const url = `http://${window.location.hostname}:3000/charge?charger=${encodeURIComponent(chargerId)}&connector=${connectorId}`;
+
+      qrContainer.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        qrcodeObj = new QRCode(qrContainer, {
+          text: url,
+          width: 180,
+          height: 180,
+          colorDark: "#090D16",
+          colorLight: "#FFFFFF",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } else {
+        // Fallback to QR API image
+        const img = document.createElement('img');
+        img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(url)}`;
+        img.className = 'w-[180px] h-[180px] rounded-lg';
+        qrContainer.appendChild(img);
+      }
+    }
+
+    // Fetch live status & telemetry
     async function fetchStatus() {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
 
-        // Count
-        const count = data.connectedChargers?.length || 0;
-        document.getElementById('chargers-count').textContent = count;
+        const connectedChargers = data.connectedChargers || [];
 
-        // List
-        const listEl = document.getElementById('chargers-list');
-        if (count === 0) {
-          listEl.innerHTML = `
-            <div class="p-6 text-center text-slate-500 text-sm border border-dashed border-slate-800 rounded-xl">
-              Waiting for your Voltronic charger to connect to <code class="text-emerald-400">ws://tcharge.duckdns.org:3000/api/ocpp/version/1.6</code>...
-            </div>
-          `;
-        } else {
-          listEl.innerHTML = data.connectedChargers.map(c => `
-            <div class="p-4 rounded-xl bg-slate-950 border border-emerald-500/20 flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="h-3 w-3 rounded-full bg-emerald-400 animate-ping"></div>
-                <div>
-                  <div class="font-bold text-sm text-white">${c.chargePointId}</div>
-                  <div class="text-xs text-slate-400">Connected since: ${new Date(c.connectedAt).toLocaleTimeString()}</div>
-                </div>
-              </div>
-              <div class="flex items-center gap-2">
-                <button onclick="document.getElementById('cmd-charger-id').value='${c.chargePointId}'; triggerUnlock();" class="text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg transition font-medium">
-                  Unlock Cable
-                </button>
-              </div>
-            </div>
-          `).join('');
+        if (connectedChargers.length > 0) {
+          const firstCharger = connectedChargers[0];
+          currentChargerId = firstCharger.chargePointId;
+          document.getElementById('active-charger-id').textContent = currentChargerId;
+          document.getElementById('input-charger-id').value = currentChargerId;
+
+          // Hardware info
+          if (firstCharger.charger) {
+            const v = firstCharger.charger.vendor || 'CCS_AC';
+            const m = firstCharger.charger.model || 'AC_ThreePhase21KW';
+            document.getElementById('charger-hardware-info').textContent = `${v} • ${m}`;
+          }
+
+          // Connector 1 data & telemetry
+          const conn1 = firstCharger.connectors ? firstCharger.connectors['1'] : null;
+          if (conn1) {
+            const st = conn1.status || 'Available';
+            const badge = document.getElementById('connector-status-badge');
+            const dot = document.getElementById('status-indicator-dot');
+            badge.textContent = st;
+
+            if (st === 'Charging') {
+              badge.className = 'text-2xl font-black text-cyan-400';
+              dot.className = 'h-3 w-3 rounded-full bg-cyan-400 animate-pulse';
+            } else if (st === 'Preparing') {
+              badge.className = 'text-2xl font-black text-amber-400';
+              dot.className = 'h-3 w-3 rounded-full bg-amber-400';
+            } else if (st === 'Available') {
+              badge.className = 'text-2xl font-black text-emerald-400';
+              dot.className = 'h-3 w-3 rounded-full bg-emerald-400';
+            } else {
+              badge.className = 'text-2xl font-black text-purple-400';
+              dot.className = 'h-3 w-3 rounded-full bg-purple-400';
+            }
+
+            // Telemetry readings
+            if (conn1.telemetry) {
+              const tel = conn1.telemetry;
+              document.getElementById('telemetry-power').textContent = (tel.powerKw || 0).toFixed(2);
+              document.getElementById('telemetry-energy').textContent = (tel.energyKwh || ((tel.energyWh || 0) / 1000)).toFixed(2);
+              document.getElementById('metric-voltage').textContent = (tel.voltage || 0).toFixed(1);
+              document.getElementById('metric-volt-l1').textContent = (tel.voltageL1 || tel.voltage || 0).toFixed(1);
+              document.getElementById('metric-cur-l1').textContent = (tel.currentL1 || 0).toFixed(1);
+              document.getElementById('metric-cur-l2').textContent = (tel.currentL2 || 0).toFixed(1);
+              document.getElementById('metric-cur-l3').textContent = (tel.currentL3 || 0).toFixed(1);
+              document.getElementById('telemetry-current-summary').textContent = `L1: ${(tel.currentL1 || 0).toFixed(1)}A • L2: ${(tel.currentL2 || 0).toFixed(1)}A • L3: ${(tel.currentL3 || 0).toFixed(1)}A`;
+
+              if (tel.temperatureC) {
+                document.getElementById('metric-temp').textContent = tel.temperatureC.toFixed(1);
+              }
+
+              if (tel.updatedAt) {
+                document.getElementById('telemetry-timestamp').textContent = new Date(tel.updatedAt).toLocaleTimeString();
+              }
+            }
+          }
+
+          // Active transaction banner
+          const activeTx = firstCharger.activeTransaction;
+          const banner = document.getElementById('active-txn-banner');
+          if (activeTx) {
+            currentActiveTxId = activeTx.transactionId;
+            document.getElementById('active-txn-id').textContent = currentActiveTxId;
+            document.getElementById('active-txn-start').textContent = new Date(activeTx.startTime).toLocaleTimeString();
+            banner.classList.remove('hidden');
+          } else {
+            currentActiveTxId = null;
+            banner.classList.add('hidden');
+          }
         }
 
         // Logs
         const logsBox = document.getElementById('logs-box');
         if (data.recentLogs && data.recentLogs.length > 0) {
-          logsBox.innerHTML = data.recentLogs.map(l => `<div>${l}</div>`).join('');
+          logsBox.innerHTML = data.recentLogs.map(l => {
+            let color = 'text-slate-400';
+            if (l.includes('MeterValues')) color = 'text-cyan-300 font-semibold';
+            else if (l.includes('BootNotification') || l.includes('Connected')) color = 'text-emerald-300 font-semibold';
+            else if (l.includes('StatusNotification')) color = 'text-amber-300';
+            else if (l.includes('Unlock') || l.includes('Start')) color = 'text-indigo-300';
+            return `<div class="${color}">${l}</div>`;
+          }).join('');
         }
+
       } catch (err) {
-        console.error("Status fetch error:", err);
+        console.warn("Status polling error:", err.message);
       }
     }
 
+    // Action: Start Charging
+    async function triggerStartCharge() {
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
+      const idTag = document.getElementById('input-id-tag').value.trim() || 'USER_QR_01';
+
+      showToast(`Sending RemoteStartTransaction to [${chargerId}]...`);
+
+      try {
+        const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId, idTag })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`⚡ Charge Started! Status: ${data.result.status}`);
+        } else {
+          showToast(`Start failed: ${data.error}`, true);
+        }
+        fetchStatus();
+      } catch (e) {
+        showToast(`Error: ${e.message}`, true);
+      }
+    }
+
+    // Action: Stop Charging
+    async function triggerStopCharge() {
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const txId = currentActiveTxId || prompt("Enter Transaction ID to stop:", "101");
+      if (!txId) return;
+
+      showToast(`Sending RemoteStopTransaction #${txId}...`);
+
+      try {
+        const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionId: Number(txId) })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`🛑 Charge Stopped! Status: ${data.result.status}`);
+        } else {
+          showToast(`Stop failed: ${data.error}`, true);
+        }
+        fetchStatus();
+      } catch (e) {
+        showToast(`Error: ${e.message}`, true);
+      }
+    }
+
+    // Action: Unlock Cable
     async function triggerUnlock() {
-      const chargerId = document.getElementById('cmd-charger-id').value.trim();
-      const resBox = document.getElementById('cmd-result');
-      resBox.classList.remove('hidden');
-      resBox.textContent = `Sending UnlockConnector to ${chargerId}...`;
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
+
+      showToast(`Unlocking cable on [${chargerId}]...`);
 
       try {
         const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/unlock`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectorId: 1 })
+          body: JSON.stringify({ connectorId })
         });
         const data = await res.json();
-        resBox.textContent = JSON.stringify(data, null, 2);
+        if (data.success) {
+          showToast(`🔓 Cable Unlocked! Status: ${data.result.status}`);
+        } else {
+          showToast(`Unlock failed: ${data.error}`, true);
+        }
+        fetchStatus();
       } catch (e) {
-        resBox.textContent = `Error: ${e.message}`;
+        showToast(`Error: ${e.message}`, true);
       }
     }
 
-    async function triggerReset() {
-      const chargerId = document.getElementById('cmd-charger-id').value.trim();
-      const resBox = document.getElementById('cmd-result');
-      resBox.classList.remove('hidden');
-      resBox.textContent = `Sending Reset to ${chargerId}...`;
+    // Action: Poll / Trigger Instant Meter Value
+    async function triggerMeterReading() {
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
+
+      showToast(`Polling MeterValues from [${chargerId}]...`);
 
       try {
-        const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/reset`, {
+        const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/trigger`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'Soft' })
+          body: JSON.stringify({ requestedMessage: "MeterValues", connectorId })
         });
         const data = await res.json();
-        resBox.textContent = JSON.stringify(data, null, 2);
+        if (data.success) {
+          showToast(`📊 Meter Value Requested! Status: ${data.result.status}`);
+        } else {
+          showToast(`Poll failed: ${data.error}`, true);
+        }
+        fetchStatus();
       } catch (e) {
-        resBox.textContent = `Error: ${e.message}`;
+        showToast(`Error: ${e.message}`, true);
       }
     }
 
-    async function simulateBankPayment() {
-      const txId = document.getElementById('sim-tx-id').value;
-      const chargerId = document.getElementById('sim-charger-id').value.trim();
-      const resBox = document.getElementById('sim-result');
+    // Action: Simulate Customer Scan QR & Start Charge
+    async function simulateScanAndStart() {
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
+      const idTag = "QR_MOBILE_SCAN_" + Math.floor(Math.random() * 1000);
+
+      const resBox = document.getElementById('qr-sim-result');
       resBox.classList.remove('hidden');
-      resBox.textContent = `Calling bank webhook...`;
+      resBox.textContent = `📱 Customer scanned QR code for [${chargerId}] Connector #${connectorId}...\nStarting charge session...`;
+
+      try {
+        const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId, idTag })
+        });
+        const data = await res.json();
+        resBox.textContent = `✅ QR Code Session Activated!\nResult: ` + JSON.stringify(data.result, null, 2);
+        showToast(`⚡ QR Scan Started Charge for ${idTag}!`);
+        fetchStatus();
+      } catch (e) {
+        resBox.textContent = `❌ Error: ${e.message}`;
+      }
+    }
+
+    // Action: Simulate Bank Payment via QR Code & Auto-Unlock
+    async function simulateBankPayment() {
+      const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
+      const txId = currentActiveTxId || Math.floor(Date.now() % 1000000);
+
+      const resBox = document.getElementById('qr-sim-result');
+      resBox.classList.remove('hidden');
+      resBox.textContent = `💳 Bank received QR Payment confirmation for Tx #${txId}...\nCalling Webhook & Auto-Unlocking cable...`;
 
       try {
         const res = await fetch('/api/payment-webhook', {
@@ -257,19 +629,34 @@
             chargePointId: chargerId,
             connectorId: 1,
             status: "SUCCESS",
-            bankReference: "BANK_TEST_" + Date.now()
+            bankReference: "QR_PAY_" + Date.now()
           })
         });
         const data = await res.json();
-        resBox.textContent = JSON.stringify(data, null, 2);
+        resBox.textContent = `✅ Payment Confirmed! Cable Auto-Unlocked.\n` + JSON.stringify(data, null, 2);
+        showToast(`💳 Payment Recorded & Cable Unlocked!`);
+        fetchStatus();
       } catch (e) {
-        resBox.textContent = `Error: ${e.message}`;
+        resBox.textContent = `❌ Error: ${e.message}`;
       }
     }
 
-    // Auto-refresh every 2 seconds
-    fetchStatus();
-    setInterval(fetchStatus, 2000);
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+      updateQrCode(currentChargerId, 1);
+      fetchStatus();
+      setInterval(fetchStatus, 2500);
+
+      // Listen to charger ID input changes to dynamically update QR code
+      document.getElementById('input-charger-id').addEventListener('input', (e) => {
+        const id = e.target.value.trim() || 'charger1';
+        updateQrCode(id, document.getElementById('input-connector-id').value);
+      });
+      document.getElementById('input-connector-id').addEventListener('change', (e) => {
+        const chId = document.getElementById('input-charger-id').value.trim() || 'charger1';
+        updateQrCode(chId, e.target.value);
+      });
+    });
   </script>
 </body>
 </html>
