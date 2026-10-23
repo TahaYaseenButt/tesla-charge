@@ -267,17 +267,17 @@
       <!-- RIGHT COLUMN: Dynamic QR Code Payment & Live Logs (5 Cols) -->
       <div class="lg:col-span-5 space-y-6">
 
-        <!-- Dynamic QR Code Payment Station Card -->
+        <!-- Station QR Code Card -->
         <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800 flex flex-col items-center text-center">
           <div class="w-full flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
             <div class="text-left">
               <h2 class="text-sm font-bold text-white flex items-center gap-1.5">
-                <span>📱</span> Scan & Charge QR Code
+                <span>📱</span> Station QR Code
               </h2>
-              <p class="text-[11px] text-slate-400">For customers to scan with mobile camera</p>
+              <p class="text-[11px] text-slate-400">Scan with camera to connect & charge</p>
             </div>
-            <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-              Dynamic
+            <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              Direct Access
             </span>
           </div>
 
@@ -293,8 +293,8 @@
               <span id="qr-station-label" class="font-mono font-bold text-emerald-400">charger1 &bull; Gun #1</span>
             </div>
             <div class="flex items-center justify-between text-xs px-2 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
-              <span class="text-slate-400">Tariff Rate:</span>
-              <span class="font-bold text-slate-200">$0.30 / kWh</span>
+              <span class="text-slate-400">Access Mode:</span>
+              <span class="font-bold text-slate-200">Open (No Payment Required)</span>
             </div>
           </div>
 
@@ -303,8 +303,8 @@
             <button onclick="simulateScanAndStart()" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-1.5">
               <span>⚡</span> Scan & Start
             </button>
-            <button onclick="simulateBankPayment()" class="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-1.5">
-              <span>💳</span> Pay & Unlock
+            <button onclick="simulateScanAndStop()" class="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition flex items-center justify-center gap-1.5">
+              <span>🛑</span> Stop & Unlock
             </button>
           </div>
           <div id="qr-sim-result" class="w-full text-xs text-left text-slate-400 font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 mt-2 hidden"></div>
@@ -513,10 +513,10 @@
     // Action: Stop Charging
     async function triggerStopCharge() {
       const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
-      const txId = currentActiveTxId || prompt("Enter Transaction ID to stop:", "101");
-      if (!txId) return;
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
+      const txId = currentActiveTxId || 1;
 
-      showToast(`Sending RemoteStopTransaction #${txId}...`);
+      showToast(`Stopping session & unlocking cable on [${chargerId}]...`);
 
       try {
         const res = await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/stop`, {
@@ -525,11 +525,15 @@
           body: JSON.stringify({ transactionId: Number(txId) })
         });
         const data = await res.json();
-        if (data.success) {
-          showToast(`🛑 Charge Stopped! Status: ${data.result.status}`);
-        } else {
-          showToast(`Stop failed: ${data.error}`, true);
-        }
+        
+        // Immediately unlock cable (no payment barrier)
+        await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/unlock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId })
+        });
+
+        showToast(`🛑 Charge Stopped & Cable Unlocked!`);
         fetchStatus();
       } catch (e) {
         showToast(`Error: ${e.message}`, true);
@@ -611,30 +615,30 @@
       }
     }
 
-    // Action: Simulate Bank Payment via QR Code & Auto-Unlock
-    async function simulateBankPayment() {
+    // Action: Simulate Customer Scan QR to Stop Session & Unlock
+    async function simulateScanAndStop() {
       const chargerId = document.getElementById('input-charger-id').value.trim() || currentChargerId;
-      const txId = currentActiveTxId || Math.floor(Date.now() % 1000000);
+      const connectorId = parseInt(document.getElementById('input-connector-id').value, 10) || 1;
 
       const resBox = document.getElementById('qr-sim-result');
       resBox.classList.remove('hidden');
-      resBox.textContent = `💳 Bank received QR Payment confirmation for Tx #${txId}...\nCalling Webhook & Auto-Unlocking cable...`;
+      resBox.textContent = `🛑 Stopping session and unlocking cable for [${chargerId}] Connector #${connectorId} (No Payment Required)...`;
 
       try {
-        const res = await fetch('/api/payment-webhook', {
+        if (currentActiveTxId) {
+          await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionId: Number(currentActiveTxId) })
+          });
+        }
+        await fetch(`/api/chargers/${encodeURIComponent(chargerId)}/unlock`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            transactionId: Number(txId),
-            chargePointId: chargerId,
-            connectorId: 1,
-            status: "SUCCESS",
-            bankReference: "QR_PAY_" + Date.now()
-          })
+          body: JSON.stringify({ connectorId })
         });
-        const data = await res.json();
-        resBox.textContent = `✅ Payment Confirmed! Cable Auto-Unlocked.\n` + JSON.stringify(data, null, 2);
-        showToast(`💳 Payment Recorded & Cable Unlocked!`);
+        resBox.textContent = `✅ Session Stopped & Cable Unlocked!`;
+        showToast(`🛑 Stopped & Unlocked (No Payment)!`);
         fetchStatus();
       } catch (e) {
         resBox.textContent = `❌ Error: ${e.message}`;

@@ -113,8 +113,17 @@ export const actionHandlers = {
       meterStop,
       timestamp,
       reason,
-      pricePerKwh
+      0 // No payment calculation
     );
+
+    // Automatically unlock cable immediately on stop (no payment required)
+    setTimeout(async () => {
+      try {
+        const { ocppServer } = await import("./OCPPServer.js");
+        await ocppServer.unlockConnector(chargePointId, 1);
+        console.log(`[OCPP] Auto-unlocked cable for [${chargePointId}] after stop`);
+      } catch (_e) {}
+    }, 1000);
 
     return {
       idTagInfo: {

@@ -28,6 +28,12 @@ export function startCommandListener() {
               result = await ocppServer.unlockConnector(chargePointId, connectorId || 1);
             } else if (action === "RemoteStopTransaction") {
               result = await ocppServer.remoteStopTransaction(chargePointId, transactionId);
+              // Auto-unlock connector immediately on stop (no payment required)
+              setTimeout(async () => {
+                try {
+                  await ocppServer.unlockConnector(chargePointId, connectorId || 1);
+                } catch (_e) {}
+              }, 1000);
             } else if (action === "RemoteStartTransaction") {
               result = await ocppServer.remoteStartTransaction(chargePointId, connectorId || 1, idTag || "AppUser");
             } else if (action === "Reset") {

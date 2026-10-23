@@ -195,14 +195,18 @@ export default function HomeScreen() {
     }
   };
 
-  // Simulate paying QR invoice and auto-unlocking cable
-  const handleQrPayUnlock = async () => {
+  // Stop charging session and auto-unlock cable (no payment needed)
+  const handleStopAndUnlock = async () => {
     try {
-      setActionLoading('qr_pay');
-      setQrActionMsg('💳 Bank processing QR payment webhook...');
-      // Trigger unlock via command
+      setActionLoading('stop_unlock');
+      setQrActionMsg('🛑 Stopping session and unlocking cable...');
+      if (activeTxData?.transactionId) {
+        await sendCommand('RemoteStopTransaction', selectedConnector, {
+          transactionId: activeTxData.transactionId,
+        });
+      }
       await sendCommand('UnlockConnector', selectedConnector);
-      setQrActionMsg('✅ Payment Confirmed & Cable Unlocked!');
+      setQrActionMsg('✅ Session Stopped & Cable Unlocked!');
     } catch (e: any) {
       setQrActionMsg('❌ Error: ' + e.message);
     } finally {
@@ -328,13 +332,14 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={styles.activeTxStopBtn}
               disabled={actionLoading !== null}
-              onPress={() =>
-                sendCommand('RemoteStopTransaction', activeTxData.connectorId || 1, {
+              onPress={async () => {
+                await sendCommand('RemoteStopTransaction', activeTxData.connectorId || 1, {
                   transactionId: activeTxData.transactionId,
-                })
-              }
+                });
+                await sendCommand('UnlockConnector', activeTxData.connectorId || 1);
+              }}
             >
-              <Text style={styles.activeTxStopBtnText}>🛑 STOP SESSION</Text>
+              <Text style={styles.activeTxStopBtnText}>🛑 STOP & UNLOCK</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -458,13 +463,14 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={styles.stopButton}
               disabled={actionLoading !== null}
-              onPress={() =>
-                sendCommand('RemoteStopTransaction', selectedConnector, {
+              onPress={async () => {
+                await sendCommand('RemoteStopTransaction', selectedConnector, {
                   transactionId: activeTxData?.transactionId,
-                })
-              }
+                });
+                await sendCommand('UnlockConnector', selectedConnector);
+              }}
             >
-              <Text style={styles.stopButtonText}>🛑 STOP CHARGING</Text>
+              <Text style={styles.stopButtonText}>🛑 STOP & UNLOCK</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
@@ -486,15 +492,15 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Station QR Code & Instant Billing Card */}
+      {/* Station QR Code Card */}
       <View style={styles.qrCard}>
         <View style={styles.qrHeader}>
           <View>
             <Text style={styles.qrCardTitle}>📱 STATION QR CODE</Text>
-            <Text style={styles.qrCardSubtitle}>Scan to start session & pay tariff</Text>
+            <Text style={styles.qrCardSubtitle}>Scan to connect & control charging</Text>
           </View>
           <View style={styles.rateBadge}>
-            <Text style={styles.rateBadgeText}>$0.30 / kWh</Text>
+            <Text style={styles.rateBadgeText}>Direct Access</Text>
           </View>
         </View>
 
@@ -543,9 +549,9 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={styles.qrPayBtn}
             disabled={actionLoading !== null}
-            onPress={handleQrPayUnlock}
+            onPress={handleStopAndUnlock}
           >
-            <Text style={styles.qrPayBtnText}>💳 Pay & Unlock</Text>
+            <Text style={styles.qrPayBtnText}>🛑 Stop & Unlock</Text>
           </TouchableOpacity>
         </View>
 

@@ -82,8 +82,8 @@ export default function HistoryScreen() {
           <Text style={styles.summaryValue}>{totalEnergy.toFixed(1)} kWh</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>TOTAL SPENT</Text>
-          <Text style={styles.summaryValue}>${totalCost.toFixed(2)}</Text>
+          <Text style={styles.summaryLabel}>AVG ENERGY</Text>
+          <Text style={styles.summaryValue}>{transactions.length > 0 ? (totalEnergy / transactions.length).toFixed(1) : '0.0'} kWh</Text>
         </View>
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>SESSIONS</Text>
@@ -96,12 +96,12 @@ export default function HistoryScreen() {
         <View style={styles.emptyCard}>
           <Text style={styles.emptyIcon}>🔋</Text>
           <Text style={styles.emptyText}>No charging sessions recorded yet.</Text>
-          <Text style={styles.emptySubtext}>Plug in a car to view live sessions and receipts!</Text>
+          <Text style={styles.emptySubtext}>Plug in a car to view live sessions and telemetry!</Text>
         </View>
       ) : (
         <View style={styles.listContainer}>
           {transactions.map((tx) => {
-            const isPaid = tx.paymentStatus === 'Paid';
+            const isCompleted = tx.status === 'Completed' || tx.meterStop !== undefined;
             const dateStr = tx.startTime ? new Date(tx.startTime).toLocaleDateString() : 'Recent';
             const timeStr = tx.startTime ? new Date(tx.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -112,9 +112,9 @@ export default function HistoryScreen() {
                     <Text style={styles.txDate}>{dateStr} • {timeStr}</Text>
                     <Text style={styles.txId}>Session #{tx.transactionId || tx.id}</Text>
                   </View>
-                  <View style={[styles.badge, isPaid ? styles.paidBadge : styles.pendingBadge]}>
-                    <Text style={[styles.badgeText, isPaid ? styles.paidText : styles.pendingText]}>
-                      {isPaid ? 'PAID' : 'PENDING'}
+                  <View style={[styles.badge, isCompleted ? styles.paidBadge : styles.pendingBadge]}>
+                    <Text style={[styles.badgeText, isCompleted ? styles.paidText : styles.pendingText]}>
+                      {isCompleted ? 'COMPLETED' : 'IN PROGRESS'}
                     </Text>
                   </View>
                 </View>
@@ -125,18 +125,18 @@ export default function HistoryScreen() {
                   <View>
                     <Text style={styles.detailLabel}>ENERGY DELIVERED</Text>
                     <Text style={styles.detailValueBold}>
-                      {tx.energyDeliveredKwh !== undefined ? `${tx.energyDeliveredKwh} kWh` : 'In Progress'}
+                      {tx.energyDeliveredKwh !== undefined ? `${tx.energyDeliveredKwh} kWh` : 'Charging...'}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.detailLabel}>TOTAL AMOUNT</Text>
-                    <Text style={styles.costValue}>${(tx.cost || 0).toFixed(2)}</Text>
+                    <Text style={styles.detailLabel}>CONNECTOR</Text>
+                    <Text style={styles.costValue}>Gun #{tx.connectorId || 1}</Text>
                   </View>
                 </View>
 
                 {tx.reason && (
                   <Text style={styles.txReason}>
-                    Ended: {tx.reason}
+                    Stop Reason: {tx.reason}
                   </Text>
                 )}
               </View>

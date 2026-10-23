@@ -84,6 +84,12 @@ apiRouter.post("/chargers/:chargePointId/stop", async (req, res) => {
 
   try {
     const result = await ocppServer.remoteStopTransaction(chargePointId, transactionId);
+    // Auto-unlock connector immediately on stop (no payment required)
+    setTimeout(async () => {
+      try {
+        await ocppServer.unlockConnector(chargePointId, 1);
+      } catch (_e) {}
+    }, 1000);
     return res.json({ success: true, result });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
