@@ -91,6 +91,66 @@ apiRouter.post("/chargers/:chargePointId/stop", async (req, res) => {
 });
 
 /**
+ * Direct API to remote start transaction
+ */
+apiRouter.post("/chargers/:chargePointId/start", async (req, res) => {
+  const { chargePointId } = req.params;
+  const connectorId = req.body.connectorId || 1;
+  const idTag = req.body.idTag || "USER_APP_01";
+
+  try {
+    const result = await ocppServer.remoteStartTransaction(chargePointId, connectorId, idTag);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct API to change configuration on charger
+ */
+apiRouter.post("/chargers/:chargePointId/config", async (req, res) => {
+  const { chargePointId } = req.params;
+  const { key, value } = req.body;
+
+  try {
+    const result = await ocppServer.changeConfiguration(chargePointId, key, value);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct API to query configuration from charger
+ */
+apiRouter.get("/chargers/:chargePointId/config", async (req, res) => {
+  const { chargePointId } = req.params;
+
+  try {
+    const result = await ocppServer.getConfiguration(chargePointId, []);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct API to trigger message (MeterValues, StatusNotification, etc.)
+ */
+apiRouter.post("/chargers/:chargePointId/trigger", async (req, res) => {
+  const { chargePointId } = req.params;
+  const { requestedMessage = "MeterValues", connectorId = 1 } = req.body;
+
+  try {
+    const result = await ocppServer.triggerMessage(chargePointId, requestedMessage, connectorId);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * Server status and connected chargers list
  */
 apiRouter.get("/status", (_req, res) => {

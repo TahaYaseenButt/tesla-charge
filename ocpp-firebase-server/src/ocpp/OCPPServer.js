@@ -235,6 +235,17 @@ export class OCPPServer {
   }
 
   /**
+   * Request charger to immediately send a specific message (e.g. MeterValues, StatusNotification)
+   */
+  async triggerMessage(chargePointId, requestedMessage = "MeterValues", connectorId = 1) {
+    this.log(`Triggering message [${requestedMessage}] on connector ${connectorId} on [${chargePointId}]...`);
+    return await this.sendCall(chargePointId, "TriggerMessage", {
+      requestedMessage,
+      connectorId: Number(connectorId),
+    });
+  }
+
+  /**
    * Get charger internal configuration keys
    */
   async getConfiguration(chargePointId, keys = []) {

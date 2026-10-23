@@ -32,6 +32,12 @@ export function startCommandListener() {
               result = await ocppServer.remoteStartTransaction(chargePointId, connectorId || 1, idTag || "AppUser");
             } else if (action === "Reset") {
               result = await ocppServer.reset(chargePointId, type || "Soft");
+            } else if (action === "TriggerMessage") {
+              result = await ocppServer.triggerMessage(
+                chargePointId,
+                data.requestedMessage || "MeterValues",
+                connectorId || 1
+              );
             } else {
               throw new Error(`Unsupported command action: ${action}`);
             }

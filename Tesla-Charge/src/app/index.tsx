@@ -13,7 +13,7 @@ import {
 import { doc, onSnapshot, collection, addDoc, query, where, limit } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 
-const CHARGER_ID = 'charger01'; // Default charger ID matching your Voltronic charger
+const CHARGER_ID = 'charger1'; // Matches your physical connected charger
 
 // 4 State Images from your design
 const STATE_IMAGES = {

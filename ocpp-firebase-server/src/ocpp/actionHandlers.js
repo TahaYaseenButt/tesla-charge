@@ -14,9 +14,24 @@ export const actionHandlers = {
   /**
    * Charger powers on or connects
    */
+  /**
+   * Charger powers on or connects
+   */
   async BootNotification(chargePointId, payload) {
     console.log(`[OCPP] BootNotification from ${chargePointId}:`, payload);
     await saveChargerBoot(chargePointId, payload);
+
+    // Auto-configure clock-aligned meter readings so charger streams telemetry even in idle/preparing
+    setTimeout(async () => {
+      try {
+        const { ocppServer } = await import("./OCPPServer.js");
+        await ocppServer.changeConfiguration(chargePointId, "ClockAlignedDataInterval", "15");
+        await ocppServer.changeConfiguration(chargePointId, "MeterValueSampleInterval", "10");
+        console.log(`[OCPP] Configured meter reporting intervals (15s) for [${chargePointId}]`);
+      } catch (err) {
+        console.warn(`[OCPP] Auto-config on boot:`, err.message);
+      }
+    }, 2000);
 
     return {
       status: "Accepted",
@@ -109,7 +124,7 @@ export const actionHandlers = {
   },
 
   /**
-   * Real-time meter telemetry (Power kW, Voltage, Amps, Energy Wh, SoC)
+   * Real-time meter telemetry (Power kW, Voltage, Amps, Energy Wh, Temperature, SoC)
    */
   async MeterValues(chargePointId, payload) {
     const { connectorId, transactionId, meterValue } = payload;
@@ -117,10 +132,15 @@ export const actionHandlers = {
     const telemetry = {
       powerKw: 0,
       energyWh: 0,
+      energyKwh: 0,
       voltage: 0,
+      voltageL1: 0,
+      voltageL2: 0,
+      voltageL3: 0,
       currentL1: 0,
       currentL2: 0,
       currentL3: 0,
+      temperatureC: null,
       soc: null,
       raw: meterValue,
     };
@@ -131,21 +151,33 @@ export const actionHandlers = {
         for (const sample of entry.sampledValue) {
           const val = parseFloat(sample.value) || 0;
           const measurand = sample.measurand || "Energy.Active.Import.Register";
+          const unit = (sample.unit || "").toUpperCase();
           const phase = sample.phase;
 
           if (measurand === "Power.Active.Import") {
-            telemetry.powerKw = Number((val / 1000).toFixed(2));
+            telemetry.powerKw = unit === "KW" ? val : Number((val / 1000).toFixed(2));
           } else if (measurand === "Energy.Active.Import.Register") {
-            telemetry.energyWh = val;
+            if (unit === "KWH") {
+              telemetry.energyKwh = val;
+              telemetry.energyWh = Math.round(val * 1000);
+            } else {
+              telemetry.energyWh = val;
+              telemetry.energyKwh = Number((val / 1000).toFixed(3));
+            }
           } else if (measurand === "Voltage") {
+            if (phase === "L1") telemetry.voltageL1 = val;
+            else if (phase === "L2") telemetry.voltageL2 = val;
+            else if (phase === "L3") telemetry.voltageL3 = val;
             telemetry.voltage = val;
-          } else if (measurand === "SoC") {
-            telemetry.soc = val;
           } else if (measurand === "Current.Import") {
             if (phase === "L1") telemetry.currentL1 = val;
             else if (phase === "L2") telemetry.currentL2 = val;
             else if (phase === "L3") telemetry.currentL3 = val;
             else if (!phase) telemetry.currentL1 = val;
+          } else if (measurand === "Temperature") {
+            telemetry.temperatureC = val;
+          } else if (measurand === "SoC") {
+            telemetry.soc = val;
           }
         }
       }
