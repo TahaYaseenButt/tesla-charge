@@ -150,7 +150,7 @@ export default function HomeScreen() {
       if (d) setConnector2Data((prev: any) => prev || d);
     });
     getLocalActiveTx(CHARGER_ID).then((tx) => {
-      if (tx) setActiveTxData((prev: any) => prev || tx);
+      if (tx && tx.status === 'Charging') setActiveTxData((prev: any) => prev || tx);
     });
     getLocalTransactions(CHARGER_ID, user?.uid).then((list) => {
       if (list && list.length > 0) {
@@ -184,7 +184,7 @@ export default function HomeScreen() {
       .then((c1) => {
         if (c1) {
           setConnector1Data((prev: any) => prev || c1);
-          if (c1.activeTx) setActiveTx1Data((prev: any) => prev || c1.activeTx);
+          if (c1.activeTx && c1.status === 'Charging') setActiveTx1Data((prev: any) => prev || c1.activeTx);
           saveLocalConnectorData(CHARGER_ID, '1', c1);
         }
       })
@@ -194,7 +194,7 @@ export default function HomeScreen() {
       .then((c2) => {
         if (c2) {
           setConnector2Data((prev: any) => prev || c2);
-          if (c2.activeTx) setActiveTx2Data((prev: any) => prev || c2.activeTx);
+          if (c2.activeTx && c2.status === 'Charging') setActiveTx2Data((prev: any) => prev || c2.activeTx);
           saveLocalConnectorData(CHARGER_ID, '2', c2);
         }
       })
@@ -235,32 +235,34 @@ export default function HomeScreen() {
         if (c1) {
           setConnector1Data((prev: any) => ({
             ...c1,
-            activeTx: c1.activeTx || prev?.activeTx || null,
+            activeTx: c1.status === 'Charging' ? (c1.activeTx || prev?.activeTx || null) : null,
           }));
           saveLocalConnectorData(CHARGER_ID, '1', c1);
         }
         if (c2) {
           setConnector2Data((prev: any) => ({
             ...c2,
-            activeTx: c2.activeTx || prev?.activeTx || null,
+            activeTx: c2.status === 'Charging' ? (c2.activeTx || prev?.activeTx || null) : null,
           }));
           saveLocalConnectorData(CHARGER_ID, '2', c2);
         }
 
-        // Active charging session(s)
+        // Active charging session(s) - strictly null if connector is not actively charging
         const activeList = Object.values(live.activeTx || {}).filter(Boolean) as any[];
         const txA = live.activeTx?.['1'] || (Array.isArray(live.activeTx) ? live.activeTx[1] : null);
         const txB = live.activeTx?.['2'] || (Array.isArray(live.activeTx) ? live.activeTx[2] : null);
-        if (txA) setActiveTx1Data(txA);
-        else if (c1?.status !== 'Charging') setActiveTx1Data(null);
+        if (txA && c1?.status === 'Charging') setActiveTx1Data(txA);
+        else setActiveTx1Data(null);
 
-        if (txB) setActiveTx2Data(txB);
-        else if (c2?.status !== 'Charging') setActiveTx2Data(null);
+        if (txB && c2?.status === 'Charging') setActiveTx2Data(txB);
+        else setActiveTx2Data(null);
 
-        const primaryTx = txB || txA || (activeList.length ? activeList[0] : null);
+        const primaryTx = (txB && c2?.status === 'Charging') ? txB : (txA && c1?.status === 'Charging') ? txA : null;
         if (primaryTx) {
           setActiveTxData(primaryTx);
           saveLocalActiveTx(CHARGER_ID, primaryTx);
+        } else {
+          setActiveTxData(null);
         }
 
         // Add new sessions to local history cache once (not on every meter value)
