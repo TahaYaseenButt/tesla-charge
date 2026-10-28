@@ -1,23 +1,31 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
   Image,
-  Animated,
-  Easing,
+  TouchableOpacity,
 } from 'react-native';
-import { doc, onSnapshot, collection, addDoc, query, where, limit } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { ref, onValue } from 'firebase/database';
+import { doc, onSnapshot, collection, query, orderBy, limit } from 'firebase/firestore';
+import { router, Redirect } from 'expo-router';
+import { rtdb, db, livePath, fetchFirestoreDoc } from '@/config/firebase';
+import { useAuth } from '@/config/auth';
+import {
+  getLocalChargerData,
+  saveLocalChargerData,
+  getLocalConnectorData,
+  saveLocalConnectorData,
+  getLocalActiveTx,
+  saveLocalActiveTx,
+  getLocalTransactions,
+  mergeLocalTransaction,
+} from '@/services/storage';
+import { DashboardSkeleton } from '@/components/skeleton';
 
-const CHARGER_ID = 'charger1'; // Matches your physical connected charger
-
-// 4 State Images from your design (cropped transparent PNGs)
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
   left: require('@/assets/images/states/state_left.png'),
@@ -25,744 +33,889 @@ const STATE_IMAGES = {
   both: require('@/assets/images/states/state_both.png'),
 };
 
+const STATE_IMAGES_30KW = {
+  idle: require('@/assets/images/states/state_30kw_idle.png'),
+  connected: require('@/assets/images/states/state_30kw_connected.png'),
+};
+
+const STATE_IMAGES_240KW = {
+  idle: require('@/assets/images/states/state_240kw_idle.png'),
+  left: require('@/assets/images/states/state_240kw_left.png'),
+  right: require('@/assets/images/states/state_240kw_right.png'),
+  both: require('@/assets/images/states/state_240kw_both.png'),
+};
+
 type CarState = 'idle' | 'left' | 'right' | 'both';
 
+const STATUS_CONFIG: Record<
+  string,
+  {
+    color: string;
+    label: string;
+    bg: string;
+    border: string;
+  }
+> = {
+  Charging: { color: '#059669', label: 'CHARGING', bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)' },
+  Preparing: { color: '#D97706', label: 'CONNECTED', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
+  SuspendedEV: { color: '#6366F1', label: 'PAUSED', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
+  SuspendedEVSE: { color: '#6366F1', label: 'PAUSED', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
+  Finishing: { color: '#0284C7', label: 'COMPLETING', bg: 'rgba(2, 132, 199, 0.08)', border: 'rgba(2, 132, 199, 0.25)' },
+  Available: { color: '#475569', label: 'AVAILABLE', bg: 'rgba(100, 116, 139, 0.06)', border: 'rgba(100, 116, 139, 0.15)' },
+  Reserved: { color: '#D97706', label: 'RESERVED', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
+  Unavailable: { color: '#94A3B8', label: 'OFFLINE', bg: 'rgba(148, 163, 184, 0.06)', border: 'rgba(148, 163, 184, 0.15)' },
+  Faulted: { color: '#DC2626', label: 'FAULT', bg: 'rgba(220, 38, 38, 0.08)', border: 'rgba(220, 38, 38, 0.25)' },
+};
+
+// Fix Issue 6: Fallback badge getter so unknown statuses never crash the UI
+export const getStatusConfig = (status?: string) => {
+  if (!status) return STATUS_CONFIG.Available;
+  return (
+    STATUS_CONFIG[status] || {
+      color: '#475569',
+      label: String(status).toUpperCase(),
+      bg: 'rgba(100, 116, 139, 0.06)',
+      border: 'rgba(100, 116, 139, 0.15)',
+    }
+  );
+};
+
 export default function HomeScreen() {
+  const {
+    chargerId: configuredId,
+    chargerModel,
+    stationLocation,
+    isAuthenticated,
+    isLoading: authLoading,
+    user,
+    logout,
+    tariffRate,
+    currency,
+  } = useAuth();
+
+  const CHARGER_ID = configuredId || 'charger1';
+
   const [chargerData, setChargerData] = useState<any>(null);
   const [connector1Data, setConnector1Data] = useState<any>(null);
   const [connector2Data, setConnector2Data] = useState<any>(null);
   const [activeTxData, setActiveTxData] = useState<any>(null);
+  const [activeTx1Data, setActiveTx1Data] = useState<any>(null);
+  const [activeTx2Data, setActiveTx2Data] = useState<any>(null);
+  const [lastCompletedTx, setLastCompletedTx] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [selectedConnector, setSelectedConnector] = useState<number>(1);
-  const [qrActionMsg, setQrActionMsg] = useState<string | null>(null);
+  const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
+  const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
+  const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
 
-  // Manual state override for car positions (or 'auto' for live charger sync)
-  const [stateMode, setStateMode] = useState<'auto' | CarState>('auto');
-
-  // Subtle breathing pulse for glowing gun and station LED
-  const gunGlowAnim = useRef(new Animated.Value(0)).current;
-
-  // 1. Listen to the Charger document in real-time
+  // Fix Issue 4: Track true Firebase server time offset so clock drifts never wrongly show station offline
   useEffect(() => {
-    const chargerRef = doc(db, 'chargers', CHARGER_ID);
-    const unsubCharger = onSnapshot(chargerRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setChargerData(docSnap.data());
-      } else {
-        setChargerData(null);
-      }
-      setLoading(false);
+    const offsetRef = ref(rtdb, '.info/serverTimeOffset');
+    const unsubOffset = onValue(offsetRef, (snap) => {
+      setServerTimeOffset(snap.val() || 0);
     });
-
-    // 2. Listen to Connector 1 (Left Gun)
-    const conn1Ref = doc(db, 'chargers', CHARGER_ID, 'connectors', '1');
-    const unsubConn1 = onSnapshot(conn1Ref, (docSnap) => {
-      if (docSnap.exists()) {
-        setConnector1Data(docSnap.data());
-      } else {
-        setConnector1Data(null);
-      }
-    });
-
-    // 3. Listen to Connector 2 (Right Gun)
-    const conn2Ref = doc(db, 'chargers', CHARGER_ID, 'connectors', '2');
-    const unsubConn2 = onSnapshot(conn2Ref, (docSnap) => {
-      if (docSnap.exists()) {
-        setConnector2Data(docSnap.data());
-      } else {
-        setConnector2Data(null);
-      }
-    });
-
-    // 4. Listen for any active transaction
-    const txQuery = query(
-      collection(db, 'transactions'),
-      where('chargePointId', '==', CHARGER_ID),
-      where('status', '==', 'Charging'),
-      limit(1)
-    );
-    const unsubTx = onSnapshot(txQuery, (querySnap) => {
-      if (!querySnap.empty) {
-        setActiveTxData(querySnap.docs[0].data());
-      } else {
-        setActiveTxData(null);
-      }
-    });
-
-    return () => {
-      unsubCharger();
-      unsubConn1();
-      unsubConn2();
-      unsubTx();
-    };
+    return () => unsubOffset();
   }, []);
 
-  // Compute car state dynamically from live connector statuses
-  const status1 = connector1Data?.status || 'Available';
-  const status2 = connector2Data?.status || 'Available';
-
-  const isLeftConnected = status1 === 'Charging' || status1 === 'Preparing' || status1 === 'SuspendedEV' || status1 === 'SuspendedEVSE';
-  const isRightConnected = status2 === 'Charging' || status2 === 'Preparing' || status2 === 'SuspendedEV' || status2 === 'SuspendedEVSE';
-
-  let autoState: CarState = 'idle';
-  if (isLeftConnected && isRightConnected) {
-    autoState = 'both';
-  } else if (isLeftConnected) {
-    autoState = 'left';
-  } else if (isRightConnected) {
-    autoState = 'right';
-  }
-
-  // Active state to render
-  const activeState: CarState = stateMode === 'auto' ? autoState : stateMode;
-
-  const stateTitles: Record<CarState, string> = {
-    idle: '1 • Charger Standby',
-    left: '2 • EV on Left Gun',
-    right: '3 • EV on Right Gun',
-    both: '4 • Dual Charging Active',
-  };
-
-  const isOnline = chargerData?.status === 'Online';
-  const isCharging = activeState !== 'idle' || activeTxData !== null;
-
-  // Smooth breathing animation loop based on active status
+  // Safety fallback: Ensure skeleton loader never hangs indefinitely if offline
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(gunGlowAnim, {
-          toValue: 1,
-          duration: isCharging ? 900 : status1 === 'Preparing' ? 700 : 1600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(gunGlowAnim, {
-          toValue: 0,
-          duration: isCharging ? 900 : status1 === 'Preparing' ? 700 : 1600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  }, [isCharging, status1]);
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 1200);
+    return () => clearTimeout(safetyTimer);
+  }, []);
 
-  const gunGlowOpacity = gunGlowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.35, 0.95],
-  });
-  const gunGlowScale = gunGlowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.92, 1.25],
-  });
+  useEffect(() => {
+    if (!CHARGER_ID || !isAuthenticated) return;
 
-  // Professional status themes for glowing gun & station LED
-  const STATUS_THEMES: Record<string, {
-    color: string;
-    glow: string;
-    label: string;
-    description: string;
-  }> = {
-    Charging: {
-      color: '#10B981',
-      glow: 'rgba(16, 185, 129, 0.45)',
-      label: 'CHARGING',
-      description: 'Active 21kW 3-Phase power delivery',
-    },
-    Preparing: {
-      color: '#F59E0B',
-      glow: 'rgba(245, 158, 11, 0.5)',
-      label: 'PREPARING',
-      description: 'Cable locked • Handshaking with EV',
-    },
-    SuspendedEV: {
-      color: '#8B5CF6',
-      glow: 'rgba(139, 92, 246, 0.45)',
-      label: 'SUSPENDED',
-      description: 'Vehicle paused input or battery full',
-    },
-    SuspendedEVSE: {
-      color: '#8B5CF6',
-      glow: 'rgba(139, 92, 246, 0.45)',
-      label: 'SUSPENDED',
-      description: 'Station holding power delivery',
-    },
-    Finishing: {
-      color: '#0284C7',
-      glow: 'rgba(2, 132, 199, 0.45)',
-      label: 'FINISHING',
-      description: 'Session complete • Releasing connector',
-    },
-    Available: {
-      color: '#059669',
-      glow: 'rgba(16, 185, 129, 0.2)',
-      label: 'STANDBY',
-      description: 'Station ready • Connect cable to start',
-    },
-    Faulted: {
-      color: '#EF4444',
-      glow: 'rgba(239, 68, 68, 0.5)',
-      label: 'FAULT',
-      description: 'Check cable connection',
-    },
-  };
+    // Static setup info (model, vendor, location) from Firestore; live fields come from RTDB
+    let staticInfo: Record<string, any> = {};
+    let liveInfo: Record<string, any> = {};
+    const publishCharger = () => {
+      const merged = { ...staticInfo, ...liveInfo };
+      setChargerData(merged);
+      saveLocalChargerData(CHARGER_ID, merged);
+    };
 
-  const currentTheme = STATUS_THEMES[status1] || STATUS_THEMES.Available;
-
-  // Live telemetry metrics from physical hardware
-  const tel1 = connector1Data?.telemetry;
-  const tel2 = connector2Data?.telemetry;
-
-  const power1 = tel1?.powerKw || 0;
-  const power2 = tel2?.powerKw || 0;
-  const totalPower = (power1 + power2) > 0 ? (power1 + power2) : (isCharging ? 7.4 : 0);
-
-  const voltage = tel1?.voltage || 230;
-  const voltL1 = tel1?.voltageL1 || voltage;
-  const currentL1 = tel1?.currentL1 || (isCharging ? 32.1 : 0);
-  const currentL2 = tel1?.currentL2 || 0;
-  const currentL3 = tel1?.currentL3 || 0;
-
-  const energyKwh = activeTxData?.energyDeliveredKwh || tel1?.energyKwh || ((tel1?.energyWh || 0) / 1000).toFixed(2);
-  const temperatureC = tel1?.temperatureC || 49;
-  const lastUpdated = tel1?.updatedAt ? new Date(tel1.updatedAt).toLocaleTimeString() : 'Live sync';
-
-  // Send OCPP remote command via Firestore 'commands' queue
-  const sendCommand = async (action: string, connectorId: number = 1, extraParams: any = {}) => {
-    try {
-      setActionLoading(`${action}_${connectorId}`);
-      await addDoc(collection(db, 'commands'), {
-        chargePointId: CHARGER_ID,
-        action,
-        connectorId,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        ...extraParams,
-      });
-
-      const successMsg =
-        action === 'UnlockConnector'
-          ? `Unlock command sent to Cable #${connectorId}!`
-          : action === 'RemoteStartTransaction'
-          ? `Start charging command sent to Gun #${connectorId}!`
-          : action === 'RemoteStopTransaction'
-          ? 'Stop charging command sent!'
-          : action === 'TriggerMessage'
-          ? 'Meter reading requested from hardware!'
-          : 'Command sent successfully!';
-
-      if (Platform.OS === 'web') {
-        alert(successMsg);
-      } else {
-        Alert.alert('Success', successMsg);
+    // 1. Immediately read from user local storage so UI displays in 0ms without waiting for network
+    getLocalChargerData(CHARGER_ID).then((local) => {
+      if (local) {
+        setChargerData((prev: any) => prev || local);
+        setLoading(false);
       }
-    } catch (err: any) {
-      const errMsg = err?.message || 'Failed to send command';
-      if (Platform.OS === 'web') {
-        alert(errMsg);
-      } else {
-        Alert.alert('Error', errMsg);
-      }
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Simulate scanning QR Code and starting charge
-  const handleQrScanStart = async () => {
-    try {
-      setActionLoading('qr_scan');
-      setQrActionMsg('📱 Driver scanned Station QR Code... Starting session...');
-      await sendCommand('RemoteStartTransaction', selectedConnector, { idTag: 'QR_DRIVER_APP' });
-      setQrActionMsg('✅ QR Code Session Activated on Gun #' + selectedConnector);
-    } catch (e: any) {
-      setQrActionMsg('❌ Error: ' + e.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Stop charging session and auto-unlock cable (no payment needed)
-  const handleStopAndUnlock = async () => {
-    try {
-      setActionLoading('stop_unlock');
-      setQrActionMsg('🛑 Stopping session and unlocking cable...');
-      if (activeTxData?.transactionId) {
-        await sendCommand('RemoteStopTransaction', selectedConnector, {
-          transactionId: activeTxData.transactionId,
+    });
+    getLocalConnectorData(CHARGER_ID, '1').then((d) => {
+      if (d) setConnector1Data((prev: any) => prev || d);
+    });
+    getLocalConnectorData(CHARGER_ID, '2').then((d) => {
+      if (d) setConnector2Data((prev: any) => prev || d);
+    });
+    getLocalActiveTx(CHARGER_ID).then((tx) => {
+      if (tx) setActiveTxData((prev: any) => prev || tx);
+    });
+    getLocalTransactions(CHARGER_ID, user?.uid).then((list) => {
+      if (list && list.length > 0) {
+        const valid = list.find((tx: any) => {
+          const id = String(tx.transactionId || tx.id || '').trim();
+          if (id === '275384' || id === '72089') return false;
+          return Number(tx.energyDeliveredKwh) > 0 || Number(tx.energyDeliveredWh) > 0;
         });
+        if (valid) {
+          setLastCompletedTx((prev: any) => prev || valid);
+        }
       }
-      await sendCommand('UnlockConnector', selectedConnector);
-      setQrActionMsg('✅ Session Stopped & Cable Unlocked!');
-    } catch (e: any) {
-      setQrActionMsg('❌ Error: ' + e.message);
-    } finally {
-      setActionLoading(null);
-    }
-  };
+    });
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0284C7" />
-        <Text style={styles.loadingText}>Connecting to Tesla Charge...</Text>
-      </View>
+    // 2. Initial fetch via HTTPS REST for charger and connectors (fast startup & fallback)
+    fetchFirestoreDoc('chargers', CHARGER_ID)
+      .then((data) => {
+        if (data) {
+          const { status: st, lastHeartbeat: hb, ...rest } = data;
+          staticInfo = rest;
+          if (!liveInfo.status && st) {
+            liveInfo = { status: st, lastHeartbeat: hb || null };
+          }
+          publishCharger();
+          setLoading(false);
+        }
+      })
+      .catch(() => {});
+
+    fetchFirestoreDoc(`chargers/${CHARGER_ID}/connectors`, '1')
+      .then((c1) => {
+        if (c1) {
+          setConnector1Data((prev: any) => prev || c1);
+          if (c1.activeTx) setActiveTx1Data((prev: any) => prev || c1.activeTx);
+          saveLocalConnectorData(CHARGER_ID, '1', c1);
+        }
+      })
+      .catch(() => {});
+
+    fetchFirestoreDoc(`chargers/${CHARGER_ID}/connectors`, '2')
+      .then((c2) => {
+        if (c2) {
+          setConnector2Data((prev: any) => prev || c2);
+          if (c2.activeTx) setActiveTx2Data((prev: any) => prev || c2.activeTx);
+          saveLocalConnectorData(CHARGER_ID, '2', c2);
+        }
+      })
+      .catch(() => {});
+
+    // 3. Single Realtime Database listener for ALL live data of this charger
+    let lastActiveTxId: string | null = null;
+    let lastCompletedId: string | null = null;
+
+    const liveRef = ref(rtdb, livePath(CHARGER_ID));
+    const unsubLive = onValue(
+      liveRef,
+      (snap) => {
+        const live = snap.val() || {};
+        setLoading(false);
+
+        // Online status + heartbeat: keep whichever is newer (Firestore vs RTDB)
+        const rtdbHb = live.lastHeartbeat || null;
+        const firestoreHb = staticInfo.lastHeartbeat || liveInfo.lastHeartbeat || null;
+        const isRtdbNewer =
+          rtdbHb && firestoreHb
+            ? new Date(rtdbHb).getTime() >= new Date(firestoreHb).getTime()
+            : !!rtdbHb;
+
+        liveInfo = {
+          status: isRtdbNewer ? live.status || 'Offline' : liveInfo.status || 'Online',
+          lastHeartbeat: isRtdbNewer ? rtdbHb : firestoreHb,
+        };
+        publishCharger();
+
+        // Connectors (Gun A / Gun B) with telemetry (supports both object and 1-indexed array from RTDB)
+        const c1 =
+          live.connectors?.['1'] ||
+          (Array.isArray(live.connectors) && live.connectors[1] ? live.connectors[1] : null);
+        const c2 =
+          live.connectors?.['2'] ||
+          (Array.isArray(live.connectors) && live.connectors[2] ? live.connectors[2] : null);
+        if (c1) {
+          setConnector1Data((prev: any) => ({
+            ...c1,
+            activeTx: c1.activeTx || prev?.activeTx || null,
+          }));
+          saveLocalConnectorData(CHARGER_ID, '1', c1);
+        }
+        if (c2) {
+          setConnector2Data((prev: any) => ({
+            ...c2,
+            activeTx: c2.activeTx || prev?.activeTx || null,
+          }));
+          saveLocalConnectorData(CHARGER_ID, '2', c2);
+        }
+
+        // Active charging session(s)
+        const activeList = Object.values(live.activeTx || {}).filter(Boolean) as any[];
+        const txA = live.activeTx?.['1'] || (Array.isArray(live.activeTx) ? live.activeTx[1] : null);
+        const txB = live.activeTx?.['2'] || (Array.isArray(live.activeTx) ? live.activeTx[2] : null);
+        if (txA) setActiveTx1Data(txA);
+        else if (c1?.status !== 'Charging') setActiveTx1Data(null);
+
+        if (txB) setActiveTx2Data(txB);
+        else if (c2?.status !== 'Charging') setActiveTx2Data(null);
+
+        const primaryTx = txB || txA || (activeList.length ? activeList[0] : null);
+        if (primaryTx) {
+          setActiveTxData(primaryTx);
+          saveLocalActiveTx(CHARGER_ID, primaryTx);
+        }
+
+        // Add new sessions to local history cache once (not on every meter value)
+        for (const tx of activeList) {
+          if (!tx?.transactionId) continue;
+          const txId = String(tx.transactionId);
+          if (txId !== lastActiveTxId) {
+            lastActiveTxId = txId;
+            mergeLocalTransaction(CHARGER_ID, { id: txId, ...tx });
+          }
+        }
+
+        // Finished session published by server -> update local history with 0 Firestore reads
+        const done = live.lastCompletedTx;
+        if (
+          done &&
+          String(done.transactionId || done.id) !== '275384' &&
+          String(done.transactionId || done.id) !== '72089' &&
+          (Number(done.energyDeliveredKwh) > 0 || Number(done.energyDeliveredWh) > 0)
+        ) {
+          setLastCompletedTx(done);
+          if (done?.transactionId && String(done.transactionId) !== lastCompletedId) {
+            lastCompletedId = String(done.transactionId);
+            mergeLocalTransaction(CHARGER_ID, { id: String(done.transactionId), ...done });
+          }
+        }
+      },
+      (err) => {
+        // Seamless fallback to Firestore real-time snapshots below
+        setLoading(false);
+      }
     );
+
+    // 4. Firestore Real-Time snapshots (ensures live UI updates even if RTDB rules restrict access)
+    const unsubChargerSnap = onSnapshot(
+      doc(db, 'chargers', CHARGER_ID),
+      (snap) => {
+        if (snap.exists()) {
+          const d = snap.data();
+          const { status: st, lastHeartbeat: hb, ...rest } = d;
+          staticInfo = rest;
+          liveInfo = {
+            status: st || 'Online',
+            lastHeartbeat: hb || new Date().toISOString(),
+          };
+          publishCharger();
+          setLoading(false);
+        }
+      },
+      () => {
+        setLoading(false);
+      }
+    );
+
+    const unsubConn1Snap = onSnapshot(
+      doc(db, 'chargers', CHARGER_ID, 'connectors', '1'),
+      (snap) => {
+        if (snap.exists()) {
+          const c1 = snap.data();
+          setConnector1Data(c1);
+          if (c1.activeTx) {
+            setActiveTx1Data(c1.activeTx);
+          } else {
+            setActiveTx1Data(null);
+          }
+          saveLocalConnectorData(CHARGER_ID, '1', c1);
+        }
+      },
+      () => {}
+    );
+
+    const unsubConn2Snap = onSnapshot(
+      doc(db, 'chargers', CHARGER_ID, 'connectors', '2'),
+      (snap) => {
+        if (snap.exists()) {
+          const c2 = snap.data();
+          setConnector2Data(c2);
+          if (c2.activeTx) {
+            setActiveTx2Data(c2.activeTx);
+          } else {
+            setActiveTx2Data(null);
+          }
+          saveLocalConnectorData(CHARGER_ID, '2', c2);
+        }
+      },
+      () => {}
+    );
+
+    // 5. Real-time query for latest completed transaction on this charger with actual delivered energy
+    const qLatestTx = query(
+      collection(db, 'transactions'),
+      orderBy('startTime', 'desc')
+    );
+    const unsubLatestTx = onSnapshot(
+      qLatestTx,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+          // Actively charging transactions for Gun 1 & Gun 2
+          const act1 = list.find(
+            (tx: any) =>
+              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
+              Number(tx.connectorId || 1) === 1 &&
+              (tx.status === 'Charging' || (!tx.stopTime && Number(tx.meterStart) > 0))
+          );
+          setActiveTx1Data(act1 || null);
+
+          const act2 = list.find(
+            (tx: any) =>
+              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
+              Number(tx.connectorId) === 2 &&
+              (tx.status === 'Charging' || (!tx.stopTime && Number(tx.meterStart) > 0))
+          );
+          setActiveTx2Data(act2 || null);
+
+          const match = list.find(
+            (tx: any) =>
+              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
+              String(tx.transactionId || tx.id) !== '275384' &&
+              String(tx.transactionId || tx.id) !== '72089' &&
+              (Number(tx.energyDeliveredKwh) > 0 || Number(tx.energyDeliveredWh) > 0)
+          );
+          if (match) {
+            setLastCompletedTx(match);
+            mergeLocalTransaction(CHARGER_ID, match, user?.uid);
+          }
+        }
+      },
+      () => {}
+    );
+
+    return () => {
+      unsubLive();
+      unsubChargerSnap();
+      unsubConn1Snap();
+      unsubConn2Snap();
+      unsubLatestTx();
+    };
+  }, [CHARGER_ID, isAuthenticated, user?.uid]);
+
+  // 30kW single-gun detection
+  const is30kW =
+    chargerModel?.toLowerCase().includes('30') ||
+    chargerData?.model?.toLowerCase().includes('30');
+
+  // Connected statuses list: Preparing, Charging, Suspended, Finishing
+  const CONNECTED_STATUS_LIST = ['Charging', 'Preparing', 'SuspendedEV', 'SuspendedEVSE', 'Finishing'];
+
+  const rawStatus1 = connector1Data?.status || 'Available';
+  const rawStatus2 = connector2Data?.status || 'Available';
+
+  const isGunAPlugged = CONNECTED_STATUS_LIST.includes(rawStatus1);
+  const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
+  const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
+
+  // Track true Firebase server time with 300s tolerance (or always active if plugged in)
+  const nowServer = Date.now() + serverTimeOffset;
+  const lastHbTime = chargerData?.lastHeartbeat ? new Date(chargerData.lastHeartbeat).getTime() : 0;
+  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : true;
+  const isOnline = (chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged);
+
+  const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
+  const status2 = (isOnline || isGunBPlugged) && !is30kW ? rawStatus2 : 'Unavailable';
+
+  const isGunAConnected = isGunAPlugged;
+  const isGunBConnected = isGunBPlugged;
+  const bothConnected = !is30kW && isGunAConnected && isGunBConnected;
+
+  // 240kW / 220kW model detection
+  const is240kW =
+    chargerModel?.toLowerCase().includes('240') ||
+    chargerModel?.toLowerCase().includes('220') ||
+    chargerModel === 'DC_EVSE' ||
+    chargerData?.model?.toLowerCase().includes('240') ||
+    chargerData?.model?.toLowerCase().includes('220') ||
+    chargerData?.model === 'DC_EVSE';
+
+  // Dynamically select the correct hero image based on active gun connection states
+  let heroImageSource: any;
+  if (is30kW) {
+    // 30kW has only one gun: connected when in use/plugged, idle when standby
+    heroImageSource = isGunAConnected ? STATE_IMAGES_30KW.connected : STATE_IMAGES_30KW.idle;
+  } else {
+    // Multi-gun models (60kW, 240kW)
+    let carState: CarState = 'idle';
+    if (bothConnected) {
+      carState = 'both';
+    } else if (isGunAConnected) {
+      carState = 'left';
+    } else if (isGunBConnected) {
+      carState = 'right';
+    }
+    const imgSet = is240kW ? STATE_IMAGES_240KW : STATE_IMAGES;
+    heroImageSource = imgSet[carState];
+  }
+  const safeHeroImage =
+    heroImageSource || (is30kW ? STATE_IMAGES_30KW.idle : STATE_IMAGES.idle);
+
+  // Fix Issue 6: Use safe getStatusConfig so custom/unknown statuses never crash the app
+  const themeA = getStatusConfig(status1);
+  const themeB = getStatusConfig(status2);
+
+  // Primary state config for top header indication
+  const activeStatus = !isOnline
+    ? 'Unavailable'
+    : is30kW
+    ? isGunAConnected
+      ? status1
+      : 'Available'
+    : bothConnected
+    ? status1 === 'Charging' || status2 === 'Charging'
+      ? 'Charging'
+      : status1
+    : isGunAConnected
+    ? status1
+    : isGunBConnected
+    ? status2
+    : 'Available';
+  const activeTheme = getStatusConfig(activeStatus);
+
+  // Telemetry for Gun A (Connector 1) - strictly 0 when not connected or no live reading
+  const tel1 = connector1Data?.telemetry;
+  const powerA = isOnline && isGunAConnected ? (tel1?.powerKw || 0) : 0;
+  const voltageA = isOnline && isGunAConnected && tel1?.voltage ? Math.round(Number(tel1.voltage)) : 0;
+  const currentA = isOnline && isGunAConnected ? (tel1?.currentL1 || 0) : 0;
+  // Session energy delivered for Gun A
+  const txA = activeTx1Data || connector1Data?.activeTx;
+  const deliveredA = Number(txA?.energyDeliveredKwh) || (txA?.energyDeliveredWh ? Number((txA.energyDeliveredWh / 1000).toFixed(2)) : 0);
+  const mStartA = txA?.meterStart !== undefined && txA?.meterStart !== null && Number(txA.meterStart) > 0 ? Number(txA.meterStart) : null;
+  const currentEnergyWhA = tel1?.energyWh || (tel1?.energyKwh ? Math.round(Number(tel1.energyKwh) * 1000) : null);
+  const computedA =
+    isGunAConnected && mStartA !== null && currentEnergyWhA !== null && currentEnergyWhA >= mStartA
+      ? Math.max(0, (currentEnergyWhA - mStartA) / 1000)
+      : 0;
+  const baseEnergyA = isGunAConnected
+    ? (computedA > 0 ? computedA : deliveredA > 0 ? deliveredA : 0)
+    : 0;
+  const sessionEnergyA = isGunAConnected
+    ? (baseEnergyA + liveAccumulatedA)
+    : 0;
+  const lifetimeMeterA = tel1?.energyKwh || (tel1?.energyWh ? (tel1.energyWh / 1000).toFixed(2) : '0.00');
+  const energyA = sessionEnergyA.toFixed(2);
+
+  // Telemetry for Gun B (Connector 2) - strictly 0 when not connected or no live reading
+  const tel2 = connector2Data?.telemetry;
+  const powerB = isOnline && !is30kW && isGunBConnected ? (tel2?.powerKw || 0) : 0;
+  const voltageB = isOnline && !is30kW && isGunBConnected && tel2?.voltage ? Math.round(Number(tel2.voltage)) : 0;
+  const currentB = isOnline && !is30kW && isGunBConnected ? (tel2?.currentL1 || 0) : 0;
+  
+  // Session energy delivered for Gun B
+  const txB = activeTx2Data || connector2Data?.activeTx;
+  const deliveredB = Number(txB?.energyDeliveredKwh) || (txB?.energyDeliveredWh ? Number((txB.energyDeliveredWh / 1000).toFixed(2)) : 0);
+  const mStartB = txB?.meterStart !== undefined && txB?.meterStart !== null && Number(txB.meterStart) > 0 ? Number(txB.meterStart) : null;
+  const currentEnergyWhB = tel2?.energyWh || (tel2?.energyKwh ? Math.round(Number(tel2.energyKwh) * 1000) : null);
+  const computedB =
+    !is30kW && isGunBConnected && mStartB !== null && currentEnergyWhB !== null && currentEnergyWhB >= mStartB
+      ? Math.max(0, (currentEnergyWhB - mStartB) / 1000)
+      : 0;
+  const baseEnergyB = !is30kW && isGunBConnected
+    ? (computedB > 0 ? computedB : deliveredB > 0 ? deliveredB : 0)
+    : 0;
+  const sessionEnergyB = !is30kW && isGunBConnected
+    ? (baseEnergyB + liveAccumulatedB)
+    : 0;
+  const lifetimeMeterB = tel2?.energyKwh || (tel2?.energyWh ? (tel2.energyWh / 1000).toFixed(2) : '0.00');
+  const energyB = sessionEnergyB.toFixed(2);
+
+  // Total Power
+  const totalPower = is30kW ? Number(powerA).toFixed(1) : (powerA + powerB).toFixed(1);
+
+  // Real-time Cost Calculation using Tariff Rate (no decimals, clean rounded integer)
+  const rate = chargerData?.tariffRate && Number(chargerData.tariffRate) > 0
+    ? Number(chargerData.tariffRate)
+    : tariffRate && tariffRate > 0
+    ? tariffRate
+    : 125;
+  const curr = 'PKR';
+  const costA = Math.round(sessionEnergyA * rate).toString();
+  const costB = Math.round(sessionEnergyB * rate).toString();
+  const totalEnergy = is30kW
+    ? energyA
+    : (sessionEnergyA + sessionEnergyB).toFixed(2);
+  const totalCost = Math.round(Number(totalEnergy) * rate).toLocaleString();
+  const hasAnyGunConnected = is30kW ? isGunAConnected : isGunAConnected || isGunBConnected;
+
+  // Last completed session metrics for standby presentation
+  const lastSessionKwh =
+    Number(lastCompletedTx?.energyDeliveredKwh) ||
+    (Number(lastCompletedTx?.energyDeliveredWh) ? Number(lastCompletedTx.energyDeliveredWh) / 1000 : 0);
+  const lastSessionRate =
+    Number(lastCompletedTx?.tariffRate) ||
+    (chargerData?.tariffRate && Number(chargerData.tariffRate) > 0 ? Number(chargerData.tariffRate) : 125);
+  const lastSessionCost =
+    Number(lastCompletedTx?.cost) > 0
+      ? Math.round(Number(lastCompletedTx.cost))
+      : Math.round(lastSessionKwh * lastSessionRate);
+
+  const lastDiffMs =
+    lastCompletedTx?.startTime && lastCompletedTx?.stopTime
+      ? new Date(lastCompletedTx.stopTime).getTime() - new Date(lastCompletedTx.startTime).getTime()
+      : 0;
+  const lastDurationMin = lastDiffMs > 0 ? Math.max(1, Math.round(lastDiffMs / 60000)) : null;
+  const lastDurationText = lastDurationMin !== null ? `${lastDurationMin} min` : null;
+
+  // Real-time 1-second auto-interpolator: ticks energy & cost live second-by-second while car is charging
+  useEffect(() => {
+    const isChargingA = isOnline && isGunAConnected && status1 === 'Charging' && powerA > 0;
+    const isChargingB = isOnline && !is30kW && isGunBConnected && status2 === 'Charging' && powerB > 0;
+
+    if (!isChargingA && !isChargingB) {
+      setLiveAccumulatedA(0);
+      setLiveAccumulatedB(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      if (isChargingA) {
+        setLiveAccumulatedA((prev) => prev + (powerA / 3600));
+      }
+      if (isChargingB) {
+        setLiveAccumulatedB((prev) => prev + (powerB / 3600));
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isOnline, isGunAConnected, isGunBConnected, status1, status2, powerA, powerB, is30kW]);
+
+  // Re-anchor accumulators whenever fresh physical meter values arrive from hardware
+  useEffect(() => {
+    setLiveAccumulatedA(0);
+  }, [tel1?.energyWh, tel1?.energyKwh]);
+
+  useEffect(() => {
+    setLiveAccumulatedB(0);
+  }, [tel2?.energyWh, tel2?.energyKwh]);
+
+  // Active Battery State of Charge (SoC %)
+  const activeSocA =
+    typeof tel1?.soc === 'number' && tel1.soc > 0
+      ? tel1.soc
+      : typeof activeTx1Data?.soc === 'number' && activeTx1Data.soc > 0
+      ? activeTx1Data.soc
+      : typeof activeTx1Data?.socCurrent === 'number' && activeTx1Data.socCurrent > 0
+      ? activeTx1Data.socCurrent
+      : null;
+
+  const activeSocB =
+    typeof tel2?.soc === 'number' && tel2.soc > 0
+      ? tel2.soc
+      : typeof activeTx2Data?.soc === 'number' && activeTx2Data.soc > 0
+      ? activeTx2Data.soc
+      : typeof activeTx2Data?.socCurrent === 'number' && activeTx2Data.socCurrent > 0
+      ? activeTx2Data.socCurrent
+      : null;
+
+  const currentChargingSoc = isGunBConnected ? activeSocB : isGunAConnected ? activeSocA : (activeSocB || activeSocA);
+  // Strictly hide SoC battery card when no car is connected (never show stale 79% when unplugged)
+  const displaySoc = hasAnyGunConnected && typeof currentChargingSoc === 'number' && currentChargingSoc > 0
+    ? currentChargingSoc
+    : null;
+  const isActivelyChargingNow = isOnline && (status1 === 'Charging' || status2 === 'Charging');
+
+  if (authLoading) {
+    return <DashboardSkeleton isSingleGun={is30kW} />;
   }
 
-  const qrUrl = `http://192.168.0.150:3000/charge?charger=${CHARGER_ID}&connector=${selectedConnector}`;
-  const qrImageUri = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrUrl)}`;
+  if (!isAuthenticated) {
+    return <Redirect href="/login" />;
+  }
+
+  if (loading && !chargerData) {
+    return <DashboardSkeleton isSingleGun={is30kW} />;
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Top Header */}
+      {/* Header: Station ID & Unified Minimal Status Badge */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.brandTitle}>⚡ TESLA CHARGE</Text>
-          <Text style={styles.stationSubtitle}>
-            Station: <Text style={styles.stationName}>{CHARGER_ID.toUpperCase()}</Text> &bull; 21kW 3-Phase
-          </Text>
-        </View>
-        <View style={[styles.statusBadge, isOnline ? styles.onlineBadge : styles.offlineBadge]}>
-          <View style={[styles.statusDot, isOnline ? styles.onlineDot : styles.offlineDot]} />
-          <Text style={[styles.statusBadgeText, isOnline ? styles.onlineText : styles.offlineText]}>
-            {isOnline ? 'ONLINE' : 'OFFLINE'}
+        <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border || 'transparent', borderWidth: 1 }]}>
+          <View style={[styles.statusDot, { backgroundColor: activeTheme.color }]} />
+          <Text style={[styles.statusText, { color: activeTheme.color }]}>
+            {activeTheme.label}
           </Text>
         </View>
       </View>
 
-      {/* 3D Visualizer with Realistic Glowing Gun LEDs */}
-      <View style={styles.visualizerCard}>
-        <View style={styles.visualizerHeader}>
-          <Text style={styles.stateTag}>{stateTitles[activeState]}</Text>
-          <View style={[styles.liveIndicator, { borderColor: currentTheme.color + '40', backgroundColor: currentTheme.color + '12' }]}>
-            <Animated.View
-              style={[
-                styles.liveDot,
-                {
-                  backgroundColor: currentTheme.color,
-                  opacity: gunGlowOpacity,
-                  transform: [{ scale: gunGlowScale }],
-                },
-              ]}
-            />
-            <Text style={[styles.liveIndicatorText, { color: currentTheme.color }]}>
-              {currentTheme.label}
-            </Text>
-          </View>
-        </View>
-
-        {/* Selected State Image with Station Column & Glowing Gun LEDs */}
-        <View style={styles.imageWrapper}>
-          {/* Vehicle / Charger 3D Render (Completely clean & unobscured) */}
-          <Image
-            source={STATE_IMAGES[activeState]}
-            style={styles.stateImage}
-            resizeMode="contain"
-          />
-
-          {/* Station Column Vertical LED Light Bar (Like Tesla/ABB Superchargers) */}
-          <View style={styles.stationLedSlot} pointerEvents="none">
-            <Animated.View
-              style={[
-                styles.stationLedBar,
-                {
-                  backgroundColor: currentTheme.color,
-                  shadowColor: currentTheme.color,
-                  opacity: gunGlowOpacity,
-                },
-              ]}
-            />
-          </View>
-
-          {/* Left Gun Glowing LED Ring (Active on car port when plugged, or on dock holster) */}
-          {(isLeftConnected || activeState === 'left' || activeState === 'both') ? (
-            <View style={styles.leftGunGlowWrapper} pointerEvents="none">
-              <Animated.View
-                style={[
-                  styles.gunGlowHalo,
-                  {
-                    backgroundColor: currentTheme.glow,
-                    transform: [{ scale: gunGlowScale }],
-                    opacity: gunGlowOpacity,
-                  },
-                ]}
-              />
-              <View style={[styles.gunLedRing, { borderColor: currentTheme.color }]} />
-              <View style={[styles.gunLedCore, { backgroundColor: currentTheme.color, shadowColor: currentTheme.color }]} />
-            </View>
-          ) : (
-            <View style={styles.leftDockLedWrapper} pointerEvents="none">
-              <View style={[styles.dockLedCore, { backgroundColor: '#10B981' }]} />
-            </View>
-          )}
-
-          {/* Right Gun Glowing LED Ring (Active on car port when plugged, or on dock holster) */}
-          {(isRightConnected || activeState === 'right' || activeState === 'both') ? (
-            <View style={styles.rightGunGlowWrapper} pointerEvents="none">
-              <Animated.View
-                style={[
-                  styles.gunGlowHalo,
-                  {
-                    backgroundColor: currentTheme.glow,
-                    transform: [{ scale: gunGlowScale }],
-                    opacity: gunGlowOpacity,
-                  },
-                ]}
-              />
-              <View style={[styles.gunLedRing, { borderColor: currentTheme.color }]} />
-              <View style={[styles.gunLedCore, { backgroundColor: currentTheme.color, shadowColor: currentTheme.color }]} />
-            </View>
-          ) : (
-            <View style={styles.rightDockLedWrapper} pointerEvents="none">
-              <View style={[styles.dockLedCore, { backgroundColor: '#10B981' }]} />
-            </View>
-          )}
-        </View>
-
-        {/* State Position Switcher Tabs */}
-        <View style={styles.modeTabsRow}>
-          <TouchableOpacity
-            style={[styles.modeTab, stateMode === 'auto' && styles.activeModeTab]}
-            onPress={() => setStateMode('auto')}
-          >
-            <Text style={[styles.modeTabText, stateMode === 'auto' && styles.activeModeTabText]}>
-              Auto (Live)
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.modeTab, stateMode === 'idle' && styles.activeModeTab]}
-            onPress={() => setStateMode('idle')}
-          >
-            <Text style={[styles.modeTabText, stateMode === 'idle' && styles.activeModeTabText]}>
-              1. Idle
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.modeTab, stateMode === 'left' && styles.activeModeTab]}
-            onPress={() => setStateMode('left')}
-          >
-            <Text style={[styles.modeTabText, stateMode === 'left' && styles.activeModeTabText]}>
-              2. Left
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.modeTab, stateMode === 'right' && styles.activeModeTab]}
-            onPress={() => setStateMode('right')}
-          >
-            <Text style={[styles.modeTabText, stateMode === 'right' && styles.activeModeTabText]}>
-              3. Right
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.modeTab, stateMode === 'both' && styles.activeModeTab]}
-            onPress={() => setStateMode('both')}
-          >
-            <Text style={[styles.modeTabText, stateMode === 'both' && styles.activeModeTabText]}>
-              4. Both
-            </Text>
-          </TouchableOpacity>
-        </View>
+      {/* Prominent Hero Image */}
+      <View style={styles.heroChargerContainer}>
+        <Image source={safeHeroImage} style={styles.heroChargerImage} resizeMode="contain" />
       </View>
 
-      {/* Active Charging Transaction Banner */}
-      {Boolean(activeTxData) ? (
-        <View style={styles.activeTxCard}>
-          <View style={styles.activeTxHeader}>
-            <View style={styles.activeTxBadge}>
-              <View style={styles.pulseDot} />
-              <Text style={styles.activeTxBadgeText}>TRANSACTION #{activeTxData.transactionId}</Text>
+      {/* Battery State of Charge Hero Card (Main Screen - Minimalist & Professional) */}
+      {displaySoc !== null && (
+        <View style={styles.batteryHeroCard}>
+          <View style={styles.batteryHeroTopRow}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={[styles.statusDot, { backgroundColor: isActivelyChargingNow ? '#10B981' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
+                  <Text style={styles.batteryHeroTitle}>
+                    {isActivelyChargingNow ? 'CHARGING' : 'BATTERY'}
+                  </Text>
+                </View>
+                <Text style={styles.batteryHeroPercent}>{displaySoc}%</Text>
+              </View>
+              <View style={styles.batteryTrackMinimal}>
+                <View
+                  style={[
+                    styles.batteryFillMinimal,
+                    {
+                      width: `${Math.min(100, Math.max(4, displaySoc))}%`,
+                      backgroundColor: isActivelyChargingNow ? '#10B981' : displaySoc > 20 ? '#0F172A' : '#EF4444',
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.batteryHeroSubtitle}>
+                {isActivelyChargingNow
+                  ? 'Charging session in progress'
+                  : lastCompletedTx?.socStart
+                  ? `Session gain: ${lastCompletedTx.socStart}% → ${displaySoc}% (+${Math.max(0, displaySoc - lastCompletedTx.socStart)}%)`
+                  : 'Ready'}
+              </Text>
             </View>
-            <Text style={styles.activeTxTime}>
-              Started {new Date(activeTxData.startTime).toLocaleTimeString()}
-            </Text>
           </View>
-          <View style={styles.activeTxBody}>
-            <View>
-              <Text style={styles.activeTxLabel}>CHARGING SESSION</Text>
-              <Text style={styles.activeTxGun}>Gun #{activeTxData.connectorId || 1} Active</Text>
+        </View>
+      )}
+
+      {/* Power & Live Cost (PKR Below Amount) */}
+      <View style={styles.powerSection}>
+        {hasAnyGunConnected ? (
+          <View style={styles.priceHeroColumn}>
+            <Text style={styles.priceHeroVal}>{totalCost}</Text>
+            <Text style={styles.priceHeroCurr}>{curr}</Text>
+          </View>
+        ) : lastSessionKwh > 0 ? (
+          <View style={styles.priceHeroColumn}>
+            <Text style={styles.priceHeroVal}>{lastSessionCost > 0 ? lastSessionCost.toLocaleString() : Number(lastSessionKwh).toFixed(2)}</Text>
+            <Text style={styles.priceHeroCurr}>{lastSessionCost > 0 ? `${curr} (last session)` : 'kWh delivered (last session)'}</Text>
+          </View>
+        ) : (
+          <View style={styles.powerRow}>
+            <Text style={styles.powerValue}>0.0</Text>
+            <Text style={styles.powerUnit}>kW</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Dynamic Data Layout */}
+      {is30kW ? (
+        /* 30kW Single Gun Model */
+        <View style={styles.singleContainer}>
+          <View style={styles.singleGunHeader}>
+            <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+            <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
+            <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
+              <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
             </View>
-            <TouchableOpacity
-              style={styles.activeTxStopBtn}
-              disabled={actionLoading !== null}
-              onPress={async () => {
-                await sendCommand('RemoteStopTransaction', activeTxData.connectorId || 1, {
-                  transactionId: activeTxData.transactionId,
-                });
-                await sendCommand('UnlockConnector', activeTxData.connectorId || 1);
-              }}
-            >
-              <Text style={styles.activeTxStopBtnText}>🛑 STOP & UNLOCK</Text>
-            </TouchableOpacity>
+          </View>
+
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>ENERGY</Text>
+              <Text style={styles.metricValue}>{energyA} kWh</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>POWER</Text>
+              <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>CURRENT</Text>
+              <Text style={styles.metricValue}>{isGunAConnected ? currentA : 0} A</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>VOLTAGE</Text>
+              <Text style={styles.metricValue}>{voltageA} V</Text>
+            </View>
           </View>
         </View>
-      ) : null}
+      ) : bothConnected ? (
+        /* Dual Gun View: Both Gun A and Gun B Connected */
+        <View style={styles.dualContainer}>
+          {/* Gun A Column */}
+          <View style={styles.gunCard}>
+            <View style={styles.gunHeader}>
+              <View style={styles.gunTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+                <Text style={styles.gunTitle}>GUN A</Text>
+              </View>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
+                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+              </View>
+            </View>
 
-      {/* Live Power & Meter Values Card */}
-      <View style={styles.powerCard}>
-        <View style={styles.powerTopRow}>
-          <Text style={styles.powerCardLabel}>HARDWARE METER TELEMETRY</Text>
-          <TouchableOpacity
-            style={styles.pollBtn}
-            disabled={actionLoading !== null}
-            onPress={() => sendCommand('TriggerMessage', 1, { requestedMessage: 'MeterValues' })}
-          >
-            <Text style={styles.pollBtnText}>📊 Poll Meter</Text>
-          </TouchableOpacity>
+            <Text style={styles.gunPower}>{Number(powerA).toFixed(1)} kW</Text>
+
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Voltage</Text>
+              <Text style={styles.gunMetricVal}>{voltageA} V</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Current</Text>
+              <Text style={styles.gunMetricVal}>{currentA} A</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Energy</Text>
+              <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
+            </View>
+          </View>
+
+          {/* Gun B Column */}
+          <View style={styles.gunCard}>
+            <View style={styles.gunHeader}>
+              <View style={styles.gunTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
+                <Text style={styles.gunTitle}>GUN B</Text>
+              </View>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
+                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.gunPower}>{Number(powerB).toFixed(1)} kW</Text>
+
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Voltage</Text>
+              <Text style={styles.gunMetricVal}>{voltageB} V</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Current</Text>
+              <Text style={styles.gunMetricVal}>{currentB} A</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Energy</Text>
+              <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
+            </View>
+          </View>
         </View>
+      ) : isGunBConnected ? (
+        /* Single Gun B Connected */
+        <View style={styles.singleContainer}>
+          <View style={styles.singleGunHeader}>
+            <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
+            <Text style={styles.gunTitle}>GUN B</Text>
+            <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg, marginLeft: 8 }]}>
+              <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
+            </View>
+            {tel2?.soc ? (
+              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel2.soc}%</Text>
+              </View>
+            ) : null}
+          </View>
 
-        <View style={styles.powerNumberRow}>
-          <Text style={[styles.powerNumber, isCharging ? styles.powerNumberActive : null]}>
-            {Number(totalPower).toFixed(1)}
-          </Text>
-          <Text style={styles.powerUnit}>kW</Text>
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>ENERGY</Text>
+              <Text style={styles.metricValue}>{energyB} kWh</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>POWER</Text>
+              <Text style={styles.metricValue}>{Number(powerB).toFixed(1)} kW</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>CURRENT</Text>
+              <Text style={styles.metricValue}>{isGunBConnected ? currentB : 0} A</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>VOLTAGE</Text>
+              <Text style={styles.metricValue}>{voltageB} V</Text>
+            </View>
+          </View>
         </View>
+      ) : isGunAConnected ? (
+        /* Single Gun A Connected */
+        <View style={styles.singleContainer}>
+          <View style={styles.singleGunHeader}>
+            <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+            <Text style={styles.gunTitle}>GUN A</Text>
+            <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
+              <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+            </View>
+            {tel1?.soc ? (
+              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}%</Text>
+              </View>
+            ) : null}
+          </View>
 
-        {/* 4-Metric Hardware Grid */}
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>ENERGY</Text>
+              <Text style={styles.metricValue}>{energyA} kWh</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>POWER</Text>
+              <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>CURRENT</Text>
+              <Text style={styles.metricValue}>{isGunAConnected ? currentA : 0} A</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>VOLTAGE</Text>
+              <Text style={styles.metricValue}>{voltageA} V</Text>
+            </View>
+          </View>
+        </View>
+      ) : (
+        /* Standby: Neither Connected */
         <View style={styles.metricsGrid}>
-          <View style={styles.metricBox}>
-            <Text style={styles.metricLabel}>VOLTAGE</Text>
-            <Text style={styles.metricValue}>{voltage} V</Text>
-            <Text style={styles.metricSub}>L1: {voltL1}V</Text>
-          </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metricBox}>
-            <Text style={styles.metricLabel}>CURRENT</Text>
-            <Text style={styles.metricValue}>{currentL1} A</Text>
-            <Text style={styles.metricSub}>L2: {currentL2}A &bull; L3: {currentL3}A</Text>
-          </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metricBox}>
-            <Text style={styles.metricLabel}>ENERGY</Text>
-            <Text style={styles.metricValue}>{energyKwh} kWh</Text>
-            <Text style={styles.metricSub}>Counter</Text>
-          </View>
-          <View style={styles.metricDivider} />
-          <View style={styles.metricBox}>
-            <Text style={styles.metricLabel}>TEMP</Text>
-            <Text style={[styles.metricValue, { color: '#D97706' }]}>{temperatureC} °C</Text>
-            <Text style={styles.metricSub}>Board</Text>
-          </View>
-        </View>
-        <Text style={styles.telemetryTimestamp}>Last meter reading: {lastUpdated}</Text>
-      </View>
-
-      {/* Dual Gun Controls (Left Gun & Right Gun) */}
-      <View style={styles.connectorsRow}>
-        {/* Left Gun (Connector 1) */}
-        <View style={[styles.connectorCard, isLeftConnected && styles.connectorCardActive]}>
-          <View style={styles.connectorHeader}>
-            <View style={styles.connectorTitleRow}>
-              <Animated.View
-                style={[
-                  styles.gunIndicatorDot,
-                  {
-                    backgroundColor: isLeftConnected ? currentTheme.color : '#94A3B8',
-                    opacity: isLeftConnected ? gunGlowOpacity : 1,
-                  },
-                ]}
-              />
-              <Text style={styles.connectorTitle}>GUN 1 (LEFT)</Text>
-            </View>
-            <View style={[styles.pill, isLeftConnected ? styles.pillCharging : styles.pillAvailable]}>
-              <Text style={[styles.pillText, isLeftConnected ? styles.pillChargingText : styles.pillAvailableText]}>
-                {status1.toUpperCase()}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.connectorPower}>{Number(power1).toFixed(1)} kW</Text>
-          <View style={styles.gunButtonsRow}>
-            <TouchableOpacity
-              style={[styles.gunActionBtn, styles.gunStartBtn]}
-              disabled={actionLoading !== null}
-              onPress={() => sendCommand('RemoteStartTransaction', 1)}
-            >
-              <Text style={styles.gunStartBtnText}>⚡ Start</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.gunActionBtn, styles.gunUnlockBtn]}
-              disabled={actionLoading !== null}
-              onPress={() => sendCommand('UnlockConnector', 1)}
-            >
-              <Text style={styles.gunUnlockBtnText}>🔓 Unlock</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Right Gun (Connector 2) */}
-        <View style={[styles.connectorCard, isRightConnected && styles.connectorCardActive]}>
-          <View style={styles.connectorHeader}>
-            <View style={styles.connectorTitleRow}>
-              <Animated.View
-                style={[
-                  styles.gunIndicatorDot,
-                  {
-                    backgroundColor: isRightConnected ? currentTheme.color : '#94A3B8',
-                    opacity: isRightConnected ? gunGlowOpacity : 1,
-                  },
-                ]}
-              />
-              <Text style={styles.connectorTitle}>GUN 2 (RIGHT)</Text>
-            </View>
-            <View style={[styles.pill, isRightConnected ? styles.pillCharging : styles.pillAvailable]}>
-              <Text style={[styles.pillText, isRightConnected ? styles.pillChargingText : styles.pillAvailableText]}>
-                {status2.toUpperCase()}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.connectorPower}>{Number(power2).toFixed(1)} kW</Text>
-          <View style={styles.gunButtonsRow}>
-            <TouchableOpacity
-              style={[styles.gunActionBtn, styles.gunStartBtn]}
-              disabled={actionLoading !== null}
-              onPress={() => sendCommand('RemoteStartTransaction', 2)}
-            >
-              <Text style={styles.gunStartBtnText}>⚡ Start</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.gunActionBtn, styles.gunUnlockBtn]}
-              disabled={actionLoading !== null}
-              onPress={() => sendCommand('UnlockConnector', 2)}
-            >
-              <Text style={styles.gunUnlockBtnText}>🔓 Unlock</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      {/* Station Master Actions Card */}
-      <View style={styles.controlsCard}>
-        <Text style={styles.cardSectionLabel}>MASTER STATION CONTROLS</Text>
-        <View style={styles.actionsGrid}>
-          {isCharging ? (
-            <TouchableOpacity
-              style={styles.stopButton}
-              disabled={actionLoading !== null}
-              onPress={async () => {
-                await sendCommand('RemoteStopTransaction', selectedConnector, {
-                  transactionId: activeTxData?.transactionId,
-                });
-                await sendCommand('UnlockConnector', selectedConnector);
-              }}
-            >
-              <Text style={styles.stopButtonText}>🛑 STOP & UNLOCK</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.startButton}
-              disabled={actionLoading !== null}
-              onPress={() => sendCommand('RemoteStartTransaction', selectedConnector)}
-            >
-              <Text style={styles.startButtonText}>⚡ START CHARGING</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={styles.rebootButton}
-            disabled={actionLoading !== null}
-            onPress={() => sendCommand('Reset', 1, { type: 'Soft' })}
-          >
-            <Text style={styles.rebootButtonText}>🔄 REBOOT</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Station QR Code Card */}
-      <View style={styles.qrCard}>
-        <View style={styles.qrHeader}>
-          <View>
-            <Text style={styles.qrCardTitle}>📱 STATION QR CODE</Text>
-            <Text style={styles.qrCardSubtitle}>Scan to connect & control charging</Text>
-          </View>
-          <View style={styles.rateBadge}>
-            <Text style={styles.rateBadgeText}>Direct Access</Text>
-          </View>
-        </View>
-
-        {/* Gun selector for QR */}
-        <View style={styles.qrGunSelector}>
-          <TouchableOpacity
-            style={[styles.qrGunTab, selectedConnector === 1 && styles.activeQrGunTab]}
-            onPress={() => setSelectedConnector(1)}
-          >
-            <Text style={[styles.qrGunTabText, selectedConnector === 1 && styles.activeQrGunTabText]}>
-              Gun #1 (Left)
+          <View style={styles.metricItem}>
+            <Text style={styles.metricLabel}>LAST SESSION</Text>
+            <Text style={styles.metricValue}>
+              {lastSessionKwh > 0
+                ? `${lastSessionKwh.toFixed(2)} kWh`
+                : '0.00 kWh'}
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.qrGunTab, selectedConnector === 2 && styles.activeQrGunTab]}
-            onPress={() => setSelectedConnector(2)}
-          >
-            <Text style={[styles.qrGunTabText, selectedConnector === 2 && styles.activeQrGunTabText]}>
-              Gun #2 (Right)
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* QR Code Graphic */}
-        <View style={styles.qrImageContainer}>
-          <Image
-            source={{ uri: qrImageUri }}
-            style={styles.qrImage}
-            resizeMode="contain"
-          />
-          <Text style={styles.qrUrlLabel}>
-            Station: {CHARGER_ID} &bull; Connector #{selectedConnector}
-          </Text>
-        </View>
-
-        {/* Quick QR Actions */}
-        <View style={styles.qrActionsRow}>
-          <TouchableOpacity
-            style={styles.qrScanBtn}
-            disabled={actionLoading !== null}
-            onPress={handleQrScanStart}
-          >
-            <Text style={styles.qrScanBtnText}>⚡ Scan & Start</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.qrPayBtn}
-            disabled={actionLoading !== null}
-            onPress={handleStopAndUnlock}
-          >
-            <Text style={styles.qrPayBtnText}>🛑 Stop & Unlock</Text>
-          </TouchableOpacity>
-        </View>
-
-        {Boolean(qrActionMsg) ? (
-          <View style={styles.qrMsgBox}>
-            <Text style={styles.qrMsgText}>{qrActionMsg}</Text>
           </View>
-        ) : null}
-      </View>
-
-      {/* Station Hardware Specifications */}
-      <View style={styles.specsCard}>
-        <Text style={styles.cardSectionLabel}>HARDWARE SPECIFICATIONS</Text>
-        <View style={styles.specRow}>
-          <Text style={styles.specKey}>Station Model</Text>
-          <Text style={styles.specVal}>{chargerData?.model || 'AC_ThreePhase21KW'}</Text>
+          <View style={styles.divider} />
+          <View style={styles.metricItem}>
+            <Text style={styles.metricLabel}>TOTAL COST</Text>
+            <Text style={[styles.metricValue, { color: '#0284C7', fontWeight: '900' }]}>
+              {lastSessionCost > 0
+                ? `PKR ${lastSessionCost.toLocaleString()}`
+                : 'PKR 0'}
+            </Text>
+          </View>
+          {lastDurationText ? (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>DURATION</Text>
+                <Text style={styles.metricValue}>{lastDurationText}</Text>
+              </View>
+            </>
+          ) : null}
+          <View style={styles.divider} />
+          <View style={styles.metricItem}>
+            <Text style={styles.metricLabel}>STATUS</Text>
+            <Text style={[styles.metricValue, { color: '#059669' }]}>STANDBY</Text>
+          </View>
         </View>
-        <View style={styles.specRow}>
-          <Text style={styles.specKey}>Vendor</Text>
-          <Text style={styles.specVal}>{chargerData?.vendor || 'CCS_AC / Voltronic'}</Text>
-        </View>
-        <View style={styles.specRow}>
-          <Text style={styles.specKey}>Firmware</Text>
-          <Text style={styles.specVal}>{chargerData?.firmwareVersion ? chargerData.firmwareVersion.substring(0, 18) : '05808-00G04703'}</Text>
-        </View>
-        <View style={styles.specRow}>
-          <Text style={styles.specKey}>Protocol Standard</Text>
-          <Text style={styles.specVal}>OCPP 1.6-J (WebSocket)</Text>
-        </View>
-      </View>
-
-      <View style={{ height: 90 }} />
+      )}
     </ScrollView>
   );
 }
@@ -773,8 +926,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   content: {
-    padding: 18,
-    paddingTop: Platform.OS === 'ios' ? 60 : 36,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'ios' ? 56 : 36,
+    paddingBottom: 40,
   },
   loadingContainer: {
     flex: 1,
@@ -782,395 +936,246 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 14,
-    color: '#64748B',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 8,
   },
-  brandTitle: {
-    fontSize: 22,
+  stationId: {
+    fontSize: 20,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: 1,
-  },
-  stationSubtitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  stationName: {
-    color: '#0284C7',
-    fontWeight: '800',
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 20,
-  },
-  onlineBadge: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  offlineBadge: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  onlineDot: {
-    backgroundColor: '#10B981',
-  },
-  offlineDot: {
-    backgroundColor: '#EF4444',
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  onlineText: {
-    color: '#065F46',
-  },
-  offlineText: {
-    color: '#991B1B',
-  },
-  visualizerCard: {
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 4,
-    marginBottom: 14,
-    alignItems: 'center',
-  },
-  visualizerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-    marginBottom: 6,
-    paddingHorizontal: 4,
-  },
-  stateTag: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  liveIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    marginRight: 6,
-  },
-  liveIndicatorText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  imageWrapper: {
-    width: '100%',
-    height: 230,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 4,
-    position: 'relative',
-  },
-  stationLedSlot: {
-    position: 'absolute',
-    top: 66,
-    left: '50%',
-    marginLeft: -2,
-    width: 4,
-    height: 28,
-    borderRadius: 2,
-    backgroundColor: '#E2E8F0',
-    overflow: 'hidden',
-    zIndex: 4,
-  },
-  stationLedBar: {
-    width: 4,
-    height: 28,
-    borderRadius: 2,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  leftGunGlowWrapper: {
-    position: 'absolute',
-    left: '30%',
-    top: '48%',
-    width: 24,
-    height: 24,
-    marginLeft: -12,
-    marginTop: -12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  rightGunGlowWrapper: {
-    position: 'absolute',
-    right: '30%',
-    top: '48%',
-    width: 24,
-    height: 24,
-    marginRight: -12,
-    marginTop: -12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  gunGlowHalo: {
-    position: 'absolute',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-  },
-  gunLedRing: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 1.5,
-    opacity: 0.8,
-  },
-  gunLedCore: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 5,
+    marginRight: 6,
   },
-  leftDockLedWrapper: {
-    position: 'absolute',
-    left: '46.5%',
-    top: '49%',
-    width: 6,
-    height: 6,
-    marginLeft: -3,
-    marginTop: -3,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  rightDockLedWrapper: {
-    position: 'absolute',
-    left: '53.5%',
-    top: '49%',
-    width: 6,
-    height: 6,
-    marginLeft: -3,
-    marginTop: -3,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  dockLedCore: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  stateImage: {
-    width: '100%',
-    height: '100%',
-    zIndex: 3,
-  },
-  modeTabsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginTop: 8,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  modeTab: {
-    flex: 1,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  activeModeTab: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  modeTabText: {
+  statusText: {
     fontSize: 10,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  activeModeTabText: {
-    color: '#0284C7',
     fontWeight: '800',
-  },
-  activeTxCard: {
-    backgroundColor: '#ECFDF5',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#6EE7B7',
-    marginBottom: 16,
-  },
-  activeTxHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  activeTxBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  pulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#059669',
-  },
-  activeTxBadgeText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#065F46',
     letterSpacing: 0.5,
   },
-  activeTxTime: {
-    fontSize: 11,
-    color: '#047857',
-    fontWeight: '600',
-  },
-  activeTxBody: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  /* Hero Charger Image */
+  heroChargerContainer: {
+    width: '100%',
+    height: 320,
+    justifyContent: 'center',
     alignItems: 'center',
+    marginVertical: 8,
   },
-  activeTxLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#065F46',
+  heroChargerImage: {
+    width: '100%',
+    height: 320,
+    maxWidth: 500,
   },
-  activeTxGun: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginTop: 2,
-  },
-  activeTxStopBtn: {
-    backgroundColor: '#EF4444',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-  },
-  activeTxStopBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  powerCard: {
+
+  /* Battery Hero Card on Main Screen */
+  batteryHeroCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 20,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginHorizontal: 4,
+    marginBottom: 20,
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
-    shadowRadius: 10,
-    elevation: 2,
-    marginBottom: 16,
+    shadowRadius: 4,
+    elevation: 1,
   },
-  powerTopRow: {
+  batteryHeroTopRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  powerCardLabel: {
+  batteryTrackMinimal: {
+    height: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginVertical: 8,
+  },
+  batteryFillMinimal: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  batteryHeroTitle: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#64748B',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
-  pollBtn: {
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  pollBtnText: {
-    fontSize: 11,
+  batteryHeroPercent: {
+    fontSize: 18,
     fontWeight: '800',
-    color: '#0284C7',
+    color: '#0F172A',
   },
-  powerNumberRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginVertical: 10,
+  batteryHeroSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
   },
-  powerNumber: {
+  priceHeroColumn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  priceHeroVal: {
     fontSize: 54,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: -1.5,
+    fontVariant: ['tabular-nums'],
   },
-  powerNumberActive: {
-    color: '#059669',
+  priceHeroCurr: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  powerSubtext: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 4,
+  },
+
+  /* Power Section */
+  powerSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  powerRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+  },
+  powerValue: {
+    fontSize: 56,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -2,
   },
   powerUnit: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#64748B',
     marginLeft: 6,
   },
+  costSubtext: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+    marginTop: 6,
+    letterSpacing: 0.3,
+  },
+
+  /* Dual Gun Layout */
+  dualContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  gunCard: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  gunHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  gunTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  gunDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  gunTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
+    letterSpacing: 0.5,
+  },
+  miniStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  miniStatusText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  gunPower: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 10,
+  },
+  gunMetricRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  gunMetricLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  gunMetricVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+
+  /* Single Gun Connected */
+  singleContainer: {
+    width: '100%',
+  },
+  singleGunHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+
+  /* Standard Metrics Grid */
   metricsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    paddingTop: 14,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
-    paddingTop: 14,
-    marginTop: 6,
   },
-  metricBox: {
-    alignItems: 'center',
+  metricItem: {
     flex: 1,
+    alignItems: 'center',
   },
-  metricDivider: {
+  divider: {
     width: 1,
     height: '100%',
     backgroundColor: '#F1F5F9',
@@ -1178,364 +1183,13 @@ const styles = StyleSheet.create({
   metricLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#94A3B8',
     letterSpacing: 0.5,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   metricValue: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#0F172A',
-  },
-  metricSub: {
-    fontSize: 9,
-    color: '#94A3B8',
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  telemetryTimestamp: {
-    fontSize: 10,
-    color: '#94A3B8',
-    textAlign: 'center',
-    marginTop: 12,
-  },
-  connectorsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
-  connectorCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  connectorCardActive: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#F0FDF4',
-  },
-  connectorHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  connectorTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  gunIndicatorDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  connectorTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#475569',
-    letterSpacing: 0.5,
-  },
-  pill: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  pillAvailable: {
-    backgroundColor: '#F1F5F9',
-  },
-  pillCharging: {
-    backgroundColor: '#DCFCE7',
-  },
-  pillText: {
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  pillAvailableText: {
-    color: '#475569',
-  },
-  pillChargingText: {
-    color: '#15803D',
-  },
-  connectorPower: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginBottom: 10,
-  },
-  gunButtonsRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  gunActionBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  gunStartBtn: {
-    backgroundColor: '#0284C7',
-  },
-  gunStartBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  gunUnlockBtn: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  gunUnlockBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  controlsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 16,
-  },
-  cardSectionLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
-  actionsGrid: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  startButton: {
-    flex: 2,
-    backgroundColor: '#10B981',
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  startButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  stopButton: {
-    flex: 2,
-    backgroundColor: '#EF4444',
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  stopButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  rebootButton: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  rebootButtonText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  qrCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
-    elevation: 2,
-    marginBottom: 16,
-  },
-  qrHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  qrCardTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 0.5,
-  },
-  qrCardSubtitle: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  rateBadge: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  rateBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  qrGunSelector: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 3,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  qrGunTab: {
-    flex: 1,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderRadius: 9,
-  },
-  activeQrGunTab: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  qrGunTabText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  activeQrGunTabText: {
-    color: '#0284C7',
-    fontWeight: '800',
-  },
-  qrImageContainer: {
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  qrImage: {
-    width: 170,
-    height: 170,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-  },
-  qrUrlLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    marginTop: 10,
-  },
-  qrActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  qrScanBtn: {
-    flex: 1,
-    backgroundColor: '#10B981',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  qrScanBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  qrPayBtn: {
-    flex: 1,
-    backgroundColor: '#6366F1',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  qrPayBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  qrMsgBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  qrMsgText: {
-    fontSize: 11,
-    color: '#334155',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  specsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  specRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
-  },
-  specKey: {
-    fontSize: 12,
-    color: '#64748B',
-  },
-  specVal: {
-    fontSize: 12,
-    fontWeight: '700',
     color: '#0F172A',
   },
 });

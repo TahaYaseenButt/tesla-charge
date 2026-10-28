@@ -73,19 +73,38 @@ const livePath = (chargePointId, ...parts) =>
  */
 export async function saveChargerBoot(chargePointId, data) {
   try {
-    await setDoc(
-      doc(db, "chargers", chargePointId),
-      {
-        chargePointId,
-        vendor: data.chargePointVendor || "Unknown",
-        model: data.chargePointModel || "Unknown",
-        firmwareVersion: data.firmwareVersion || "Unknown",
-        meterType: data.meterType || "Unknown",
-        lastBootAt: nowIso(),
-        updatedAt: nowIso(),
-      },
-      { merge: true }
-    );
+    // Preserve existing user-configured display model
+    let existingModel = null;
+    try {
+      const existingSnap = await getDoc(doc(db, "chargers", chargePointId));
+      if (existingSnap.exists()) {
+        const exData = existingSnap.data() || {};
+        const m = exData.model || exData.displayModel;
+        if (m && m !== "Unknown" && m !== "DC_EVSE") {
+          existingModel = m;
+        }
+      }
+    } catch (_lookupErr) {}
+
+    const bootDoc = {
+      chargePointId,
+      vendor: data.chargePointVendor || "Unknown",
+      hardwareModel: data.chargePointModel || "Unknown",
+      firmwareVersion: data.firmwareVersion || "Unknown",
+      meterType: data.meterType || "Unknown",
+      lastBootAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+
+    if (existingModel) {
+      bootDoc.model = existingModel;
+      bootDoc.displayModel = existingModel;
+    } else {
+      bootDoc.model = "240kW";
+      bootDoc.displayModel = "240kW";
+    }
+
+    await setDoc(doc(db, "chargers", chargePointId), bootDoc, { merge: true });
 
     await update(ref(rtdb, livePath(chargePointId)), {
       chargePointId,
@@ -93,7 +112,7 @@ export async function saveChargerBoot(chargePointId, data) {
       lastHeartbeat: nowIso(),
       updatedAt: nowIso(),
     });
-    console.log(`[Hybrid] Boot info saved (Firestore) + Online (RTDB): ${chargePointId}`);
+    console.log(`[Hybrid] Boot info saved (Firestore) + Online (RTDB): ${chargePointId} [Model: ${bootDoc.model}]`);
   } catch (err) {
     console.error(`[Hybrid Error] saveChargerBoot for ${chargePointId}:`, err.message);
   }
@@ -130,20 +149,54 @@ export async function saveChargerOffline(chargePointId) {
 }
 
 /**
- * Connector status change (Available, Preparing, Charging, Faulted...) -> RTDB only
+ * Connector status change (Available, Preparing, Charging, Faulted...) -> RTDB & Firestore
  */
 export async function saveConnectorStatus(chargePointId, connectorId, status, errorCode, info) {
   try {
-    await update(ref(rtdb, livePath(chargePointId, "connectors", connectorId)), {
-      connectorId: Number(connectorId),
+    const connIdNum = Number(connectorId);
+    const updates = {};
+    updates[livePath(chargePointId, "connectors", connIdNum, "status")] = status;
+    updates[livePath(chargePointId, "connectors", connIdNum, "errorCode")] = errorCode || "NoError";
+    updates[livePath(chargePointId, "connectors", connIdNum, "info")] = info || "";
+    updates[livePath(chargePointId, "connectors", connIdNum, "updatedAt")] = nowIso();
+
+    // If status is not Charging, clear any activeTx from RTDB
+    if (status === "Available" || status === "Unavailable" || status === "Faulted") {
+      updates[livePath(chargePointId, "connectors", connIdNum, "activeTx")] = null;
+      updates[livePath(chargePointId, "activeTx", connIdNum)] = null;
+    }
+
+    await update(ref(rtdb), updates);
+
+    // Sync status to Firestore connector doc and summary
+    const fsDoc = {
       status,
       errorCode: errorCode || "NoError",
       info: info || "",
       updatedAt: nowIso(),
-    });
-    console.log(`[RTDB] Charger ${chargePointId} Connector ${connectorId} status: ${status}`);
+    };
+    if (status === "Available" || status === "Unavailable" || status === "Faulted") {
+      fsDoc.activeTx = deleteField();
+    }
+
+    await setDoc(
+      doc(db, "chargers", chargePointId, "connectors", String(connIdNum)),
+      fsDoc,
+      { merge: true }
+    ).catch(() => {});
+
+    await setDoc(
+      doc(db, "chargers", chargePointId),
+      {
+        [`connector_${connIdNum}_status`]: status,
+        updatedAt: nowIso(),
+      },
+      { merge: true }
+    ).catch(() => {});
+
+    console.log(`[Status] Charger ${chargePointId} Connector ${connectorId} status: ${status}`);
   } catch (err) {
-    console.error(`[RTDB Error] saveConnectorStatus:`, err.message);
+    console.error(`[Status Error] saveConnectorStatus:`, err.message);
   }
 }
 
@@ -163,126 +216,54 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
       updatedAt: nowIso(),
     };
 
-    // 1. Resolve transactionId if omitted by charger (optional in OCPP 1.6 MeterValues)
+    // 1. Resolve transactionId if present or actively running
     let resolvedTxId = transactionId ? Number(transactionId) : null;
     let act = {};
     const txBase = livePath(chargePointId, "activeTx", targetConnId);
 
-    try {
-      const activeSnap = await get(ref(rtdb, txBase));
-      if (activeSnap.exists()) {
-        act = activeSnap.val() || {};
-        if (!resolvedTxId && act.transactionId) {
-          resolvedTxId = Number(act.transactionId);
-        }
-      }
-    } catch (_e) {}
-
-    // Fallback 1: check Firestore connector doc if RTDB did not have activeTx
-    if (!resolvedTxId || !act.meterStart) {
+    if (resolvedTxId) {
       try {
-        const fsConnSnap = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(targetConnId)));
-        if (fsConnSnap.exists()) {
-          const fsConn = fsConnSnap.data() || {};
-          if (fsConn.activeTx) {
-            act = { ...fsConn.activeTx, ...act };
-            if (!resolvedTxId && fsConn.activeTx.transactionId) {
-              resolvedTxId = Number(fsConn.activeTx.transactionId);
-            }
+        const activeSnap = await get(ref(rtdb, txBase));
+        if (activeSnap.exists()) {
+          act = activeSnap.val() || {};
+        }
+      } catch (_e) {}
+    } else {
+      // If transactionId was omitted by charger, ONLY consider it active if RTDB currently has a Charging session
+      try {
+        const activeSnap = await get(ref(rtdb, txBase));
+        if (activeSnap.exists()) {
+          const val = activeSnap.val() || {};
+          if (val.transactionId && val.status === "Charging") {
+            act = val;
+            resolvedTxId = Number(val.transactionId);
           }
         }
-      } catch (_fsLookupErr) {}
-    }
+      } catch (_e) {}
 
-    // Fallback 2: check Firestore transactions collection for active session on this connector
-    if (!resolvedTxId || !act.meterStart) {
-      try {
-        const qActive = query(
-          collection(db, "transactions"),
-          where("chargePointId", "==", chargePointId),
-          where("connectorId", "==", targetConnId),
-          where("status", "==", "Charging"),
-          limit(1)
-        );
-        const qSnap = await getDocs(qActive);
-        if (!qSnap.empty) {
-          const tDoc = qSnap.docs[0].data();
-          act = { ...tDoc, ...act };
-          resolvedTxId = Number(tDoc.transactionId || qSnap.docs[0].id);
-        }
-      } catch (_qErr) {}
-    }
-
-    if (resolvedTxId || act.meterStart !== undefined) {
-      let sessionEnergyWh = 0;
-      let sessionEnergyKwh = 0;
-      let effectiveTariff = act.tariffRate && Number(act.tariffRate) > 0 ? Number(act.tariffRate) : 125;
-
-      const mStart = typeof act.meterStart === 'number' ? act.meterStart : (Number(act.meterStart) || 0);
-
-      // If meterStart is recorded and current telemetry has register value, compute session delta
-      if (telemetry.energyWh > 0 && mStart > 0 && telemetry.energyWh >= mStart) {
-        sessionEnergyWh = telemetry.energyWh - mStart;
-        sessionEnergyKwh = Number((sessionEnergyWh / 1000).toFixed(2));
-      } else if (telemetry.energyKwh > 0 && mStart > 0 && (telemetry.energyKwh * 1000) >= mStart) {
-        sessionEnergyWh = Math.round(telemetry.energyKwh * 1000) - mStart;
-        sessionEnergyKwh = Number((sessionEnergyWh / 1000).toFixed(2));
-      } else if (act.energyDeliveredKwh > 0) {
-        sessionEnergyKwh = Number(act.energyDeliveredKwh);
-        sessionEnergyWh = act.energyDeliveredWh || Math.round(sessionEnergyKwh * 1000);
-      }
-
-      const liveCost = Number((sessionEnergyKwh * effectiveTariff).toFixed(2));
-
-      if (resolvedTxId) {
-        updates[`${txBase}/transactionId`] = resolvedTxId;
-      }
-      updates[`${txBase}/currentPowerKw`] = telemetry.powerKw || 0;
-      updates[`${txBase}/currentEnergyWh`] = telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0);
-      updates[`${txBase}/energyDeliveredWh`] = sessionEnergyWh;
-      updates[`${txBase}/energyDeliveredKwh`] = sessionEnergyKwh;
-      updates[`${txBase}/cost`] = liveCost;
-      updates[`${txBase}/lastTelemetryAt`] = nowIso();
-
-      // Mirror activeTx into connectors/{targetConnId}/activeTx in RTDB as well
-      updates[livePath(chargePointId, "connectors", targetConnId, "activeTx")] = {
-        transactionId: resolvedTxId,
-        meterStart: mStart,
-        currentPowerKw: telemetry.powerKw || 0,
-        currentEnergyWh: telemetry.energyWh || 0,
-        energyDeliveredKwh: sessionEnergyKwh,
-        energyDeliveredWh: sessionEnergyWh,
-        cost: liveCost,
-        updatedAt: nowIso(),
-      };
-
-      if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
-        updates[`${txBase}/soc`] = telemetry.soc;
-        updates[`${txBase}/socCurrent`] = telemetry.soc;
-        if (act.socStart === undefined || act.socStart === null) {
-          updates[`${txBase}/socStart`] = telemetry.soc;
-        }
-      }
-
-      // Live update to Firestore transaction record so energy & cost are always accurate
-      if (resolvedTxId) {
+      // Fallback: check Firestore transactions ONLY for currently active status == 'Charging'
+      if (!resolvedTxId) {
         try {
-          const txUpdates = {
-            energyDeliveredKwh: sessionEnergyKwh,
-            energyDeliveredWh: sessionEnergyWh,
-            cost: liveCost,
-            currentPowerKw: telemetry.powerKw || 0,
-            currentEnergyWh: telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0),
-            lastTelemetryAt: nowIso(),
-          };
-          if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
-            txUpdates.socCurrent = telemetry.soc;
+          const qActive = query(
+            collection(db, "transactions"),
+            where("chargePointId", "==", chargePointId),
+            where("connectorId", "==", targetConnId),
+            where("status", "==", "Charging"),
+            limit(1)
+          );
+          const qSnap = await getDocs(qActive);
+          if (!qSnap.empty) {
+            const tDoc = qSnap.docs[0].data();
+            act = { ...tDoc, ...act };
+            resolvedTxId = Number(tDoc.transactionId || qSnap.docs[0].id);
           }
-          await updateDoc(doc(db, "transactions", String(resolvedTxId)), txUpdates);
-        } catch (_e) {}
+        } catch (_qErr) {}
       }
+    }
 
-      // Dual-write to Firestore connector
+    // If NO active charging session is found, this is a periodic idle/clock-aligned meter value
+    if (!resolvedTxId) {
+      // Dual-write telemetry only — do NOT set status to Charging, do NOT create activeTx
       try {
         const connDocRef = doc(db, "chargers", chargePointId, "connectors", String(targetConnId));
         await setDoc(
@@ -290,26 +271,113 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
           {
             telemetry: {
               ...telemetry,
-              energyKwh: sessionEnergyKwh > 0 ? sessionEnergyKwh : (telemetry.energyKwh || 0),
               updatedAt: nowIso(),
             },
-            activeTx: {
-              transactionId: resolvedTxId,
-              meterStart: mStart,
-              currentPowerKw: telemetry.powerKw || 0,
-              currentEnergyWh: telemetry.energyWh || 0,
-              energyDeliveredKwh: sessionEnergyKwh,
-              energyDeliveredWh: sessionEnergyWh,
-              cost: liveCost,
-              updatedAt: nowIso(),
-            },
-            status: "Charging",
             updatedAt: nowIso(),
           },
           { merge: true }
         );
       } catch (_fsErr) {}
+
+      await update(ref(rtdb), updates);
+      return;
     }
+
+    // Active charging session exists: compute energy and live cost
+    let sessionEnergyWh = 0;
+    let sessionEnergyKwh = 0;
+    let effectiveTariff = act.tariffRate && Number(act.tariffRate) > 0 ? Number(act.tariffRate) : 125;
+
+    const mStart = typeof act.meterStart === 'number' ? act.meterStart : (Number(act.meterStart) || 0);
+
+    // If meterStart is recorded and current telemetry has register value, compute session delta
+    if (telemetry.energyWh > 0 && mStart > 0 && telemetry.energyWh >= mStart) {
+      sessionEnergyWh = telemetry.energyWh - mStart;
+      sessionEnergyKwh = Number((sessionEnergyWh / 1000).toFixed(2));
+    } else if (telemetry.energyKwh > 0 && mStart > 0 && (telemetry.energyKwh * 1000) >= mStart) {
+      sessionEnergyWh = Math.round(telemetry.energyKwh * 1000) - mStart;
+      sessionEnergyKwh = Number((sessionEnergyWh / 1000).toFixed(2));
+    } else if (act.energyDeliveredKwh > 0) {
+      sessionEnergyKwh = Number(act.energyDeliveredKwh);
+      sessionEnergyWh = act.energyDeliveredWh || Math.round(sessionEnergyKwh * 1000);
+    }
+
+    const liveCost = Number((sessionEnergyKwh * effectiveTariff).toFixed(2));
+
+    updates[`${txBase}/transactionId`] = resolvedTxId;
+    updates[`${txBase}/status`] = "Charging";
+    updates[`${txBase}/currentPowerKw`] = telemetry.powerKw || 0;
+    updates[`${txBase}/currentEnergyWh`] = telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0);
+    updates[`${txBase}/energyDeliveredWh`] = sessionEnergyWh;
+    updates[`${txBase}/energyDeliveredKwh`] = sessionEnergyKwh;
+    updates[`${txBase}/cost`] = liveCost;
+    updates[`${txBase}/lastTelemetryAt`] = nowIso();
+
+    // Mirror activeTx into connectors/{targetConnId}/activeTx in RTDB as well
+    updates[livePath(chargePointId, "connectors", targetConnId, "activeTx")] = {
+      transactionId: resolvedTxId,
+      status: "Charging",
+      meterStart: mStart,
+      currentPowerKw: telemetry.powerKw || 0,
+      currentEnergyWh: telemetry.energyWh || 0,
+      energyDeliveredKwh: sessionEnergyKwh,
+      energyDeliveredWh: sessionEnergyWh,
+      cost: liveCost,
+      updatedAt: nowIso(),
+    };
+
+    if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
+      updates[`${txBase}/soc`] = telemetry.soc;
+      updates[`${txBase}/socCurrent`] = telemetry.soc;
+      if (act.socStart === undefined || act.socStart === null) {
+        updates[`${txBase}/socStart`] = telemetry.soc;
+      }
+    }
+
+    // Live update to Firestore transaction record so energy & cost are always accurate
+    try {
+      const txUpdates = {
+        energyDeliveredKwh: sessionEnergyKwh,
+        energyDeliveredWh: sessionEnergyWh,
+        cost: liveCost,
+        currentPowerKw: telemetry.powerKw || 0,
+        currentEnergyWh: telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0),
+        lastTelemetryAt: nowIso(),
+      };
+      if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
+        txUpdates.socCurrent = telemetry.soc;
+      }
+      await updateDoc(doc(db, "transactions", String(resolvedTxId)), txUpdates);
+    } catch (_e) {}
+
+    // Dual-write to Firestore connector
+    try {
+      const connDocRef = doc(db, "chargers", chargePointId, "connectors", String(targetConnId));
+      await setDoc(
+        connDocRef,
+        {
+          telemetry: {
+            ...telemetry,
+            energyKwh: sessionEnergyKwh > 0 ? sessionEnergyKwh : (telemetry.energyKwh || 0),
+            updatedAt: nowIso(),
+          },
+          activeTx: {
+            transactionId: resolvedTxId,
+            status: "Charging",
+            meterStart: mStart,
+            currentPowerKw: telemetry.powerKw || 0,
+            currentEnergyWh: telemetry.energyWh || 0,
+            energyDeliveredKwh: sessionEnergyKwh,
+            energyDeliveredWh: sessionEnergyWh,
+            cost: liveCost,
+            updatedAt: nowIso(),
+          },
+          status: "Charging",
+          updatedAt: nowIso(),
+        },
+        { merge: true }
+      );
+    } catch (_fsErr) {}
 
     // Single atomic multi-path write to RTDB
     await update(ref(rtdb), updates);
@@ -574,15 +642,17 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
     const connIdStr = String(base.connectorId ?? live?.connectorId ?? 1);
     if (live?.connectorId) {
       await remove(ref(rtdb, livePath(chargePointId, "activeTx", live.connectorId)));
+      await remove(ref(rtdb, livePath(chargePointId, "connectors", live.connectorId, "activeTx")));
     } else {
       await remove(ref(rtdb, livePath(chargePointId, "activeTx", connIdStr)));
+      await remove(ref(rtdb, livePath(chargePointId, "connectors", connIdStr, "activeTx")));
     }
 
     await setDoc(
       doc(db, "chargers", chargePointId, "connectors", connIdStr),
       {
         status: "Available",
-        activeTx: null,
+        activeTx: deleteField(),
         updatedAt: nowIso(),
       },
       { merge: true }
