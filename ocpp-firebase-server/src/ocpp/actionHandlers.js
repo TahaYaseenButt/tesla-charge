@@ -5,6 +5,7 @@ import {
   saveMeterValues,
   saveStartTransaction,
   saveStopTransaction,
+  verifyRfidTag,
 } from "../services/firebaseSync.js";
 
 // Helper to generate transaction IDs
@@ -19,7 +20,10 @@ export const actionHandlers = {
    */
   async BootNotification(chargePointId, payload) {
     console.log(`[OCPP] BootNotification from ${chargePointId}:`, payload);
-    await saveChargerBoot(chargePointId, payload);
+    // Persist boot info asynchronously so hardware receives an instant OCPP ACK
+    saveChargerBoot(chargePointId, payload).catch((err) =>
+      console.warn(`[OCPP] Async saveChargerBoot warning: ${err.message}`)
+    );
 
     // Auto-configure clock-aligned meter readings so charger streams telemetry even in idle/preparing
     setTimeout(async () => {
@@ -44,7 +48,9 @@ export const actionHandlers = {
    * Charger periodic heartbeat
    */
   async Heartbeat(chargePointId, _payload) {
-    await saveChargerHeartbeat(chargePointId);
+    saveChargerHeartbeat(chargePointId).catch((err) =>
+      console.warn(`[OCPP] Async saveChargerHeartbeat warning: ${err.message}`)
+    );
     return {
       currentTime: new Date().toISOString(),
     };
@@ -56,7 +62,9 @@ export const actionHandlers = {
   async StatusNotification(chargePointId, payload) {
     const { connectorId, status, errorCode, info } = payload;
     console.log(`[OCPP] StatusNotification from ${chargePointId} [Connector ${connectorId}]: ${status}`);
-    await saveConnectorStatus(chargePointId, connectorId, status, errorCode, info);
+    saveConnectorStatus(chargePointId, connectorId, status, errorCode, info).catch((err) =>
+      console.warn(`[OCPP] Async saveConnectorStatus warning: ${err.message}`)
+    );
     return {};
   },
 
@@ -66,11 +74,72 @@ export const actionHandlers = {
   async Authorize(chargePointId, payload) {
     const { idTag } = payload;
     console.log(`[OCPP] Authorize request on ${chargePointId} for tag: ${idTag}`);
-    // You can check an authorized tags list, or accept all tags
+    const authResult = await verifyRfidTag(chargePointId, idTag);
+
+    let parentId = idTag;
+    let activeTxToStop = null;
+    try {
+      const { get, ref } = await import("firebase/database");
+      const { rtdb, db } = await import("../config/firebase.js");
+      const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
+      const snap = await get(ref(rtdb, `live/${safeKey(chargePointId)}/activeTx`));
+      if (snap.exists()) {
+        const activeMap = snap.val() || {};
+        for (const connKey of Object.keys(activeMap)) {
+          const act = activeMap[connKey];
+          if (act && act.transactionId) {
+            parentId = act.idTag || idTag;
+            activeTxToStop = act;
+            break;
+          }
+        }
+      }
+
+      // Fallback: check Firestore transactions collection for active session
+      if (!activeTxToStop) {
+        const { collection, query, where, getDocs, limit } = await import("firebase/firestore");
+        const qActive = query(
+          collection(db, "transactions"),
+          where("chargePointId", "==", chargePointId),
+          where("status", "==", "Charging"),
+          limit(1)
+        );
+        const qSnap = await getDocs(qActive);
+        if (!qSnap.empty) {
+          const tDoc = qSnap.docs[0].data();
+          activeTxToStop = { transactionId: tDoc.transactionId || qSnap.docs[0].id, ...tDoc };
+          parentId = tDoc.idTag || idTag;
+        }
+      }
+    } catch (_e) {}
+
+    // If an authorized RFID tag was tapped while charging, trigger remote stop as fail-safe
+    if (authResult.status === "Accepted" && activeTxToStop && activeTxToStop.transactionId) {
+      console.log(`[OCPP] Authorized RFID tag ${idTag} tapped while Tx #${activeTxToStop.transactionId} is charging -> Dispatching remote stop`);
+      const targetConn = Number(activeTxToStop.connectorId || 1);
+      setTimeout(async () => {
+        try {
+          const { ocppServer } = await import("./OCPPServer.js");
+          await ocppServer.remoteStopTransaction(chargePointId, Number(activeTxToStop.transactionId));
+          setTimeout(async () => {
+            try {
+              await ocppServer.unlockConnector(chargePointId, targetConn);
+              console.log(`[OCPP] Cable auto-unlocked for connector ${targetConn} on RFID stop`);
+            } catch (_uErr) {}
+          }, 1200);
+        } catch (stopErr) {
+          console.warn(`[OCPP] RFID-triggered remote stop notice:`, stopErr.message);
+        }
+      }, 200);
+    }
+
     return {
       idTagInfo: {
-        status: "Accepted",
-        expiryDate: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
+        status: authResult.status || "Accepted",
+        parentIdTag: parentId,
+        expiryDate:
+          authResult.expiryDate ||
+          new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
       },
     };
   },
@@ -80,10 +149,20 @@ export const actionHandlers = {
    */
   async StartTransaction(chargePointId, payload) {
     const { connectorId, idTag, meterStart, timestamp } = payload;
+    const authResult = await verifyRfidTag(chargePointId, idTag);
+
+    if (authResult.status === "Blocked") {
+      console.warn(`[OCPP] StartTransaction rejected: tag ${idTag} is Blocked`);
+      return {
+        transactionId: 0,
+        idTagInfo: { status: "Blocked" },
+      };
+    }
+
     const txId = ++nextTxId;
 
     console.log(
-      `[OCPP] StartTransaction on ${chargePointId} [Connector ${connectorId}], TxId: ${txId}, MeterStart: ${meterStart}`
+      `[OCPP] StartTransaction on ${chargePointId} [Connector ${connectorId}], TxId: ${txId}, MeterStart: ${meterStart}, Tag: ${idTag}`
     );
 
     await saveStartTransaction(txId, chargePointId, connectorId, idTag, meterStart, timestamp);
@@ -113,15 +192,16 @@ export const actionHandlers = {
       meterStop,
       timestamp,
       reason,
-      0 // No payment calculation
+      null // Uses charger's configured tariffRate from Firestore
     );
 
     // Automatically unlock cable immediately on stop (no payment required)
+    const targetConnId = result?.connectorId || 1;
     setTimeout(async () => {
       try {
         const { ocppServer } = await import("./OCPPServer.js");
-        await ocppServer.unlockConnector(chargePointId, 1);
-        console.log(`[OCPP] Auto-unlocked cable for [${chargePointId}] after stop`);
+        await ocppServer.unlockConnector(chargePointId, targetConnId);
+        console.log(`[OCPP] Auto-unlocked cable for [${chargePointId}] on connector ${targetConnId} after stop`);
       } catch (_e) {}
     }, 1000);
 
@@ -159,13 +239,14 @@ export const actionHandlers = {
         if (!entry.sampledValue) continue;
         for (const sample of entry.sampledValue) {
           const val = parseFloat(sample.value) || 0;
-          const measurand = sample.measurand || "Energy.Active.Import.Register";
+          const measurandRaw = sample.measurand || "Energy.Active.Import.Register";
+          const mLower = measurandRaw.toLowerCase();
           const unit = (sample.unit || "").toUpperCase();
           const phase = sample.phase;
 
-          if (measurand === "Power.Active.Import") {
+          if (mLower === "power.active.import" || mLower === "power") {
             telemetry.powerKw = unit === "KW" ? val : Number((val / 1000).toFixed(2));
-          } else if (measurand === "Energy.Active.Import.Register") {
+          } else if (mLower.includes("energy.active.import") || mLower === "energy") {
             if (unit === "KWH") {
               telemetry.energyKwh = val;
               telemetry.energyWh = Math.round(val * 1000);
@@ -173,19 +254,19 @@ export const actionHandlers = {
               telemetry.energyWh = val;
               telemetry.energyKwh = Number((val / 1000).toFixed(3));
             }
-          } else if (measurand === "Voltage") {
+          } else if (mLower === "voltage") {
             if (phase === "L1") telemetry.voltageL1 = val;
             else if (phase === "L2") telemetry.voltageL2 = val;
             else if (phase === "L3") telemetry.voltageL3 = val;
             telemetry.voltage = val;
-          } else if (measurand === "Current.Import") {
+          } else if (mLower.includes("current.import") || mLower === "current") {
             if (phase === "L1") telemetry.currentL1 = val;
             else if (phase === "L2") telemetry.currentL2 = val;
             else if (phase === "L3") telemetry.currentL3 = val;
             else if (!phase) telemetry.currentL1 = val;
-          } else if (measurand === "Temperature") {
+          } else if (mLower === "temperature") {
             telemetry.temperatureC = val;
-          } else if (measurand === "SoC") {
+          } else if (mLower === "soc") {
             telemetry.soc = val;
           }
         }
@@ -193,6 +274,32 @@ export const actionHandlers = {
     }
 
     await saveMeterValues(chargePointId, connectorId, transactionId, telemetry);
+
+    // Auto-Stop Safety Interlock: If driver configured a target limit (kWh or budget), check if reached
+    if (transactionId) {
+      try {
+        const { get, ref } = await import("firebase/database");
+        const { rtdb } = await import("../config/firebase.js");
+        const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
+        const activeSnap = await get(ref(rtdb, `live/${safeKey(chargePointId)}/activeTx/${connectorId || 1}`));
+        if (activeSnap.exists()) {
+          const active = activeSnap.val();
+          if (active.targetKwh && active.meterStart) {
+            const deliveredKwh = Math.max(0, (telemetry.energyWh - Number(active.meterStart)) / 1000);
+            if (deliveredKwh >= active.targetKwh) {
+              console.log(
+                `[Safety Interlock] Target reached (${deliveredKwh.toFixed(2)} / ${active.targetKwh} kWh) on [${chargePointId}]. Auto-stopping session...`
+              );
+              const { ocppServer } = await import("./OCPPServer.js");
+              await ocppServer.remoteStopTransaction(chargePointId, transactionId);
+            }
+          }
+        }
+      } catch (limitErr) {
+        console.warn(`[Safety Interlock] Target check notice:`, limitErr.message);
+      }
+    }
+
     return {};
   },
 

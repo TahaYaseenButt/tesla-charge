@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getDatabase } from "firebase/database";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -15,6 +16,13 @@ const firebaseConfig = {
 };
 
 export const app = initializeApp(firebaseConfig);
+
+// Firestore: permanent data (charger setup, transactions history, billing)
 export const db = getFirestore(app);
 
-console.log(`[Firebase] Initialized connection to Firestore project: ${firebaseConfig.projectId}`);
+// Realtime Database: high-frequency live data (heartbeat, connector status, meter telemetry)
+export const rtdb = getDatabase(app);
+
+console.log(
+  `[Firebase] Initialized Firestore + Realtime Database for project: ${firebaseConfig.projectId}`
+);

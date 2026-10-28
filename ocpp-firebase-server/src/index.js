@@ -22,6 +22,11 @@ app.use(express.static(path.join(__dirname, "public")));
 // API Routes
 app.use("/api", apiRouter);
 
+// Monitor Route: Server Hardware, Load, RAM, CPU Telemetry
+app.get("/monitor", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "monitor.html"));
+});
+
 // Fallback to dashboard
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -42,7 +47,25 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`⚡ T-Charge OCPP 1.6-J Firebase Server is RUNNING!`);
   console.log(`📡 Local Port:         http://0.0.0.0:${PORT}`);
   console.log(`🌐 Dashboard:          http://localhost:${PORT}`);
-  console.log(`🔌 Charger OCPP URL:   ws://tcharge.duckdns.org:${PORT}/api/ocpp/version/1.6`);
+  console.log(`🔌 Charger OCPP URL:   ws://tesla-charge.online:${PORT}/api/ocpp/version/1.6`);
   console.log(`🔥 Firebase Project:   fir-85543`);
   console.log(`====================================================`);
 });
+
+// Graceful Docker / OS Shutdown
+const handleShutdown = (signal) => {
+  console.log(`\n[Server] Caught ${signal}, starting graceful shutdown...`);
+  server.close(() => {
+    console.log("[Server] HTTP and WebSocket listeners closed cleanly.");
+    process.exit(0);
+  });
+  // Force exit if hanging sockets don't close after 5 seconds
+  setTimeout(() => {
+    console.warn("[Server] Forced exit after timeout.");
+    process.exit(0);
+  }, 5000);
+};
+
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+process.on("SIGINT", () => handleShutdown("SIGINT"));
+

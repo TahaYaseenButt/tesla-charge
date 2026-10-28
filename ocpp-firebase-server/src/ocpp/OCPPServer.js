@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import { actionHandlers } from "./actionHandlers.js";
+import { saveChargerOffline } from "../services/firebaseSync.js";
 import crypto from "crypto";
 
 export class OCPPServer {
@@ -35,15 +36,30 @@ export class OCPPServer {
       const url = new URL(request.url, `http://${request.headers.host}`);
       const pathname = url.pathname;
 
-      // Extract chargePointId from URL:
+      // Extract chargePointId from URL, query params, or hardware headers:
       // Accepts formats:
       // /api/ocpp/version/1.6/:chargePointId
       // /ocpp/:chargePointId
       // /:chargePointId
+      // or headers: x-chargebox-id / x-chargepoint-id / chargeboxid
+      // or query params: ?chargePointId=...
       const parts = pathname.split("/").filter(Boolean);
-      const chargePointId = (parts[parts.length - 1] || "unknown").toLowerCase();
+      let chargePointId = url.searchParams.get("chargePointId") ||
+                          url.searchParams.get("identifier") ||
+                          request.headers["x-chargebox-id"] ||
+                          request.headers["x-chargepoint-id"] ||
+                          request.headers["chargeboxid"] ||
+                          "";
 
-      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: ${chargePointId}`);
+      if (!chargePointId && parts.length > 0) {
+        const lastPart = parts[parts.length - 1];
+        if (lastPart !== "1.6" && lastPart !== "ocpp" && lastPart !== "version") {
+          chargePointId = lastPart;
+        }
+      }
+      chargePointId = (chargePointId || "charger1").toLowerCase();
+
+      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}]`);
 
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.wss.emit("connection", ws, request, chargePointId);
@@ -54,11 +70,31 @@ export class OCPPServer {
       this.handleConnection(ws, chargePointId);
     });
 
+    // Periodic Ping/Pong heartbeat to detect dead/ghost sockets and keep NAT firewalls alive
+    this.heartbeatInterval = setInterval(() => {
+      for (const [id, conn] of this.connections.entries()) {
+        if (conn.ws.isAlive === false) {
+          this.log(`[Keepalive] Terminating unresponsive socket for [${id}] (missed ping)`);
+          conn.ws.terminate();
+          continue;
+        }
+        conn.ws.isAlive = false;
+        try {
+          conn.ws.ping();
+        } catch (_e) {}
+      }
+    }, 30000);
+
     this.log(`OCPP 1.6-J WebSocket Server ready and listening.`);
   }
 
   handleConnection(ws, chargePointId) {
     this.log(`Charger connected: [${chargePointId}]`);
+
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
 
     this.connections.set(chargePointId, {
       ws,
@@ -78,7 +114,19 @@ export class OCPPServer {
 
     ws.on("close", (code, reason) => {
       this.log(`Charger disconnected: [${chargePointId}] (code: ${code}, reason: ${reason || "none"})`);
-      this.connections.delete(chargePointId);
+      // Only mark offline if this socket is still the registered one (avoid race on quick reconnect)
+      const conn = this.connections.get(chargePointId);
+      if (conn?.ws === ws) {
+        if (conn.pendingCalls) {
+          for (const [, call] of conn.pendingCalls.entries()) {
+            clearTimeout(call.timeout);
+            call.reject(new Error(`Charger [${chargePointId}] disconnected while command was in-flight.`));
+          }
+          conn.pendingCalls.clear();
+        }
+        this.connections.delete(chargePointId);
+        saveChargerOffline(chargePointId);
+      }
     });
 
     ws.on("error", (err) => {
@@ -126,7 +174,8 @@ export class OCPPServer {
       const [, uniqueId, payload] = message;
       const conn = this.connections.get(chargePointId);
       if (conn && conn.pendingCalls.has(uniqueId)) {
-        const { resolve } = conn.pendingCalls.get(uniqueId);
+        const { resolve, timeout } = conn.pendingCalls.get(uniqueId);
+        clearTimeout(timeout);
         conn.pendingCalls.delete(uniqueId);
         resolve(payload);
         this.log(`<- [${chargePointId}] CALLRESULT received for req ${uniqueId}`);
@@ -138,7 +187,8 @@ export class OCPPServer {
       const [, uniqueId, errorCode, errorDescription] = message;
       const conn = this.connections.get(chargePointId);
       if (conn && conn.pendingCalls.has(uniqueId)) {
-        const { reject } = conn.pendingCalls.get(uniqueId);
+        const { reject, timeout } = conn.pendingCalls.get(uniqueId);
+        clearTimeout(timeout);
         conn.pendingCalls.delete(uniqueId);
         reject(new Error(`OCPP Error: ${errorCode} - ${errorDescription}`));
         this.log(`<- [${chargePointId}] CALLERROR received: ${errorCode} - ${errorDescription}`);
@@ -147,39 +197,59 @@ export class OCPPServer {
   }
 
   /**
-   * Send an outgoing OCPP command to a connected charger
+   * Send an outgoing OCPP command to a connected charger with retry logic and response confirmation
    */
-  async sendCall(chargePointId, action, payload = {}) {
-    const conn = this.connections.get(chargePointId.toLowerCase());
-    if (!conn || conn.ws.readyState !== 1) {
-      throw new Error(`Charger [${chargePointId}] is not currently connected.`);
+  async sendCall(chargePointId, action, payload = {}, maxRetries = 2, attemptTimeoutMs = 8000) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const conn = this.connections.get(chargePointId.toLowerCase());
+      if (!conn || conn.ws.readyState !== 1) {
+        throw new Error(`Charger [${chargePointId}] is not currently connected.`);
+      }
+
+      if (attempt > 0) {
+        this.log(`⚠️ [${chargePointId}] Retrying ${action} (attempt ${attempt + 1}/${maxRetries + 1})...`);
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+
+      const uniqueId = crypto.randomUUID();
+      const message = [2, uniqueId, action, payload];
+
+      try {
+        const response = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            if (conn.pendingCalls.has(uniqueId)) {
+              conn.pendingCalls.delete(uniqueId);
+              reject(new Error(`Timeout (${attemptTimeoutMs / 1000}s) waiting for response from [${chargePointId}] for action: ${action}`));
+            }
+          }, attemptTimeoutMs);
+
+          conn.pendingCalls.set(uniqueId, {
+            resolve: (res) => {
+              clearTimeout(timeout);
+              resolve(res);
+            },
+            reject: (err) => {
+              clearTimeout(timeout);
+              reject(err);
+            },
+            timeout,
+          });
+
+          this.log(`-> [${chargePointId}] Sending CALL (${attempt + 1}/${maxRetries + 1}): ${action}`);
+          conn.ws.send(JSON.stringify(message));
+        });
+
+        this.log(`<- [${chargePointId}] Confirmed ${action} response:`, JSON.stringify(response));
+        return response;
+      } catch (err) {
+        lastError = err;
+        this.log(`❌ [${chargePointId}] Attempt ${attempt + 1} failed for ${action}: ${err.message}`);
+      }
     }
 
-    const uniqueId = crypto.randomUUID();
-    const message = [2, uniqueId, action, payload];
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (conn.pendingCalls.has(uniqueId)) {
-          conn.pendingCalls.delete(uniqueId);
-          reject(new Error(`Timeout waiting for response from [${chargePointId}] for action: ${action}`));
-        }
-      }, 15000); // 15 seconds timeout
-
-      conn.pendingCalls.set(uniqueId, {
-        resolve: (res) => {
-          clearTimeout(timeout);
-          resolve(res);
-        },
-        reject: (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        },
-      });
-
-      this.log(`-> [${chargePointId}] Sending CALL: ${action}`);
-      conn.ws.send(JSON.stringify(message));
-    });
+    throw new Error(`Station did not respond to ${action} after ${maxRetries + 1} attempts: ${lastError?.message || 'No response'}`);
   }
 
   // --- Convenience Helper Methods ---
@@ -259,11 +329,13 @@ export class OCPPServer {
   getConnectedChargers() {
     const list = [];
     for (const [id, conn] of this.connections.entries()) {
-      list.push({
-        chargePointId: id,
-        connectedAt: conn.connectedAt,
-        readyState: conn.ws.readyState === 1 ? "Connected" : "Disconnected",
-      });
+      if (conn.ws && conn.ws.readyState === 1) {
+        list.push({
+          chargePointId: id,
+          connectedAt: conn.connectedAt,
+          readyState: "Connected",
+        });
+      }
     }
     return list;
   }

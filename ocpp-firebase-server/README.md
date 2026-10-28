@@ -1,15 +1,27 @@
 # T-Charge | OCPP 1.6-J & Firebase Gateway
 
-A clean, high-performance, and lightweight OCPP 1.6-J central server that connects directly to **Firebase Firestore** without any SQL/PostgreSQL or Docker requirements.
+A clean, high-performance, and lightweight OCPP 1.6-J central server that connects directly to **Firebase Firestore & Realtime Database**.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Two Ways to Run)
 
-From the `ocpp-firebase-server` folder:
-
+### Method 1: Production Docker Container (Recommended for 24/7 Raspberry Pi)
 ```bash
-# 1. Install dependencies (already done)
+# 1. From the ocpp-firebase-server directory:
+docker compose up -d
+
+# 2. View live logs:
+docker compose logs -f
+
+# 3. Stop or restart:
+docker compose down
+docker compose restart
+```
+
+### Method 2: Native Node.js
+```bash
+# 1. Install dependencies
 npm install
 
 # 2. Start the server
@@ -17,16 +29,16 @@ npm start
 ```
 
 Once started:
-- **Dashboard**: Open `http://localhost:3000` in your browser.
-- **OCPP URL for Chargers**: `ws://tcharge.duckdns.org:3000/api/ocpp/version/1.6`
+- **Dashboard**: Open `http://localhost:3000` (or `http://<LINUX_IP>:3000`)
+- **OCPP URL for Chargers**: `ws://<LINUX_IP>:3000/api/ocpp/version/1.6`
 
 ---
 
 ## 🔌 Connecting your Voltronic EV Charger
 
 In your Voltronic charger's settings:
-- **OCPP Server URL**: `ws://tcharge.duckdns.org:3000/api/ocpp/version/1.6`
-- **Identifier**: `charger01` (or whatever ID you choose)
+- **OCPP Server URL**: `ws://tesla-charge.online:3000/api/ocpp/version/1.6`
+- **Identifier**: `charger1` (or whatever ID you choose)
 
 Once saved and connected, the charger will show as **Online** on the dashboard and in Firebase!
 
