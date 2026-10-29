@@ -43,6 +43,14 @@ export default function AppTabs() {
         />
       </NativeTabs.Trigger>
 
+      <NativeTabs.Trigger name="revenue">
+        <NativeTabs.Trigger.Label>Revenue</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'chart.bar', selected: 'chart.bar.fill' }}
+          md={{ default: 'bar_chart', selected: 'bar_chart' }}
+        />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="settings">
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
