@@ -19,6 +19,7 @@ export interface LiveConnectorData {
   status: string;
   telemetry?: {
     voltage?: number;
+    voltageL1?: number;
     currentL1?: number;
     powerKw?: number;
     energyWh?: number;
@@ -99,10 +100,11 @@ export function useChargerLive(chargerId: string) {
       (snap) => {
         if (snap.exists()) {
           const c1 = snap.data();
+          const hasActive1 = c1.status === 'Charging' || c1.status === 'Finishing';
           setConnector1((prev) => ({
             status: c1.status || prev.status || 'Available',
             telemetry: c1.telemetry || prev.telemetry || {},
-            activeTx: c1.status === 'Charging' ? (c1.activeTx || prev.activeTx || null) : null,
+            activeTx: hasActive1 ? (c1.activeTx || prev.activeTx || null) : null,
           }));
           setLoading(false);
         }
@@ -116,10 +118,11 @@ export function useChargerLive(chargerId: string) {
       (snap) => {
         if (snap.exists()) {
           const c2 = snap.data();
+          const hasActive2 = c2.status === 'Charging' || c2.status === 'Finishing';
           setConnector2((prev) => ({
             status: c2.status || prev.status || 'Available',
             telemetry: c2.telemetry || prev.telemetry || {},
-            activeTx: c2.status === 'Charging' ? (c2.activeTx || prev.activeTx || null) : null,
+            activeTx: hasActive2 ? (c2.activeTx || prev.activeTx || null) : null,
           }));
           setLoading(false);
         }
@@ -192,20 +195,22 @@ export function useChargerLive(chargerId: string) {
           const active2 = live.activeTx?.['2'] || (Array.isArray(live.activeTx) ? live.activeTx[2] : null);
 
           if (c1) {
-            const isCharging1 = c1.status === 'Charging';
+            const hasTx1 = (active1 && (active1.status === 'Charging' || active1.status === 'Finishing')) ||
+              (c1.activeTx && (c1.activeTx.status === 'Charging' || c1.activeTx.status === 'Finishing'));
             setConnector1((prev) => ({
               status: c1.status || 'Available',
               telemetry: c1.telemetry || prev.telemetry || {},
-              activeTx: isCharging1 ? (active1 || c1.activeTx || prev.activeTx || null) : null,
+              activeTx: hasTx1 ? (active1 || c1.activeTx || prev.activeTx || null) : null,
             }));
           }
 
           if (c2) {
-            const isCharging2 = c2.status === 'Charging';
+            const hasTx2 = (active2 && (active2.status === 'Charging' || active2.status === 'Finishing')) ||
+              (c2.activeTx && (c2.activeTx.status === 'Charging' || c2.activeTx.status === 'Finishing'));
             setConnector2((prev) => ({
               status: c2.status || 'Available',
               telemetry: c2.telemetry || prev.telemetry || {},
-              activeTx: isCharging2 ? (active2 || c2.activeTx || prev.activeTx || null) : null,
+              activeTx: hasTx2 ? (active2 || c2.activeTx || prev.activeTx || null) : null,
             }));
           }
         },

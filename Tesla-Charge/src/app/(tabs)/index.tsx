@@ -57,7 +57,7 @@ const STATUS_CONFIG: Record<
   }
 > = {
   Charging: { color: '#059669', label: 'CHARGING', bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)' },
-  Preparing: { color: '#D97706', label: 'CONNECTED', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
+  Preparing: { color: '#D97706', label: 'PLUGGED IN', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
   SuspendedEV: { color: '#6366F1', label: 'PAUSED', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
   SuspendedEVSE: { color: '#6366F1', label: 'PAUSED', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
   Finishing: { color: '#0284C7', label: 'COMPLETED', bg: 'rgba(2, 132, 199, 0.08)', border: 'rgba(2, 132, 199, 0.25)' },
@@ -484,50 +484,45 @@ export default function HomeScreen() {
     : 'Available';
   const activeTheme = getStatusConfig(activeStatus);
 
-  // Telemetry for Gun A (Connector 1) - strictly 0 when not connected or no live reading
+  // Telemetry for Gun A (Connector 1) - directly from live OCPP server
   const tel1 = connector1Data?.telemetry;
-  const powerA = isOnline && isGunAConnected ? (tel1?.powerKw || 0) : 0;
-  const voltageA = isOnline && isGunAConnected && tel1?.voltage ? Math.round(Number(tel1.voltage)) : 0;
-  const currentA = isOnline && isGunAConnected ? (tel1?.currentL1 || 0) : 0;
+  const powerA = Number(tel1?.powerKw || 0);
+  const voltageA = tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0);
+  const currentA = Number(tel1?.currentL1 || 0);
+  const socA = typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null;
+
   // Session energy delivered for Gun A
   const txA = activeTx1Data || connector1Data?.activeTx;
   const deliveredA = Number(txA?.energyDeliveredKwh) || (txA?.energyDeliveredWh ? Number((txA.energyDeliveredWh / 1000).toFixed(2)) : 0);
   const mStartA = txA?.meterStart !== undefined && txA?.meterStart !== null && Number(txA.meterStart) > 0 ? Number(txA.meterStart) : null;
   const currentEnergyWhA = tel1?.energyWh || (tel1?.energyKwh ? Math.round(Number(tel1.energyKwh) * 1000) : null);
   const computedA =
-    isGunAConnected && mStartA !== null && currentEnergyWhA !== null && currentEnergyWhA >= mStartA
+    mStartA !== null && currentEnergyWhA !== null && currentEnergyWhA >= mStartA
       ? Math.max(0, (currentEnergyWhA - mStartA) / 1000)
       : 0;
-  const baseEnergyA = isGunAConnected
-    ? (computedA > 0 ? computedA : deliveredA > 0 ? deliveredA : 0)
-    : 0;
-  const sessionEnergyA = isGunAConnected
-    ? (baseEnergyA + liveAccumulatedA)
-    : 0;
+  const baseEnergyA = computedA > 0 ? computedA : deliveredA > 0 ? deliveredA : 0;
+  const sessionEnergyA = baseEnergyA + liveAccumulatedA;
   const lifetimeMeterA = tel1?.energyKwh || (tel1?.energyWh ? (tel1.energyWh / 1000).toFixed(2) : '0.00');
   const energyA = sessionEnergyA.toFixed(2);
 
-  // Telemetry for Gun B (Connector 2) - strictly 0 when not connected or no live reading
+  // Telemetry for Gun B (Connector 2) - directly from live OCPP server
   const tel2 = connector2Data?.telemetry;
-  const powerB = isOnline && !is30kW && isGunBConnected ? (tel2?.powerKw || 0) : 0;
-  const voltageB = isOnline && !is30kW && isGunBConnected && tel2?.voltage ? Math.round(Number(tel2.voltage)) : 0;
-  const currentB = isOnline && !is30kW && isGunBConnected ? (tel2?.currentL1 || 0) : 0;
-  
+  const powerB = Number(tel2?.powerKw || 0);
+  const voltageB = tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0);
+  const currentB = Number(tel2?.currentL1 || 0);
+  const socB = typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null;
+
   // Session energy delivered for Gun B
   const txB = activeTx2Data || connector2Data?.activeTx;
   const deliveredB = Number(txB?.energyDeliveredKwh) || (txB?.energyDeliveredWh ? Number((txB.energyDeliveredWh / 1000).toFixed(2)) : 0);
   const mStartB = txB?.meterStart !== undefined && txB?.meterStart !== null && Number(txB.meterStart) > 0 ? Number(txB.meterStart) : null;
   const currentEnergyWhB = tel2?.energyWh || (tel2?.energyKwh ? Math.round(Number(tel2.energyKwh) * 1000) : null);
   const computedB =
-    !is30kW && isGunBConnected && mStartB !== null && currentEnergyWhB !== null && currentEnergyWhB >= mStartB
+    mStartB !== null && currentEnergyWhB !== null && currentEnergyWhB >= mStartB
       ? Math.max(0, (currentEnergyWhB - mStartB) / 1000)
       : 0;
-  const baseEnergyB = !is30kW && isGunBConnected
-    ? (computedB > 0 ? computedB : deliveredB > 0 ? deliveredB : 0)
-    : 0;
-  const sessionEnergyB = !is30kW && isGunBConnected
-    ? (baseEnergyB + liveAccumulatedB)
-    : 0;
+  const baseEnergyB = computedB > 0 ? computedB : deliveredB > 0 ? deliveredB : 0;
+  const sessionEnergyB = baseEnergyB + liveAccumulatedB;
   const lifetimeMeterB = tel2?.energyKwh || (tel2?.energyWh ? (tel2.energyWh / 1000).toFixed(2) : '0.00');
   const energyB = sessionEnergyB.toFixed(2);
 
@@ -694,16 +689,24 @@ export default function HomeScreen() {
       )}
 
       {/* Power & Live Cost (PKR Below Amount) */}
+      {/* Power & Live Cost (PKR Below Amount) */}
       <View style={styles.powerSection}>
-        {hasAnyGunConnected ? (
+        {isActivelyChargingNow ? (
           <View style={styles.priceHeroColumn}>
             <Text style={styles.priceHeroVal}>{totalCost}</Text>
-            <Text style={styles.priceHeroCurr}>{curr}</Text>
+            <Text style={styles.priceHeroCurr}>{curr} • {totalPower} kW</Text>
           </View>
-        ) : lastSessionKwh > 0 ? (
+        ) : hasAnyGunConnected ? (
           <View style={styles.priceHeroColumn}>
-            <Text style={styles.priceHeroVal}>{lastSessionCost > 0 ? lastSessionCost.toLocaleString() : Number(lastSessionKwh).toFixed(2)}</Text>
-            <Text style={styles.priceHeroCurr}>{lastSessionCost > 0 ? `${curr} (last session)` : 'kWh delivered (last session)'}</Text>
+            <Text style={styles.priceHeroVal}>{Number(totalCost.replace(/,/g, '')) > 0 ? totalCost : 'READY'}</Text>
+            <Text style={styles.priceHeroCurr}>
+              {Number(totalCost.replace(/,/g, '')) > 0 ? `${curr} (session)` : 'PLUGGED IN • READY TO CHARGE'}
+            </Text>
+          </View>
+        ) : lastSessionCost > 0 ? (
+          <View style={styles.priceHeroColumn}>
+            <Text style={styles.priceHeroVal}>{lastSessionCost.toLocaleString()}</Text>
+            <Text style={styles.priceHeroCurr}>{`${curr} (last session)`}</Text>
           </View>
         ) : (
           <View style={styles.powerRow}>
@@ -723,6 +726,11 @@ export default function HomeScreen() {
             <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
               <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
             </View>
+            {tel1?.soc != null && tel1?.soc !== '' ? (
+              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.metricsGrid}>
@@ -738,7 +746,7 @@ export default function HomeScreen() {
             <View style={styles.divider} />
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>CURRENT</Text>
-              <Text style={styles.metricValue}>{isGunAConnected ? currentA : 0} A</Text>
+              <Text style={styles.metricValue}>{currentA} A</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.metricItem}>
@@ -747,8 +755,8 @@ export default function HomeScreen() {
             </View>
           </View>
         </View>
-      ) : bothConnected ? (
-        /* Dual Gun View: Both Gun A and Gun B Connected */
+      ) : (
+        /* Dual Gun View: Both Gun A and Gun B Cards Always Visible Side by Side */
         <View style={styles.dualContainer}>
           {/* Gun A Column */}
           <View style={styles.gunCard}>
@@ -762,7 +770,14 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            <Text style={styles.gunPower}>{Number(powerA).toFixed(1)} kW</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
+              <Text style={styles.gunPower}>{Number(powerA).toFixed(1)} kW</Text>
+              {tel1?.soc != null && tel1?.soc !== '' ? (
+                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}%</Text>
+                </View>
+              ) : null}
+            </View>
 
             <View style={styles.gunMetricRow}>
               <Text style={styles.gunMetricLabel}>Voltage</Text>
@@ -790,7 +805,14 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            <Text style={styles.gunPower}>{Number(powerB).toFixed(1)} kW</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
+              <Text style={styles.gunPower}>{Number(powerB).toFixed(1)} kW</Text>
+              {tel2?.soc != null && tel2?.soc !== '' ? (
+                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel2.soc}%</Text>
+                </View>
+              ) : null}
+            </View>
 
             <View style={styles.gunMetricRow}>
               <Text style={styles.gunMetricLabel}>Voltage</Text>
@@ -804,117 +826,6 @@ export default function HomeScreen() {
               <Text style={styles.gunMetricLabel}>Energy</Text>
               <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
             </View>
-          </View>
-        </View>
-      ) : isGunBConnected ? (
-        /* Single Gun B Connected */
-        <View style={styles.singleContainer}>
-          <View style={styles.singleGunHeader}>
-            <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
-            <Text style={styles.gunTitle}>GUN B</Text>
-            <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg, marginLeft: 8 }]}>
-              <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-            </View>
-            {tel2?.soc ? (
-              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel2.soc}%</Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.metricsGrid}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>ENERGY</Text>
-              <Text style={styles.metricValue}>{energyB} kWh</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>POWER</Text>
-              <Text style={styles.metricValue}>{Number(powerB).toFixed(1)} kW</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>CURRENT</Text>
-              <Text style={styles.metricValue}>{isGunBConnected ? currentB : 0} A</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>VOLTAGE</Text>
-              <Text style={styles.metricValue}>{voltageB} V</Text>
-            </View>
-          </View>
-        </View>
-      ) : isGunAConnected ? (
-        /* Single Gun A Connected */
-        <View style={styles.singleContainer}>
-          <View style={styles.singleGunHeader}>
-            <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-            <Text style={styles.gunTitle}>GUN A</Text>
-            <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
-              <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-            </View>
-            {tel1?.soc ? (
-              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}%</Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.metricsGrid}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>ENERGY</Text>
-              <Text style={styles.metricValue}>{energyA} kWh</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>POWER</Text>
-              <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>CURRENT</Text>
-              <Text style={styles.metricValue}>{isGunAConnected ? currentA : 0} A</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>VOLTAGE</Text>
-              <Text style={styles.metricValue}>{voltageA} V</Text>
-            </View>
-          </View>
-        </View>
-      ) : (
-        /* Standby: Neither Connected */
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>LAST SESSION</Text>
-            <Text style={styles.metricValue}>
-              {lastSessionKwh > 0
-                ? `${lastSessionKwh.toFixed(2)} kWh`
-                : '0.00 kWh'}
-            </Text>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>TOTAL COST</Text>
-            <Text style={[styles.metricValue, { color: '#0284C7', fontWeight: '900' }]}>
-              {lastSessionCost > 0
-                ? `PKR ${lastSessionCost.toLocaleString()}`
-                : 'PKR 0'}
-            </Text>
-          </View>
-          {lastDurationText ? (
-            <>
-              <View style={styles.divider} />
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>DURATION</Text>
-                <Text style={styles.metricValue}>{lastDurationText}</Text>
-              </View>
-            </>
-          ) : null}
-          <View style={styles.divider} />
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>STATUS</Text>
-            <Text style={[styles.metricValue, { color: '#059669' }]}>STANDBY</Text>
           </View>
         </View>
       )}

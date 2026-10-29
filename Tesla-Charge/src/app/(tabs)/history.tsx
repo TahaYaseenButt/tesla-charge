@@ -118,18 +118,20 @@ export default function HistoryScreen() {
           return kwh > 0;
         });
 
-        // Deduplicate twin records (e.g. cellular retry with same connector, start time, and cost)
+        // Deduplicate twin records (e.g. in-progress vs completed duplicate, or cellular retry)
         const dedupMap = new Map<string, any>();
         for (const tx of filtered) {
+          const txId = tx.transactionId ? String(tx.transactionId).trim() : null;
           const timeKey = tx.startTime ? tx.startTime.substring(0, 16) : String(tx.createdAt || '').substring(0, 16);
-          const dedupKey = `${tx.connectorId || 1}_${timeKey}_${Math.round((Number(tx.cost) || 0) * 10)}`;
+          const dedupKey = txId ? `id_${txId}` : `conn_${tx.connectorId || 1}_${timeKey}`;
+
           if (!dedupMap.has(dedupKey)) {
             dedupMap.set(dedupKey, tx);
           } else {
             const existing = dedupMap.get(dedupKey);
-            // Always prefer the Completed session over an in-progress duplicate
-            if (tx.status === 'Completed' && existing.status !== 'Completed') {
-              dedupMap.set(dedupKey, tx);
+            // Always prefer Completed session over in-progress/charging session
+            if (tx.status === 'Completed' || (existing.status !== 'Completed' && (Number(tx.cost) || 0) >= (Number(existing.cost) || 0))) {
+              dedupMap.set(dedupKey, { ...existing, ...tx });
             }
           }
         }
@@ -207,10 +209,12 @@ export default function HistoryScreen() {
           return true;
         });
 
-    // Deduplicate by transactionId so any duplicate documents don't display twice
+    // Deduplicate by transactionId or start minute so duplicate records never display twice
     const map = new Map<string, any>();
     for (const tx of list) {
-      const key = String(tx.transactionId || tx.id);
+      const txId = tx.transactionId ? String(tx.transactionId).trim() : null;
+      const timeKey = tx.startTime ? tx.startTime.substring(0, 16) : String(tx.createdAt || '').substring(0, 16);
+      const key = txId ? `id_${txId}` : `conn_${tx.connectorId || 1}_${timeKey}`;
       const kwh =
         Number(tx.energyDeliveredKwh) ||
         (Number(tx.energyDeliveredWh) ? Number(tx.energyDeliveredWh) / 1000 : 0) ||
@@ -225,9 +229,11 @@ export default function HistoryScreen() {
         const existKwh = Number(existing.computedKwh) || 0;
         const existCost = Number(existing.cost) || 0;
         const curCost = Number(tx.cost) || 0;
+        const isCompleted = tx.status === 'Completed' || existing.status === 'Completed';
         map.set(key, {
           ...existing,
           ...tx,
+          status: isCompleted ? 'Completed' : (tx.status || existing.status),
           computedKwh: Math.max(kwh, existKwh),
           cost: Math.max(curCost, existCost),
           socStart: typeof tx.socStart === 'number' ? tx.socStart : existing.socStart,

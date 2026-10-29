@@ -23,11 +23,11 @@ import {
 
 const STATUS_THEMES: Record<string, { color: string; label: string; bg: string; border: string }> = {
   Charging: { color: '#059669', label: 'CHARGING', bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)' },
-  Preparing: { color: '#D97706', label: 'CONNECTED', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
+  Preparing: { color: '#D97706', label: 'PLUGGED IN (PREPARING)', bg: 'rgba(245, 158, 11, 0.08)', border: 'rgba(245, 158, 11, 0.25)' },
   SuspendedEV: { color: '#6366F1', label: 'PAUSED (CAR)', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
   SuspendedEVSE: { color: '#6366F1', label: 'PAUSED (STATION)', bg: 'rgba(99, 102, 241, 0.08)', border: 'rgba(99, 102, 241, 0.25)' },
   Finishing: { color: '#0284C7', label: 'COMPLETED', bg: 'rgba(2, 132, 199, 0.08)', border: 'rgba(2, 132, 199, 0.25)' },
-  Available: { color: '#475569', label: 'STANDBY', bg: 'rgba(100, 116, 139, 0.06)', border: 'rgba(100, 116, 139, 0.15)' },
+  Available: { color: '#475569', label: 'AVAILABLE (STANDBY)', bg: 'rgba(100, 116, 139, 0.06)', border: 'rgba(100, 116, 139, 0.15)' },
   Unavailable: { color: '#94A3B8', label: 'OFFLINE', bg: 'rgba(148, 163, 184, 0.06)', border: 'rgba(148, 163, 184, 0.15)' },
   Faulted: { color: '#DC2626', label: 'FAULT', bg: 'rgba(220, 38, 38, 0.08)', border: 'rgba(220, 38, 38, 0.25)' },
 };
@@ -71,20 +71,8 @@ export default function ControlScreen() {
     }
   }, [connector1.status, connector2.status]);
 
-  // Synchronize gun selection if one disconnects (30kW has only 1 gun)
-  const activeGunId: 1 | 2 = is30kW
-    ? 1
-    : bothConnected
-    ? selectedGun
-    : connector2.status === 'Charging'
-    ? 2
-    : connector1.status === 'Charging'
-    ? 1
-    : isGunAConnected
-    ? 1
-    : isGunBConnected
-    ? 2
-    : 1;
+  // Selected gun (user can switch between Gun 1 and Gun 2 anytime on multi-gun stations)
+  const activeGunId: 1 | 2 = is30kW ? 1 : selectedGun;
 
   const currentConnector = activeGunId === 1 ? connector1 : connector2;
   const isCharging = currentConnector.status === 'Charging';
@@ -114,9 +102,11 @@ export default function ControlScreen() {
     setCustomInput(String(defaultVal));
   };
 
-  // Compute live metrics for selected gun
+  // Live telemetry directly from OCPP server for selected gun
   const tel = currentConnector.telemetry || {};
-  const livePower = isCharging ? (tel.powerKw || 0) : 0;
+  const livePower = Number(tel.powerKw || 0);
+  const liveVoltage = tel.voltage ? Math.round(Number(tel.voltage)) : (tel.voltageL1 ? Math.round(Number(tel.voltageL1)) : 0);
+  const liveCurrent = Number(tel.currentL1 || 0);
 
   // Session Energy (delivered strictly in the current charging session)
   const deliveredFromTx = Number(currentConnector.activeTx?.energyDeliveredKwh) || 0;
@@ -232,6 +222,14 @@ export default function ControlScreen() {
 
   // Execute Start Charging
   const handleStartCharging = async () => {
+    if (currentConnector.status === 'Available') {
+      Alert.alert(
+        'Connect Cable First',
+        `Gun ${activeGunId === 1 ? 'A' : 'B'} is in the station holster. Please plug the cable into your vehicle port, then tap Start Charging.`
+      );
+      return;
+    }
+
     setActionLoading(true);
     const limit: ChargingLimit = {
       mode: limitMode,
@@ -335,73 +333,64 @@ export default function ControlScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* No Connected Guns Warning */}
-      {!hasAnyGunConnected ? (
-        <View style={styles.emptyCard}>
-          <View style={styles.emptyIndicatorDot} />
-          <Text style={styles.emptyTitle}>NO VEHICLE CONNECTED</Text>
-          <Text style={styles.emptySub}>
-            Connect the charging cable to your vehicle. Session controls will activate automatically upon connection.
-          </Text>
+      {/* Dynamic Gun Switcher: Always accessible for multi-gun chargers */}
+      {!is30kW && (
+        <View style={styles.gunSelector}>
           <TouchableOpacity
-            style={styles.returnBtn}
-            onPress={() => router.push('/(tabs)')}
+            style={[styles.gunSelectorBtn, activeGunId === 1 && styles.gunSelectorBtnActive]}
+            onPress={() => setSelectedGun(1)}
           >
-            <Text style={styles.returnBtnText}>Return to Dashboard</Text>
+            <View
+              style={[
+                styles.gunStatusDot,
+                {
+                  backgroundColor:
+                    connector1.status === 'Charging'
+                      ? '#10B981'
+                      : connector1.status === 'Preparing'
+                      ? '#F59E0B'
+                      : '#64748B',
+                },
+              ]}
+            />
+            <Text
+              style={[
+                styles.gunSelectorText,
+                activeGunId === 1 && styles.gunSelectorTextActive,
+              ]}
+            >
+              GUN A ({connector1.status || 'Available'})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.gunSelectorBtn, activeGunId === 2 && styles.gunSelectorBtnActive]}
+            onPress={() => setSelectedGun(2)}
+          >
+            <View
+              style={[
+                styles.gunStatusDot,
+                {
+                  backgroundColor:
+                    connector2.status === 'Charging'
+                      ? '#10B981'
+                      : connector2.status === 'Preparing'
+                      ? '#F59E0B'
+                      : '#64748B',
+                },
+              ]}
+            />
+            <Text
+              style={[
+                styles.gunSelectorText,
+                activeGunId === 2 && styles.gunSelectorTextActive,
+              ]}
+            >
+              GUN B ({connector2.status || 'Available'})
+            </Text>
           </TouchableOpacity>
         </View>
-      ) : (
-        <>
-          {/* Dynamic Gun Switcher: only appears when both guns are plugged in on dual-gun chargers */}
-          {!is30kW && bothConnected && (
-            <View style={styles.gunSelector}>
-              <TouchableOpacity
-                style={[styles.gunSelectorBtn, activeGunId === 1 && styles.gunSelectorBtnActive]}
-                onPress={() => setSelectedGun(1)}
-              >
-                <View
-                  style={[
-                    styles.gunStatusDot,
-                    {
-                      backgroundColor:
-                        connector1.status === 'Charging' ? '#10B981' : '#F59E0B',
-                    },
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.gunSelectorText,
-                    activeGunId === 1 && styles.gunSelectorTextActive,
-                  ]}
-                >
-                  GUN A ({connector1.status})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.gunSelectorBtn, activeGunId === 2 && styles.gunSelectorBtnActive]}
-                onPress={() => setSelectedGun(2)}
-              >
-                <View
-                  style={[
-                    styles.gunStatusDot,
-                    {
-                      backgroundColor:
-                        connector2.status === 'Charging' ? '#10B981' : '#F59E0B',
-                    },
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.gunSelectorText,
-                    activeGunId === 2 && styles.gunSelectorTextActive,
-                  ]}
-                >
-                  GUN B ({connector2.status})
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
+      )}
 
           {/* Active Connector Hero Card */}
           <View style={styles.heroCard}>
@@ -423,6 +412,21 @@ export default function ControlScreen() {
                 </Text>
               </View>
             </View>
+
+            {/* Status Guidance Banner */}
+            {currentConnector.status === 'Available' ? (
+              <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 10, marginTop: 12 }}>
+                <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', fontWeight: '500' }}>
+                  ℹ Gun is idle in holster. Connect cable to vehicle port to start session.
+                </Text>
+              </View>
+            ) : currentConnector.status === 'Preparing' ? (
+              <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.08)', borderWidth: 1, borderColor: 'rgba(245, 158, 11, 0.25)', borderRadius: 10, padding: 10, marginTop: 12 }}>
+                <Text style={{ fontSize: 12, color: '#D97706', textAlign: 'center', fontWeight: '700' }}>
+                  ⚡ Vehicle plugged in (Preparing). Select limit below & tap Start Charging.
+                </Text>
+              </View>
+            ) : null}
 
             {/* Primary Hero Heading: LIVE PRICE (PKR Below Amount) */}
             <View style={styles.priceHeadingSection}>
@@ -452,7 +456,7 @@ export default function ControlScreen() {
               </View>
             ) : null}
 
-            {/* Live Metrics Row: ENERGY, POWER, VOLTAGE */}
+            {/* Live Metrics Row: ENERGY, POWER, CURRENT, VOLTAGE */}
             <View style={styles.liveCostRow}>
               <View style={styles.costItem}>
                 <Text style={styles.costLabel}>SESSION ENERGY</Text>
@@ -460,18 +464,19 @@ export default function ControlScreen() {
               </View>
               <View style={styles.costDivider} />
               <View style={styles.costItem}>
-                <Text style={styles.costLabel}>CHARGING POWER</Text>
+                <Text style={styles.costLabel}>POWER</Text>
                 <Text style={styles.costValue}>{livePower.toFixed(1)} kW</Text>
               </View>
-              {tel.voltage ? (
-                <>
-                  <View style={styles.costDivider} />
-                  <View style={styles.costItem}>
-                    <Text style={styles.costLabel}>VOLTAGE</Text>
-                    <Text style={styles.costValue}>{Number(tel.voltage).toFixed(0)} V</Text>
-                  </View>
-                </>
-              ) : null}
+              <View style={styles.costDivider} />
+              <View style={styles.costItem}>
+                <Text style={styles.costLabel}>CURRENT</Text>
+                <Text style={styles.costValue}>{liveCurrent.toFixed(1)} A</Text>
+              </View>
+              <View style={styles.costDivider} />
+              <View style={styles.costItem}>
+                <Text style={styles.costLabel}>VOLTAGE</Text>
+                <Text style={styles.costValue}>{liveVoltage} V</Text>
+              </View>
             </View>
 
             {/* Lifetime Gun Meter Register */}
@@ -684,8 +689,6 @@ export default function ControlScreen() {
               </View>
             </View>
           )}
-        </>
-      )}
 
       <View style={{ height: 40 }} />
     </ScrollView>
