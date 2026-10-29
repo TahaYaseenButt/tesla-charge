@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider } from '@/config/auth';
+import { SimulatorProvider } from '@/config/simulator';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -34,14 +35,16 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <ThemeProvider value={DefaultTheme}>
-        <AnimatedSplashOverlay />
-        <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="setup" options={{ headerShown: false }} />
-        </Stack>
-      </ThemeProvider>
+      <SimulatorProvider>
+        <ThemeProvider value={DefaultTheme}>
+          <AnimatedSplashOverlay />
+          <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+            <Stack.Screen name="setup" options={{ headerShown: false }} />
+          </Stack>
+        </ThemeProvider>
+      </SimulatorProvider>
     </AuthProvider>
   );
 }

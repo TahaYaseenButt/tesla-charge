@@ -6,6 +6,7 @@ import {
   getLocalConnectorData,
   getLocalChargerData,
 } from '@/services/storage';
+import { useSimulator } from '@/config/simulator';
 
 const CONNECTED_STATUSES = [
   'Preparing',
@@ -226,22 +227,63 @@ export function useChargerLive(chargerId: string) {
     }
   }, [cleanId, serverTimeOffset]);
 
+  // Simulator integration for testing UI without plugging into a physical car
+  const { isSimulating, gunA: simA, gunB: simB } = useSimulator();
+
+  const effectiveConn1: LiveConnectorData = isSimulating
+    ? {
+        status: simA.status,
+        telemetry: {
+          voltage: simA.voltage,
+          currentL1: simA.current,
+          powerKw: simA.powerKw,
+          energyKwh: simA.energyKwh,
+          soc: simA.soc,
+        },
+        activeTx: simA.status === 'Charging' ? {
+          energyDeliveredKwh: simA.energyKwh,
+          cost: simA.cost,
+          socStart: simA.soc > 5 ? simA.soc - 5 : simA.soc,
+          socCurrent: simA.soc,
+        } : null,
+      }
+    : connector1;
+
+  const effectiveConn2: LiveConnectorData = isSimulating
+    ? {
+        status: simB.status,
+        telemetry: {
+          voltage: simB.voltage,
+          currentL1: simB.current,
+          powerKw: simB.powerKw,
+          energyKwh: simB.energyKwh,
+          soc: simB.soc,
+        },
+        activeTx: simB.status === 'Charging' ? {
+          energyDeliveredKwh: simB.energyKwh,
+          cost: simB.cost,
+          socStart: simB.soc > 5 ? simB.soc - 5 : simB.soc,
+          socCurrent: simB.soc,
+        } : null,
+      }
+    : connector2;
+
   // A gun is connected if its status is in CONNECTED_STATUSES
-  const isGunAConnected = CONNECTED_STATUSES.includes(connector1.status);
-  const isGunBConnected = CONNECTED_STATUSES.includes(connector2.status);
+  const isGunAConnected = CONNECTED_STATUSES.includes(effectiveConn1.status);
+  const isGunBConnected = CONNECTED_STATUSES.includes(effectiveConn2.status);
   const hasAnyGunConnected = isGunAConnected || isGunBConnected;
   const bothConnected = isGunAConnected && isGunBConnected;
 
   return {
-    isOnline,
+    isOnline: isSimulating ? true : isOnline,
     lastHeartbeat,
-    connector1,
-    connector2,
+    connector1: effectiveConn1,
+    connector2: effectiveConn2,
     isGunAConnected,
     isGunBConnected,
     hasAnyGunConnected,
     bothConnected,
-    loading,
+    loading: isSimulating ? false : loading,
     serverTimeOffset,
   };
 }

@@ -25,6 +25,8 @@ import {
   mergeLocalTransaction,
 } from '@/services/storage';
 import { DashboardSkeleton } from '@/components/skeleton';
+import { useSimulator } from '@/config/simulator';
+import { SimulatorModal, SimulatorButton } from '@/components/SimulatorModal';
 
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
@@ -106,6 +108,10 @@ export default function HomeScreen() {
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
   const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
+
+  // In-app UI Simulator hook for desk testing without physical cars
+  const { scenario, isSimulating, gunA: simGunA, gunB: simGunB } = useSimulator();
+  const [simModalVisible, setSimModalVisible] = useState(false);
 
   // Fix Issue 4: Track true Firebase server time offset so clock drifts never wrongly show station offline
   useEffect(() => {
@@ -412,18 +418,18 @@ export default function HomeScreen() {
   // Connected statuses list: Preparing, Charging, Suspended, Finishing
   const CONNECTED_STATUS_LIST = ['Charging', 'Preparing', 'SuspendedEV', 'SuspendedEVSE', 'Finishing'];
 
-  const rawStatus1 = connector1Data?.status || 'Available';
-  const rawStatus2 = connector2Data?.status || 'Available';
+  const rawStatus1 = isSimulating ? simGunA.status : connector1Data?.status || 'Available';
+  const rawStatus2 = isSimulating ? simGunB.status : connector2Data?.status || 'Available';
 
   const isGunAPlugged = CONNECTED_STATUS_LIST.includes(rawStatus1);
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
-  // Track true Firebase server time with 300s tolerance (or always active if plugged in)
+  // Track true Firebase server time with 300s tolerance (or always active if plugged in or simulating)
   const nowServer = Date.now() + serverTimeOffset;
   const lastHbTime = chargerData?.lastHeartbeat ? new Date(chargerData.lastHeartbeat).getTime() : 0;
   const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : true;
-  const isOnline = (chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged);
+  const isOnline = isSimulating || ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged));
 
   const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
   const status2 = (isOnline || isGunBPlugged) && !is30kW ? rawStatus2 : 'Unavailable';
@@ -484,12 +490,12 @@ export default function HomeScreen() {
     : 'Available';
   const activeTheme = getStatusConfig(activeStatus);
 
-  // Telemetry for Gun A (Connector 1) - directly from live OCPP server
+  // Telemetry for Gun A (Connector 1) - directly from live OCPP server or simulator
   const tel1 = connector1Data?.telemetry;
-  const powerA = Number(tel1?.powerKw || 0);
-  const voltageA = tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0);
-  const currentA = Number(tel1?.currentL1 || 0);
-  const socA = typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null;
+  const powerA = isSimulating ? simGunA.powerKw : Number(tel1?.powerKw || 0);
+  const voltageA = isSimulating ? simGunA.voltage : tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0);
+  const currentA = isSimulating ? simGunA.current : Number(tel1?.currentL1 || 0);
+  const socA = isSimulating ? (simGunA.soc > 0 ? simGunA.soc : null) : (typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null);
 
   // Session energy delivered for Gun A
   const txA = activeTx1Data || connector1Data?.activeTx;
@@ -501,16 +507,16 @@ export default function HomeScreen() {
       ? Math.max(0, (currentEnergyWhA - mStartA) / 1000)
       : 0;
   const baseEnergyA = computedA > 0 ? computedA : deliveredA > 0 ? deliveredA : 0;
-  const sessionEnergyA = baseEnergyA + liveAccumulatedA;
+  const sessionEnergyA = isSimulating ? simGunA.energyKwh : baseEnergyA + liveAccumulatedA;
   const lifetimeMeterA = tel1?.energyKwh || (tel1?.energyWh ? (tel1.energyWh / 1000).toFixed(2) : '0.00');
-  const energyA = sessionEnergyA.toFixed(2);
+  const energyA = isSimulating ? simGunA.energyKwh.toFixed(2) : sessionEnergyA.toFixed(2);
 
-  // Telemetry for Gun B (Connector 2) - directly from live OCPP server
+  // Telemetry for Gun B (Connector 2) - directly from live OCPP server or simulator
   const tel2 = connector2Data?.telemetry;
-  const powerB = Number(tel2?.powerKw || 0);
-  const voltageB = tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0);
-  const currentB = Number(tel2?.currentL1 || 0);
-  const socB = typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null;
+  const powerB = isSimulating ? simGunB.powerKw : Number(tel2?.powerKw || 0);
+  const voltageB = isSimulating ? simGunB.voltage : tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0);
+  const currentB = isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0);
+  const socB = isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null);
 
   // Session energy delivered for Gun B
   const txB = activeTx2Data || connector2Data?.activeTx;
@@ -522,9 +528,9 @@ export default function HomeScreen() {
       ? Math.max(0, (currentEnergyWhB - mStartB) / 1000)
       : 0;
   const baseEnergyB = computedB > 0 ? computedB : deliveredB > 0 ? deliveredB : 0;
-  const sessionEnergyB = baseEnergyB + liveAccumulatedB;
+  const sessionEnergyB = isSimulating ? simGunB.energyKwh : baseEnergyB + liveAccumulatedB;
   const lifetimeMeterB = tel2?.energyKwh || (tel2?.energyWh ? (tel2.energyWh / 1000).toFixed(2) : '0.00');
-  const energyB = sessionEnergyB.toFixed(2);
+  const energyB = isSimulating ? simGunB.energyKwh.toFixed(2) : sessionEnergyB.toFixed(2);
 
   // Total Power
   const totalPower = is30kW ? Number(powerA).toFixed(1) : (powerA + powerB).toFixed(1);
@@ -536,12 +542,14 @@ export default function HomeScreen() {
     ? tariffRate
     : 125;
   const curr = 'PKR';
-  const costA = Math.round(sessionEnergyA * rate).toString();
-  const costB = Math.round(sessionEnergyB * rate).toString();
+  const costA = isSimulating ? Math.round(simGunA.cost).toString() : Math.round(sessionEnergyA * rate).toString();
+  const costB = isSimulating ? Math.round(simGunB.cost).toString() : Math.round(sessionEnergyB * rate).toString();
   const totalEnergy = is30kW
     ? energyA
     : (sessionEnergyA + sessionEnergyB).toFixed(2);
-  const totalCost = Math.round(Number(totalEnergy) * rate).toLocaleString();
+  const totalCost = isSimulating
+    ? Math.round(simGunA.cost + simGunB.cost).toLocaleString()
+    : Math.round(Number(totalEnergy) * rate).toLocaleString();
   const hasAnyGunConnected = is30kW ? isGunAConnected : isGunAConnected || isGunBConnected;
 
   // Last completed session metrics for standby presentation
@@ -596,23 +604,25 @@ export default function HomeScreen() {
   }, [tel2?.energyWh, tel2?.energyKwh]);
 
   // Active Battery State of Charge (SoC %)
-  const activeSocA =
-    typeof tel1?.soc === 'number' && tel1.soc > 0
-      ? tel1.soc
-      : typeof activeTx1Data?.soc === 'number' && activeTx1Data.soc > 0
-      ? activeTx1Data.soc
-      : typeof activeTx1Data?.socCurrent === 'number' && activeTx1Data.socCurrent > 0
-      ? activeTx1Data.socCurrent
-      : null;
+  const activeSocA = isSimulating
+    ? (simGunA.soc > 0 ? simGunA.soc : null)
+    : typeof tel1?.soc === 'number' && tel1.soc > 0
+    ? tel1.soc
+    : typeof activeTx1Data?.soc === 'number' && activeTx1Data.soc > 0
+    ? activeTx1Data.soc
+    : typeof activeTx1Data?.socCurrent === 'number' && activeTx1Data.socCurrent > 0
+    ? activeTx1Data.socCurrent
+    : null;
 
-  const activeSocB =
-    typeof tel2?.soc === 'number' && tel2.soc > 0
-      ? tel2.soc
-      : typeof activeTx2Data?.soc === 'number' && activeTx2Data.soc > 0
-      ? activeTx2Data.soc
-      : typeof activeTx2Data?.socCurrent === 'number' && activeTx2Data.socCurrent > 0
-      ? activeTx2Data.socCurrent
-      : null;
+  const activeSocB = isSimulating
+    ? (simGunB.soc > 0 ? simGunB.soc : null)
+    : typeof tel2?.soc === 'number' && tel2.soc > 0
+    ? tel2.soc
+    : typeof activeTx2Data?.soc === 'number' && activeTx2Data.soc > 0
+    ? activeTx2Data.soc
+    : typeof activeTx2Data?.socCurrent === 'number' && activeTx2Data.socCurrent > 0
+    ? activeTx2Data.socCurrent
+    : null;
 
   // Gun charging detection
   const isGunACharging = isOnline && status1 === 'Charging';
@@ -646,9 +656,12 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID & Unified Minimal Status Badge */}
+      {/* Header: Station ID, Simulator Test Trigger & Unified Minimal Status Badge */}
       <View style={styles.header}>
-        <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
+          <SimulatorButton onOpen={() => setSimModalVisible(true)} />
+        </View>
         <View style={[styles.statusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border || 'transparent', borderWidth: 1 }]}>
           <View style={[styles.statusDot, { backgroundColor: activeTheme.color }]} />
           <Text style={[styles.statusText, { color: activeTheme.color }]}>
@@ -874,9 +887,9 @@ export default function HomeScreen() {
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
               <Text style={styles.gunPower}>{Number(powerA).toFixed(1)} kW</Text>
-              {tel1?.soc != null && tel1?.soc !== '' ? (
+              {hasSocA ? (
                 <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}%</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocA}%</Text>
                 </View>
               ) : null}
             </View>
@@ -909,9 +922,9 @@ export default function HomeScreen() {
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
               <Text style={styles.gunPower}>{Number(powerB).toFixed(1)} kW</Text>
-              {tel2?.soc != null && tel2?.soc !== '' ? (
+              {hasSocB ? (
                 <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel2.soc}%</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocB}%</Text>
                 </View>
               ) : null}
             </View>
@@ -931,6 +944,9 @@ export default function HomeScreen() {
           </View>
         </View>
       )}
+
+      {/* UI Test Simulator Modal for Testing without physical cars */}
+      <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
     </ScrollView>
   );
 }
