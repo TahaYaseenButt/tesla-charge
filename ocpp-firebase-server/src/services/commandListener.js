@@ -34,10 +34,14 @@ export function startCommandListener() {
             const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
 
             if (action === "UnlockConnector") {
-              // Safety: verify that energy is not actively flowing before physical unlock
+              // Safety: verify that electricity is not actively flowing before physical unlock
               const connSnap = await get(ref(rtdb, `live/${safeKey(safeId)}/connectors/${connectorId || 1}`));
-              const connStatus = connSnap.exists() ? connSnap.val()?.status : null;
-              if (connStatus === "Charging") {
+              const connData = connSnap.exists() ? connSnap.val() : {};
+              const powerKw = Number(connData?.telemetry?.powerKw || 0);
+              const currentA = Number(connData?.telemetry?.currentL1 || connData?.telemetry?.current || 0);
+
+              // Only block unlock if high power is ACTUALLY actively flowing
+              if (connData?.status === "Charging" && (powerKw > 1.0 || currentA > 2.0)) {
                 throw new Error("Safety Interlock: Cannot unlock cable while electricity is actively flowing. Stop charging session first.");
               }
               result = await ocppServer.unlockConnector(safeId, connectorId || 1);
@@ -170,7 +174,16 @@ export function startCommandListener() {
 
               result = await ocppServer.remoteStopTransaction(safeId, targetTxId);
               if (result?.status === "Rejected") {
-                throw new Error("Station rejected remote stop. Session may already be completing.");
+                // If station rejects remote stop, verify if power has already stopped (0 kW)
+                const telSnap = await get(ref(rtdb, `live/${safeKey(safeId)}/connectors/${connectorId || 1}/telemetry`));
+                const tel = telSnap.exists() ? telSnap.val() : {};
+                const isStillPowering = (tel.powerKw || 0) > 0.5 || (tel.current || 0) > 1.0;
+                if (!isStillPowering) {
+                  console.log(`[CommandListener] Charger rejected RemoteStopTransaction because session #${targetTxId} already concluded locally (0 kW). Gracefully acknowledging stop.`);
+                  result = { status: "Accepted", note: "Session already ended locally" };
+                } else {
+                  throw new Error("Station rejected remote stop. Vehicle may still be drawing power.");
+                }
               }
               console.log(`[CommandListener] RemoteStopTransaction accepted for tx #${targetTxId} on ${safeId}`);
             } else if (action === "Reset") {

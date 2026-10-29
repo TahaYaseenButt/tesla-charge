@@ -268,7 +268,10 @@ export default function ControlScreen() {
 
     if (res.success) {
       if (Platform.OS !== 'web') {
-        Alert.alert('Gun Unlocked', `Gun ${activeGunId === 1 ? 'A' : 'B'} latch released. You can now remove the connector.`);
+        Alert.alert(
+          'Station Latch Released',
+          `Gun ${activeGunId === 1 ? 'A' : 'B'} latch is unlocked.\n\nTip: If the cable is still held by the vehicle, press the UNLOCK button on your car key fob 2–3 times to release the car's charge port pin.`
+        );
       }
     } else {
       Alert.alert('Unlock Failed', res.error || 'Could not send unlock command to station.');
