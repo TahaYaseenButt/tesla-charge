@@ -25,17 +25,9 @@ export const actionHandlers = {
       console.warn(`[OCPP] Async saveChargerBoot warning: ${err.message}`)
     );
 
-    // Auto-configure clock-aligned meter readings so charger streams telemetry even in idle/preparing
-    setTimeout(async () => {
-      try {
-        const { ocppServer } = await import("./OCPPServer.js");
-        await ocppServer.changeConfiguration(chargePointId, "ClockAlignedDataInterval", "15");
-        await ocppServer.changeConfiguration(chargePointId, "MeterValueSampleInterval", "10");
-        console.log(`[OCPP] Configured meter reporting intervals (15s) for [${chargePointId}]`);
-      } catch (err) {
-        console.warn(`[OCPP] Auto-config on boot:`, err.message);
-      }
-    }, 2000);
+    // Hardware sends Heartbeat, StatusNotification, and MeterValues per its own internal schedule.
+    // We avoid sending unsolicited ChangeConfiguration on boot because embedded GSM modems
+    // often restart their network stack/reboot upon receiving configuration changes.
 
     return {
       status: "Accepted",

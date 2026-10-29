@@ -89,10 +89,13 @@ export class OCPPServer {
           continue;
         }
 
-        try {
-          // Send ping to keep Cloudflare Tunnel and NAT firewall open
-          conn.ws.ping();
-        } catch (_e) {}
+        // Only send a low-level WS ping if the socket has been quiet for > 45s,
+        // avoiding raw ping frames on sensitive cellular GSM modems that communicate via OCPP Heartbeat
+        if (inactiveMs > 45000) {
+          try {
+            conn.ws.ping();
+          } catch (_e) {}
+        }
       }
     }, 25000);
 
