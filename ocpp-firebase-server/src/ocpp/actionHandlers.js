@@ -151,6 +151,25 @@ export const actionHandlers = {
       };
     }
 
+    // Cellular Deduplication: Check if this connector already has an active session with identical meterStart or timestamp
+    try {
+      const { getDatabase, ref, get } = await import("firebase/database");
+      const { rtdb } = await import("../config/firebase.js");
+      const connTxSnap = await get(ref(rtdb, `live/${chargePointId.toLowerCase()}/connectors/${connectorId}/activeTx`));
+      if (connTxSnap.exists()) {
+        const active = connTxSnap.val() || {};
+        const isMeterMatch = Math.abs(Number(active.meterStart || 0) - Number(meterStart || 0)) < 50;
+        const isTimeMatch = active.startTime === timestamp;
+        if (active.transactionId && (isMeterMatch || isTimeMatch)) {
+          console.log(`[OCPP] Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${active.transactionId}`);
+          return {
+            transactionId: Number(active.transactionId),
+            idTagInfo: { status: "Accepted" },
+          };
+        }
+      }
+    } catch (_dedupErr) {}
+
     const txId = ++nextTxId;
 
     console.log(
