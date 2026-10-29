@@ -24,10 +24,15 @@ export class OCPPServer {
     this.wss = new WebSocketServer({
       noServer: true,
       handleProtocols: (protocols) => {
-        // Strict OCPP 1.6-J standard subprotocol negotiation
+        // Tolerant OCPP subprotocol negotiation
+        if (!protocols || protocols.size === 0) {
+          // If embedded hardware omitted Sec-WebSocket-Protocol, default to ocpp1.6
+          return "ocpp1.6";
+        }
         if (protocols.has("ocpp1.6")) return "ocpp1.6";
+        if (protocols.has("ocpp1.6j")) return "ocpp1.6j";
         if (protocols.has("ocpp1.5")) return "ocpp1.5";
-        return Array.from(protocols)[0] || false;
+        return Array.from(protocols)[0] || "ocpp1.6";
       },
     });
 
@@ -59,7 +64,9 @@ export class OCPPServer {
       }
       chargePointId = (chargePointId || "charger1").toLowerCase();
 
-      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}]`);
+      const proto = request.headers["sec-websocket-protocol"] || "none";
+      const agent = request.headers["user-agent"] || "unknown";
+      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}] (Protocol: ${proto}, Agent: ${agent})`);
 
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.wss.emit("connection", ws, request, chargePointId);
