@@ -47,7 +47,8 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`⚡ T-Charge OCPP 1.6-J Firebase Server is RUNNING!`);
   console.log(`📡 Local Port:         http://0.0.0.0:${PORT}`);
   console.log(`🌐 Dashboard:          http://localhost:${PORT}`);
-  console.log(`🔌 Charger OCPP URL:   ws://tesla-charge.online:${PORT}/api/ocpp/version/1.6`);
+  console.log(`🔌 Internet OCPP URL:  wss://tesla-charge.online/api/ocpp/version/1.6`);
+  console.log(`🔌 Local LAN OCPP URL: ws://192.168.0.131:${PORT}/api/ocpp/version/1.6`);
   console.log(`🔥 Firebase Project:   fir-85543`);
   console.log(`====================================================`);
 });
