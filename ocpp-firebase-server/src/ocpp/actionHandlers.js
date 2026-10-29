@@ -11,6 +11,108 @@ import {
 // Helper to generate transaction IDs
 let nextTxId = Date.now() % 1000000;
 
+/**
+ * Evaluates session limits with GSM predictive latency compensation.
+ * Uses strictly '>=' (never '==') so large energy or price steps never bypass the limit.
+ */
+async function enforceAutoStopIfTargetReached(chargePointId, connectorId, meterResult) {
+  try {
+    if (!meterResult || !meterResult.resolvedTxId) return;
+    const { resolvedTxId, sessionEnergyKwh, liveCost, powerKw, soc, activeTx, effectiveTariff } = meterResult;
+    if (!activeTx) return;
+
+    // Skip if already in the process of stopping or finished
+    if (activeTx.isStopping || activeTx.status === "Finishing" || activeTx.status === "Completed") {
+      return;
+    }
+
+    const targetPrice = activeTx.targetPrice ? Number(activeTx.targetPrice) : null;
+    const targetKwh = activeTx.targetKwh ? Number(activeTx.targetKwh) : null;
+    const targetMinutes = activeTx.targetMinutes ? Number(activeTx.targetMinutes) : null;
+    const targetSoc = activeTx.targetSoc ? Number(activeTx.targetSoc) : null;
+
+    if (!targetPrice && !targetKwh && !targetMinutes && !targetSoc) {
+      return;
+    }
+
+    const kw = Number(powerKw) || 0;
+    const tariff = Number(effectiveTariff) || 125;
+
+    // GSM Network Latency Compensation:
+    // Lead time of 5 seconds compensates for GSM packet transit (2-3s) + OCPP RemoteStop command delivery (2-3s).
+    // At high DC power (e.g. 60-120 kW), energy and cost rise by 25-40 PKR between telemetry packets.
+    const leadSeconds = 5;
+    const projectedKwhLead = kw > 0 ? (kw * (leadSeconds / 3600)) : 0;
+    const projectedCostLead = projectedKwhLead * tariff;
+
+    let shouldStop = false;
+    let stopReason = "";
+
+    // 1. Budget / Price Limit check (PKR)
+    if (targetPrice && targetPrice > 0) {
+      if (liveCost >= targetPrice) {
+        shouldStop = true;
+        stopReason = `Budget limit reached: PKR ${liveCost} >= target PKR ${targetPrice}`;
+      } else if (kw > 0 && (liveCost + projectedCostLead) >= targetPrice) {
+        shouldStop = true;
+        stopReason = `Predictive budget limit reached: PKR ${liveCost} (+PKR ${projectedCostLead.toFixed(1)} projected @ ${kw.toFixed(1)}kW) >= target PKR ${targetPrice}`;
+      }
+    }
+
+    // 2. Energy Limit check (kWh)
+    if (!shouldStop && targetKwh && targetKwh > 0) {
+      if (sessionEnergyKwh >= targetKwh) {
+        shouldStop = true;
+        stopReason = `Energy limit reached: ${sessionEnergyKwh.toFixed(2)} kWh >= target ${targetKwh.toFixed(2)} kWh`;
+      } else if (kw > 0 && (sessionEnergyKwh + projectedKwhLead) >= targetKwh) {
+        shouldStop = true;
+        stopReason = `Predictive energy limit reached: ${sessionEnergyKwh.toFixed(2)} kWh (+${projectedKwhLead.toFixed(3)} projected @ ${kw.toFixed(1)}kW) >= target ${targetKwh.toFixed(2)} kWh`;
+      }
+    }
+
+    // 3. Time Limit check (Minutes)
+    if (!shouldStop && targetMinutes && targetMinutes > 0 && activeTx.startTime) {
+      const elapsedMinutes = Math.max(0, (Date.now() - new Date(activeTx.startTime).getTime()) / 60000);
+      if (elapsedMinutes >= targetMinutes) {
+        shouldStop = true;
+        stopReason = `Time limit reached: ${elapsedMinutes.toFixed(1)} min >= target ${targetMinutes} min`;
+      }
+    }
+
+    // 4. Battery State of Charge Limit check (%)
+    if (!shouldStop && targetSoc && targetSoc > 0 && typeof soc === 'number' && soc > 0) {
+      if (soc >= targetSoc) {
+        shouldStop = true;
+        stopReason = `Battery SoC limit reached: ${soc}% >= target ${targetSoc}%`;
+      }
+    }
+
+    if (shouldStop) {
+      console.log(`[Safety Interlock] >>> AUTO-STOPPING: ${stopReason} on [${chargePointId}] Gun ${connectorId} (Tx #${resolvedTxId}) <<<`);
+
+      // Set stopping flags immediately in RTDB so rapid packets do not trigger duplicate stops
+      try {
+        const { ref, update } = await import("firebase/database");
+        const { rtdb } = await import("../config/firebase.js");
+        const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
+        const stopUpdates = {};
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/isStopping`] = true;
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/status`] = "Finishing";
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/stopReason`] = stopReason;
+        stopUpdates[`live/${safeKey(chargePointId)}/connectors/${connectorId}/status`] = "Finishing";
+        stopUpdates[`live/${safeKey(chargePointId)}/connectors/${connectorId}/info`] = `Stopping: ${stopReason}`;
+        await update(ref(rtdb), stopUpdates);
+      } catch (_flagErr) {}
+
+      // Dispatch RemoteStopTransaction to hardware
+      const { ocppServer } = await import("./OCPPServer.js");
+      await ocppServer.remoteStopTransaction(chargePointId, resolvedTxId);
+    }
+  } catch (err) {
+    console.warn(`[Safety Interlock] Target check notice:`, err.message);
+  }
+}
+
 export const actionHandlers = {
   /**
    * Charger powers on or connects
@@ -284,32 +386,10 @@ export const actionHandlers = {
       }
     }
 
-    await saveMeterValues(chargePointId, connectorId, transactionId, telemetry);
+    const meterResult = await saveMeterValues(chargePointId, connectorId, transactionId, telemetry);
 
-    // Auto-Stop Safety Interlock: If driver configured a target limit (kWh or budget), check if reached
-    if (transactionId) {
-      try {
-        const { get, ref } = await import("firebase/database");
-        const { rtdb } = await import("../config/firebase.js");
-        const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
-        const activeSnap = await get(ref(rtdb, `live/${safeKey(chargePointId)}/activeTx/${connectorId || 1}`));
-        if (activeSnap.exists()) {
-          const active = activeSnap.val();
-          if (active.targetKwh && active.meterStart) {
-            const deliveredKwh = Math.max(0, (telemetry.energyWh - Number(active.meterStart)) / 1000);
-            if (deliveredKwh >= active.targetKwh) {
-              console.log(
-                `[Safety Interlock] Target reached (${deliveredKwh.toFixed(2)} / ${active.targetKwh} kWh) on [${chargePointId}]. Auto-stopping session...`
-              );
-              const { ocppServer } = await import("./OCPPServer.js");
-              await ocppServer.remoteStopTransaction(chargePointId, transactionId);
-            }
-          }
-        }
-      } catch (limitErr) {
-        console.warn(`[Safety Interlock] Target check notice:`, limitErr.message);
-      }
-    }
+    // Auto-Stop Safety Interlock: Multi-metric checks (Price, kWh, Time, SoC) with GSM predictive latency compensation
+    await enforceAutoStopIfTargetReached(chargePointId, connectorId || 1, meterResult);
 
     return {};
   },

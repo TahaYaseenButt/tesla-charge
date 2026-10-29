@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -190,6 +190,45 @@ export default function ControlScreen() {
     targetKwh && targetKwh > 0
       ? Math.min(100, Math.round((Number(liveEnergy) / targetKwh) * 100))
       : null;
+
+  // Client-side Fail-safe Auto-Stop Watchdog:
+  // Evaluates with strictly '>=' (never '==') so multi-step energy/price jumps never bypass limits
+  const autoStopSentRef = useRef<boolean>(false);
+  const activeTxId = currentConnector.activeTx?.transactionId;
+
+  useEffect(() => {
+    autoStopSentRef.current = false;
+  }, [activeTxId, isCharging]);
+
+  useEffect(() => {
+    if (!isCharging || !currentConnector.activeTx || autoStopSentRef.current) return;
+
+    const rawCost = sessionEnergyKwh * (tariffRate || 125);
+    const tx = currentConnector.activeTx;
+    const targetPriceVal = tx.targetPrice || (tx.limitMode === 'price' ? tx.limitValue : null);
+    const targetKwhVal = tx.targetKwh || (tx.limitMode === 'energy' ? tx.limitValue : null);
+
+    let reached = false;
+    let limitDesc = '';
+
+    if (targetPriceVal && targetPriceVal > 0 && rawCost >= targetPriceVal) {
+      reached = true;
+      limitDesc = `Budget limit of ${currency} ${targetPriceVal} reached`;
+    } else if (targetKwhVal && targetKwhVal > 0 && sessionEnergyKwh >= targetKwhVal) {
+      reached = true;
+      limitDesc = `Energy limit of ${targetKwhVal} kWh reached`;
+    }
+
+    if (reached) {
+      autoStopSentRef.current = true;
+      console.log(`[Client Auto-Stop] ${limitDesc}. Automatically stopping session...`);
+      stopChargingSession(CHARGER_ID, activeGunId, currentConnector.activeTx, user).then((res) => {
+        if (res.success && Platform.OS !== 'web') {
+          Alert.alert('Target Limit Reached', `${limitDesc}. Charging stopped automatically.`);
+        }
+      });
+    }
+  }, [isCharging, sessionEnergyKwh, tariffRate, currentConnector.activeTx, currency, activeGunId, user, CHARGER_ID]);
 
   // Execute Start Charging
   const handleStartCharging = async () => {

@@ -384,8 +384,20 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
 
     // Single atomic multi-path write to RTDB
     await update(ref(rtdb), updates);
+
+    return {
+      resolvedTxId,
+      sessionEnergyKwh,
+      sessionEnergyWh,
+      liveCost,
+      powerKw: telemetry.powerKw || 0,
+      soc: typeof telemetry.soc === 'number' ? telemetry.soc : null,
+      activeTx: act,
+      effectiveTariff,
+    };
   } catch (err) {
     console.error(`[RTDB Error] saveMeterValues:`, err.message);
+    return null;
   }
 }
 
@@ -400,7 +412,10 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
     let userId = null;
     let userEmail = null;
     let targetKwh = null;
+    let targetPrice = null;
+    let targetMinutes = null;
     let limitMode = 'full';
+    let limitValue = null;
     let effectiveTariff = 125;
     let socStart = null;
 
@@ -417,8 +432,11 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
         const val = snap.val();
         if (val.userId) userId = val.userId;
         if (val.userEmail) userEmail = val.userEmail;
-        if (val.targetKwh) targetKwh = val.targetKwh;
+        if (val.targetKwh) targetKwh = Number(val.targetKwh);
+        if (val.targetPrice) targetPrice = Number(val.targetPrice);
+        if (val.targetMinutes) targetMinutes = Number(val.targetMinutes);
         if (val.limitMode) limitMode = val.limitMode;
+        if (val.limitValue) limitValue = Number(val.limitValue);
         if (typeof val.socStart === 'number') socStart = val.socStart;
       }
     } catch (_e) {}
@@ -441,10 +459,28 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
         }
         if (!userId && cData?.activeTx?.userId) userId = cData.activeTx.userId;
         if (!userEmail && cData?.activeTx?.userEmail) userEmail = cData.activeTx.userEmail;
-        if (!targetKwh && cData?.activeTx?.targetKwh) targetKwh = cData.activeTx.targetKwh;
+        if (!targetKwh && cData?.activeTx?.targetKwh) targetKwh = Number(cData.activeTx.targetKwh);
+        if (!targetPrice && cData?.activeTx?.targetPrice) targetPrice = Number(cData.activeTx.targetPrice);
+        if (!targetMinutes && cData?.activeTx?.targetMinutes) targetMinutes = Number(cData.activeTx.targetMinutes);
+        if (!limitValue && cData?.activeTx?.limitValue) limitValue = Number(cData.activeTx.limitValue);
         if (cData?.activeTx?.limitMode) limitMode = cData.activeTx.limitMode;
       }
     } catch (_e) {}
+
+    // Derive target limits from limitMode if needed
+    if (limitMode === 'price') {
+      if (!targetPrice && limitValue) targetPrice = Number(limitValue);
+      if (targetPrice && (!targetKwh || targetKwh <= 0) && effectiveTariff > 0) {
+        targetKwh = Number((targetPrice / effectiveTariff).toFixed(3));
+      }
+    } else if (limitMode === 'time') {
+      if (!targetMinutes && limitValue) targetMinutes = Number(limitValue);
+      if (targetMinutes && (!targetKwh || targetKwh <= 0)) {
+        targetKwh = Number(((11 * targetMinutes) / 60).toFixed(2));
+      }
+    } else if (limitMode === 'energy') {
+      if (!targetKwh && limitValue) targetKwh = Number(limitValue);
+    }
 
     // Fallback: If idTag is an email address, treat as userEmail
     if (!userEmail && idTag && idTag.includes("@")) {
@@ -471,8 +507,11 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
       idTag: idTag || "Anonymous",
       userId: userId || null,
       userEmail: userEmail || null,
-      targetKwh: targetKwh || null,
+      targetKwh: targetKwh ? Number(targetKwh) : null,
+      targetPrice: targetPrice ? Number(targetPrice) : null,
+      targetMinutes: targetMinutes ? Number(targetMinutes) : null,
       limitMode: limitMode || 'full',
+      limitValue: limitValue ? Number(limitValue) : null,
       meterStart: Number(meterStart),
       tariffRate: effectiveTariff,
       socStart: typeof socStart === 'number' ? socStart : null,
@@ -490,10 +529,15 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
     await setDoc(doc(db, "transactions", String(transactionId)), txData);
     saveLocalServerTransaction(txData);
 
-    await set(ref(rtdb, livePath(chargePointId, "activeTx", connectorId)), {
+    const activeTxPayload = {
       ...txData,
       currentPowerKw: 0,
       currentEnergyWh: Number(meterStart) || 0,
+    };
+
+    await update(ref(rtdb), {
+      [livePath(chargePointId, "activeTx", connectorId)]: activeTxPayload,
+      [livePath(chargePointId, "connectors", connectorId, "activeTx")]: activeTxPayload,
     });
 
     // Update connector doc in Firestore so both RTDB and Firestore have activeTx and meterStart
@@ -508,7 +552,7 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
     );
 
     await saveConnectorStatus(chargePointId, connectorId, "Charging", "NoError", `Transaction #${transactionId}`);
-    console.log(`[Hybrid] Started transaction #${transactionId} for charger ${chargePointId} (User: ${userEmail || userId || 'Anonymous'})`);
+    console.log(`[Hybrid] Started transaction #${transactionId} for charger ${chargePointId} [Limit: ${limitMode} (${limitValue || 'unlimited'})] (User: ${userEmail || userId || 'Anonymous'})`);
   } catch (err) {
     console.error(`[Hybrid Error] saveStartTransaction:`, err.message);
   }

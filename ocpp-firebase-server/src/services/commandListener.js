@@ -91,6 +91,29 @@ export function startCommandListener() {
                 }
               } catch (_lookupErr) {}
 
+              // Pre-record session limits in RTDB so StartTransaction has full context instantly
+              try {
+                const targetPriceVal = data.targetPrice || (data.limitMode === 'price' ? data.limitValue : null);
+                const targetMinutesVal = data.targetMinutes || (data.limitMode === 'time' ? data.limitValue : null);
+                const targetKwhVal = data.targetKwh || null;
+                const cKey = connectorId || 1;
+                await update(ref(rtdb), {
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/targetKwh`]: targetKwhVal,
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/targetPrice`]: targetPriceVal || null,
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/targetMinutes`]: targetMinutesVal || null,
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/limitMode`]: data.limitMode || 'full',
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/limitValue`]: data.limitValue || null,
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/userId`]: data.userId || null,
+                  [`live/${safeKey(safeId)}/activeTx/${cKey}/userEmail`]: data.userEmail || null,
+                  [`live/${safeKey(safeId)}/connectors/${cKey}/activeTx/targetKwh`]: targetKwhVal,
+                  [`live/${safeKey(safeId)}/connectors/${cKey}/activeTx/targetPrice`]: targetPriceVal || null,
+                  [`live/${safeKey(safeId)}/connectors/${cKey}/activeTx/targetMinutes`]: targetMinutesVal || null,
+                  [`live/${safeKey(safeId)}/connectors/${cKey}/activeTx/limitMode`]: data.limitMode || 'full',
+                  [`live/${safeKey(safeId)}/connectors/${cKey}/activeTx/limitValue`]: data.limitValue || null,
+                });
+                console.log(`[CommandListener] Pre-seeded target limits: ${data.limitMode || 'full'} (${data.limitValue || 'unlimited'}) on Gun ${cKey}`);
+              } catch (_preSeedErr) {}
+
               result = await ocppServer.remoteStartTransaction(safeId, connectorId || 1, effectiveIdTag);
               if (result?.status === "Rejected") {
                 throw new Error("Station rejected remote start. Check that the connector is securely inserted into vehicle.");
