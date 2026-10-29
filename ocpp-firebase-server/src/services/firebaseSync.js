@@ -640,13 +640,14 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
     await set(ref(rtdb, livePath(chargePointId, "lastCompletedTx")), completed);
     saveLocalServerTransaction(completed);
     const connIdStr = String(base.connectorId ?? live?.connectorId ?? 1);
-    if (live?.connectorId) {
-      await remove(ref(rtdb, livePath(chargePointId, "activeTx", live.connectorId)));
-      await remove(ref(rtdb, livePath(chargePointId, "connectors", live.connectorId, "activeTx")));
-    } else {
-      await remove(ref(rtdb, livePath(chargePointId, "activeTx", connIdStr)));
-      await remove(ref(rtdb, livePath(chargePointId, "connectors", connIdStr, "activeTx")));
-    }
+    const targetConnKey = live?.connectorId || connIdStr;
+
+    await update(ref(rtdb), {
+      [livePath(chargePointId, "activeTx", targetConnKey)]: null,
+      [livePath(chargePointId, "connectors", targetConnKey, "activeTx")]: null,
+      [livePath(chargePointId, "connectors", targetConnKey, "status")]: "Available",
+      [livePath(chargePointId, "connectors", targetConnKey, "info")]: "",
+    });
 
     await setDoc(
       doc(db, "chargers", chargePointId, "connectors", connIdStr),
