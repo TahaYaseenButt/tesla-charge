@@ -694,7 +694,7 @@ export default function HomeScreen() {
         {isActivelyChargingNow ? (
           <View style={styles.priceHeroColumn}>
             <Text style={styles.priceHeroVal}>{totalCost}</Text>
-            <Text style={styles.priceHeroCurr}>{curr} • {totalPower} kW</Text>
+            <Text style={styles.priceHeroCurr}>{curr} • Speed: {totalPower} kW</Text>
           </View>
         ) : hasAnyGunConnected ? (
           <View style={styles.priceHeroColumn}>

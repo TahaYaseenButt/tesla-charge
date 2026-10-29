@@ -718,20 +718,41 @@ export default function HistoryScreen() {
                     </View>
 
                     {/* Battery Percentage Journey (Start -> End) */}
-                    {(tx.socStart !== undefined && tx.socStart !== null) || (tx.socStop !== undefined && tx.socStop !== null) ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 3 }}>
-                        <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>
-                            SOC {tx.socStart ?? '--'}% → {tx.socStop ?? tx.socCurrent ?? '--'}%
-                            {tx.socGained !== undefined && tx.socGained !== null
-                              ? ` (+${tx.socGained}%)`
-                              : tx.socStart && (tx.socStop || tx.socCurrent)
-                              ? ` (+${Number(tx.socStop || tx.socCurrent) - Number(tx.socStart)}%)`
-                              : ''}
-                          </Text>
-                        </View>
-                      </View>
-                    ) : null}
+                    {(() => {
+                      const startSoc = typeof tx.socStart === 'number' && tx.socStart > 0 ? tx.socStart : null;
+                      const stopSoc = typeof tx.socStop === 'number' && tx.socStop > 0
+                        ? tx.socStop
+                        : typeof tx.socCurrent === 'number' && tx.socCurrent > 0
+                        ? tx.socCurrent
+                        : null;
+
+                      if (startSoc && stopSoc) {
+                        const gained = stopSoc >= startSoc ? stopSoc - startSoc : 0;
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 3 }}>
+                            <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>
+                                SOC {startSoc}% → {stopSoc}%{gained > 0 ? ` (+${gained}%)` : ''}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      }
+
+                      if (stopSoc) {
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 3 }}>
+                            <View style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>
+                                SOC Final: {stopSoc}%
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      }
+
+                      return null;
+                    })()}
 
                     <Text style={styles.txTimeSub}>
                       {timeLabel} {stopLabel ? `→ ${stopLabel}` : ''}{' '}

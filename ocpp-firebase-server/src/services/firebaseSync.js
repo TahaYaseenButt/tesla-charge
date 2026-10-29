@@ -330,10 +330,11 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
       updatedAt: nowIso(),
     };
 
-    if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
+    if (typeof telemetry.soc === 'number' && telemetry.soc > 0) {
       updates[`${txBase}/soc`] = telemetry.soc;
       updates[`${txBase}/socCurrent`] = telemetry.soc;
-      if (act.socStart === undefined || act.socStart === null) {
+      // Capture the first valid non-zero BMS battery percentage
+      if (act.socStart === undefined || act.socStart === null || act.socStart === 0) {
         updates[`${txBase}/socStart`] = telemetry.soc;
       }
     }
@@ -348,8 +349,11 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
         currentEnergyWh: telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0),
         lastTelemetryAt: nowIso(),
       };
-      if (typeof telemetry.soc === 'number' && telemetry.soc >= 0) {
+      if (typeof telemetry.soc === 'number' && telemetry.soc > 0) {
         txUpdates.socCurrent = telemetry.soc;
+        if (act.socStart === undefined || act.socStart === null || act.socStart === 0) {
+          txUpdates.socStart = telemetry.soc;
+        }
       }
       await updateDoc(doc(db, "transactions", String(resolvedTxId)), txUpdates);
     } catch (_e) {}
@@ -437,14 +441,14 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
         if (val.targetMinutes) targetMinutes = Number(val.targetMinutes);
         if (val.limitMode) limitMode = val.limitMode;
         if (val.limitValue) limitValue = Number(val.limitValue);
-        if (typeof val.socStart === 'number') socStart = val.socStart;
+        if (typeof val.socStart === 'number' && val.socStart > 0) socStart = val.socStart;
       }
     } catch (_e) {}
 
     try {
-      if (socStart === null) {
+      if (socStart === null || socStart === 0) {
         const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connectorId, "telemetry")));
-        if (connSnap.exists() && typeof connSnap.val()?.soc === 'number') {
+        if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
           socStart = connSnap.val().soc;
         }
       }
@@ -622,38 +626,40 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
     const totalCost = Number((energyDeliveredKwh * effectivePrice).toFixed(2));
     const stopTime = timestamp || nowIso();
 
-    // Determine start and stop battery percentage (SoC)
-    let socStart = typeof live?.tx?.socStart === 'number'
+    // Determine start and stop battery percentage (SoC) - strictly non-zero
+    let socStart = typeof live?.tx?.socStart === 'number' && live.tx.socStart > 0
       ? live.tx.socStart
-      : (typeof base?.socStart === 'number' ? base.socStart : null);
-    let socStop = typeof live?.tx?.socCurrent === 'number'
+      : (typeof base?.socStart === 'number' && base.socStart > 0 ? base.socStart : null);
+    let socStop = typeof live?.tx?.socCurrent === 'number' && live.tx.socCurrent > 0
       ? live.tx.socCurrent
-      : (typeof live?.tx?.soc === 'number'
+      : (typeof live?.tx?.soc === 'number' && live.tx.soc > 0
         ? live.tx.soc
-        : (typeof base?.socCurrent === 'number' ? base.socCurrent : null));
+        : (typeof base?.socCurrent === 'number' && base.socCurrent > 0 ? base.socCurrent : null));
 
     const connIdNum = base.connectorId ?? live?.connectorId ?? 1;
 
     try {
       const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connIdNum, "telemetry")));
-      if (connSnap.exists() && typeof connSnap.val()?.soc === 'number') {
+      if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
         socStop = connSnap.val().soc;
-        if (socStart === null) socStart = connSnap.val().soc;
+        if (socStart === null || socStart === 0) socStart = connSnap.val().soc;
       }
     } catch (_e) {}
 
     try {
-      if (socStop === null || socStart === null) {
+      if (socStop === null || socStart === null || socStart === 0) {
         const fsConn = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(connIdNum)));
-        if (fsConn.exists() && typeof fsConn.data()?.telemetry?.soc === 'number') {
+        if (fsConn.exists() && typeof fsConn.data()?.telemetry?.soc === 'number' && fsConn.data().telemetry.soc > 0) {
           const s = fsConn.data().telemetry.soc;
           if (socStop === null) socStop = s;
-          if (socStart === null) socStart = s;
+          if (socStart === null || socStart === 0) socStart = s;
         }
       }
     } catch (_e) {}
 
-    const socGained = typeof socStart === 'number' && typeof socStop === 'number' ? Math.max(0, socStop - socStart) : null;
+    const socGained = typeof socStart === 'number' && socStart > 0 && typeof socStop === 'number' && socStop > 0
+      ? Math.max(0, socStop - socStart)
+      : null;
 
     const finalFields = {
       stopTime,
