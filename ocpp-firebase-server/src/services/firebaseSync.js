@@ -303,9 +303,13 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
     }
 
     const liveCost = Number((sessionEnergyKwh * effectiveTariff).toFixed(2));
+    const isActivelyPowering = (telemetry.powerKw || 0) > 0 || (telemetry.current || 0) > 0 || (telemetry.currentL1 || 0) > 0;
+    const sessionStatus = (act.status === "Finishing" || act.status === "Completed")
+      ? act.status
+      : (isActivelyPowering ? "Charging" : (act.status || "Charging"));
 
     updates[`${txBase}/transactionId`] = resolvedTxId;
-    updates[`${txBase}/status`] = "Charging";
+    updates[`${txBase}/status`] = sessionStatus;
     updates[`${txBase}/currentPowerKw`] = telemetry.powerKw || 0;
     updates[`${txBase}/currentEnergyWh`] = telemetry.energyWh || (telemetry.energyKwh ? Math.round(telemetry.energyKwh * 1000) : 0);
     updates[`${txBase}/energyDeliveredWh`] = sessionEnergyWh;
@@ -316,7 +320,7 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
     // Mirror activeTx into connectors/{targetConnId}/activeTx in RTDB as well
     updates[livePath(chargePointId, "connectors", targetConnId, "activeTx")] = {
       transactionId: resolvedTxId,
-      status: "Charging",
+      status: sessionStatus,
       meterStart: mStart,
       currentPowerKw: telemetry.powerKw || 0,
       currentEnergyWh: telemetry.energyWh || 0,
@@ -350,7 +354,7 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
       await updateDoc(doc(db, "transactions", String(resolvedTxId)), txUpdates);
     } catch (_e) {}
 
-    // Dual-write to Firestore connector
+    // Dual-write telemetry to Firestore connector (without overwriting connector status)
     try {
       const connDocRef = doc(db, "chargers", chargePointId, "connectors", String(targetConnId));
       await setDoc(
@@ -363,7 +367,7 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
           },
           activeTx: {
             transactionId: resolvedTxId,
-            status: "Charging",
+            status: sessionStatus,
             meterStart: mStart,
             currentPowerKw: telemetry.powerKw || 0,
             currentEnergyWh: telemetry.energyWh || 0,
@@ -372,7 +376,6 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
             cost: liveCost,
             updatedAt: nowIso(),
           },
-          status: "Charging",
           updatedAt: nowIso(),
         },
         { merge: true }
