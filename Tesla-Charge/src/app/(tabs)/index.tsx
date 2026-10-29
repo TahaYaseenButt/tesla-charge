@@ -614,12 +614,23 @@ export default function HomeScreen() {
       ? activeTx2Data.socCurrent
       : null;
 
-  const currentChargingSoc = isGunBConnected ? activeSocB : isGunAConnected ? activeSocA : (activeSocB || activeSocA);
-  // Strictly hide SoC battery card when no car is connected (never show stale 79% when unplugged)
-  const displaySoc = hasAnyGunConnected && typeof currentChargingSoc === 'number' && currentChargingSoc > 0
-    ? currentChargingSoc
-    : null;
-  const isActivelyChargingNow = isOnline && (status1 === 'Charging' || status2 === 'Charging');
+  // Gun charging detection
+  const isGunACharging = isOnline && status1 === 'Charging';
+  const isGunBCharging = isOnline && !is30kW && status2 === 'Charging';
+  const bothCharging = isGunACharging && isGunBCharging;
+  const isActivelyChargingNow = isGunACharging || isGunBCharging;
+
+  const hasSocA = typeof activeSocA === 'number' && activeSocA > 0;
+  const hasSocB = typeof activeSocB === 'number' && activeSocB > 0;
+  const showDualBattery = !is30kW && (
+    (isGunAConnected && isGunBConnected && (hasSocA || hasSocB)) ||
+    bothCharging
+  );
+
+  // Single gun fallback: strictly align with the actively charging gun (never mismatch Gun A and Gun B)
+  const singleGunIsB = isGunBCharging || (!isGunACharging && !isGunAConnected && isGunBConnected);
+  const displaySoc = singleGunIsB ? (hasSocB ? activeSocB : null) : (hasSocA ? activeSocA : (hasSocB ? activeSocB : null));
+  const displaySocGunLabel = singleGunIsB ? 'GUN B' : 'GUN A';
 
   if (authLoading) {
     return <DashboardSkeleton isSingleGun={is30kW} />;
@@ -652,7 +663,67 @@ export default function HomeScreen() {
       </View>
 
       {/* Battery State of Charge Hero Card (Main Screen - Minimalist & Professional) */}
-      {displaySoc !== null && (
+      {showDualBattery ? (
+        /* Dual Battery View: Shows Gun A and Gun B batteries side-by-side with individual status & power */
+        <View style={styles.dualBatteryCard}>
+          {/* Gun A Column */}
+          <View style={styles.dualBatteryCol}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <View style={[styles.statusDot, { backgroundColor: isGunACharging ? '#10B981' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
+                <Text style={styles.dualBatteryTitle}>GUN A</Text>
+              </View>
+              <Text style={styles.dualBatteryPercent}>{hasSocA ? `${activeSocA}%` : '--'}</Text>
+            </View>
+
+            <View style={styles.batteryTrackMinimal}>
+              <View
+                style={[
+                  styles.batteryFillMinimal,
+                  {
+                    width: `${hasSocA ? Math.min(100, Math.max(4, activeSocA!)) : 0}%`,
+                    backgroundColor: isGunACharging ? '#10B981' : hasSocA && activeSocA! > 20 ? '#0F172A' : '#EF4444',
+                  },
+                ]}
+              />
+            </View>
+
+            <Text style={styles.dualBatterySub}>
+              {isGunACharging ? `${Number(powerA).toFixed(1)} kW • PKR ${costA}` : themeA.label}
+            </Text>
+          </View>
+
+          <View style={styles.dualBatteryDivider} />
+
+          {/* Gun B Column */}
+          <View style={styles.dualBatteryCol}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <View style={[styles.statusDot, { backgroundColor: isGunBCharging ? '#10B981' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
+                <Text style={styles.dualBatteryTitle}>GUN B</Text>
+              </View>
+              <Text style={styles.dualBatteryPercent}>{hasSocB ? `${activeSocB}%` : '--'}</Text>
+            </View>
+
+            <View style={styles.batteryTrackMinimal}>
+              <View
+                style={[
+                  styles.batteryFillMinimal,
+                  {
+                    width: `${hasSocB ? Math.min(100, Math.max(4, activeSocB!)) : 0}%`,
+                    backgroundColor: isGunBCharging ? '#10B981' : hasSocB && activeSocB! > 20 ? '#0F172A' : '#EF4444',
+                  },
+                ]}
+              />
+            </View>
+
+            <Text style={styles.dualBatterySub}>
+              {isGunBCharging ? `${Number(powerB).toFixed(1)} kW • PKR ${costB}` : themeB.label}
+            </Text>
+          </View>
+        </View>
+      ) : displaySoc !== null ? (
+        /* Single Battery View: Represents the single active/connected gun */
         <View style={styles.batteryHeroCard}>
           <View style={styles.batteryHeroTopRow}>
             <View style={{ flex: 1 }}>
@@ -660,7 +731,7 @@ export default function HomeScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <View style={[styles.statusDot, { backgroundColor: isActivelyChargingNow ? '#10B981' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
                   <Text style={styles.batteryHeroTitle}>
-                    {isActivelyChargingNow ? 'CHARGING' : 'BATTERY'}
+                    {displaySocGunLabel} {isActivelyChargingNow ? '• CHARGING' : '• BATTERY'}
                   </Text>
                 </View>
                 <Text style={styles.batteryHeroPercent}>{displaySoc}%</Text>
@@ -679,22 +750,31 @@ export default function HomeScreen() {
               <Text style={styles.batteryHeroSubtitle}>
                 {isActivelyChargingNow
                   ? 'Charging session in progress'
-                  : lastCompletedTx?.socStart
-                  ? `Session gain: ${lastCompletedTx.socStart}% → ${displaySoc}% (+${Math.max(0, displaySoc - lastCompletedTx.socStart)}%)`
-                  : 'Ready'}
+                  : 'Plugged in & Ready'}
               </Text>
             </View>
           </View>
         </View>
-      )}
+      ) : null}
 
       {/* Power & Live Cost (PKR Below Amount) */}
-      {/* Power & Live Cost (PKR Below Amount) */}
       <View style={styles.powerSection}>
-        {isActivelyChargingNow ? (
+        {bothCharging ? (
           <View style={styles.priceHeroColumn}>
             <Text style={styles.priceHeroVal}>{totalCost}</Text>
-            <Text style={styles.priceHeroCurr}>{curr} • Speed: {totalPower} kW</Text>
+            <Text style={styles.priceHeroCurr}>
+              {curr} • Speed: {totalPower} kW (Gun A: {Number(powerA).toFixed(1)} kW | Gun B: {Number(powerB).toFixed(1)} kW)
+            </Text>
+          </View>
+        ) : isGunACharging ? (
+          <View style={styles.priceHeroColumn}>
+            <Text style={styles.priceHeroVal}>{costA}</Text>
+            <Text style={styles.priceHeroCurr}>{curr} (Gun A) • Speed: {Number(powerA).toFixed(1)} kW</Text>
+          </View>
+        ) : isGunBCharging ? (
+          <View style={styles.priceHeroColumn}>
+            <Text style={styles.priceHeroVal}>{costB}</Text>
+            <Text style={styles.priceHeroCurr}>{curr} (Gun B) • Speed: {Number(powerB).toFixed(1)} kW</Text>
           </View>
         ) : hasAnyGunConnected ? (
           <View style={styles.priceHeroColumn}>
@@ -940,6 +1020,47 @@ const styles = StyleSheet.create({
   batteryHeroSubtitle: {
     fontSize: 12,
     fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  dualBatteryCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginHorizontal: 4,
+    marginBottom: 20,
+    flexDirection: 'row',
+    gap: 14,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  dualBatteryCol: {
+    flex: 1,
+  },
+  dualBatteryDivider: {
+    width: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  dualBatteryTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.6,
+  },
+  dualBatteryPercent: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  dualBatterySub: {
+    fontSize: 11,
+    fontWeight: '600',
     color: '#64748B',
     marginTop: 2,
   },
