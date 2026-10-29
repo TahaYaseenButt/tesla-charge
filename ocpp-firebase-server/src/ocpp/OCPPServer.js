@@ -70,20 +70,24 @@ export class OCPPServer {
       this.handleConnection(ws, chargePointId);
     });
 
-    // Periodic Ping/Pong heartbeat to detect dead/ghost sockets and keep NAT firewalls alive
+    // Periodic Ping/Pong heartbeat to keep NAT firewalls / Cloudflare alive and detect genuinely dead sockets
     this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
       for (const [id, conn] of this.connections.entries()) {
-        if (conn.ws.isAlive === false) {
-          this.log(`[Keepalive] Terminating unresponsive socket for [${id}] (missed ping)`);
+        const inactiveMs = now - (conn.lastActivity || now);
+        // Only terminate if we have seen 2.5 minutes of complete silence (no OCPP messages, heartbeats, or pongs)
+        if (inactiveMs > 150000) {
+          this.log(`[Keepalive] Terminating unresponsive socket for [${id}] (${Math.round(inactiveMs / 1000)}s of silence)`);
           conn.ws.terminate();
           continue;
         }
-        conn.ws.isAlive = false;
+
         try {
+          // Send ping to keep Cloudflare Tunnel and NAT firewall open
           conn.ws.ping();
         } catch (_e) {}
       }
-    }, 30000);
+    }, 25000);
 
     this.log(`OCPP 1.6-J WebSocket Server ready and listening.`);
   }
@@ -91,18 +95,27 @@ export class OCPPServer {
   handleConnection(ws, chargePointId) {
     this.log(`Charger connected: [${chargePointId}]`);
 
-    ws.isAlive = true;
-    ws.on("pong", () => {
-      ws.isAlive = true;
-    });
-
-    this.connections.set(chargePointId, {
+    const now = Date.now();
+    const connEntry = {
       ws,
+      lastActivity: now,
       pendingCalls: new Map(),
       connectedAt: new Date().toISOString(),
+    };
+
+    ws.on("pong", () => {
+      connEntry.lastActivity = Date.now();
     });
 
+    ws.on("ping", () => {
+      connEntry.lastActivity = Date.now();
+      try { ws.pong(); } catch (_e) {}
+    });
+
+    this.connections.set(chargePointId, connEntry);
+
     ws.on("message", async (data) => {
+      connEntry.lastActivity = Date.now();
       try {
         const text = data.toString();
         const parsed = JSON.parse(text);
