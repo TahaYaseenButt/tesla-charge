@@ -66,7 +66,7 @@ export function AnimatedIcon() {
       </Animated.View>
 
       <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
-        <Image style={styles.image} source={require('@/assets/images/expo-logo.png')} />
+        <Image style={styles.image} source={require('@/assets/images/brand-logo.png')} contentFit="contain" />
       </Animated.View>
     </View>
   );
@@ -92,13 +92,13 @@ const styles = StyleSheet.create({
   iconContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-    width: 128,
-    height: 128,
+    width: 140,
+    height: 140,
   },
   image: {
     position: 'absolute',
-    width: 76,
-    height: 71,
+    width: 120,
+    height: 120,
   },
   background: {
     width: 128,
