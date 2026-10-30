@@ -3,6 +3,23 @@ import { doc, setDoc, getDoc, updateDoc, collection, query, where, limit, getDoc
 import { ref, update, set, get, remove } from "firebase/database";
 import fs from "fs";
 import path from "path";
+import { sendPushNotification } from "./notificationService.js";
+
+/**
+ * Fetch push tokens registered for a charger
+ */
+async function getSubscribedPushTokens(chargePointId) {
+  try {
+    const snap = await get(ref(rtdb, `notifications/subscribers/${chargePointId}`));
+    if (snap.exists()) {
+      const data = snap.val();
+      return Object.values(data).map((v) => v.token).filter(Boolean);
+    }
+  } catch (err) {
+    console.warn("[Push] Error fetching push tokens:", err.message);
+  }
+  return [];
+}
 
 const LOCAL_DATA_FILE = path.join(process.cwd(), "data", "transactions.json");
 
@@ -194,6 +211,18 @@ export async function saveConnectorStatus(chargePointId, connectorId, status, er
       { merge: true }
     ).catch(() => {});
 
+    // Push Notification: When a car is plugged in (status transition to Preparing)
+    if (status === "Preparing") {
+      getSubscribedPushTokens(chargePointId).then((tokens) => {
+        const gunName = connIdNum === 2 ? "Gun B" : "Gun A";
+        sendPushNotification(tokens, {
+          title: "🔌 Vehicle Connected",
+          body: `A vehicle was plugged into ${gunName} at ${chargePointId.toUpperCase()}.`,
+          data: { chargePointId, connectorId: connIdNum, status: "Preparing" },
+        });
+      });
+    }
+
     console.log(`[Status] Charger ${chargePointId} Connector ${connectorId} status: ${status}`);
   } catch (err) {
     console.error(`[Status Error] saveConnectorStatus:`, err.message);
@@ -336,6 +365,21 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
       // Capture the first valid non-zero BMS battery percentage
       if (act.socStart === undefined || act.socStart === null || act.socStart === 0) {
         updates[`${txBase}/socStart`] = telemetry.soc;
+      }
+
+      // Push Notification: Whenever SoC increases by a 10% milestone (e.g. 30%, 40%, 50%, 60%, 70%, 80%, 90%, 100%)
+      const currentSoc = Math.floor(telemetry.soc);
+      const lastNotifiedSoc = act.lastNotifiedSoc || act.socStart || 0;
+      if (currentSoc >= 10 && currentSoc >= lastNotifiedSoc + 10) {
+        updates[`${txBase}/lastNotifiedSoc`] = currentSoc;
+        getSubscribedPushTokens(chargePointId).then((tokens) => {
+          const gunName = targetConnId === 2 ? "Gun B" : "Gun A";
+          sendPushNotification(tokens, {
+            title: `🔋 Battery at ${currentSoc}%`,
+            body: `${gunName} vehicle reached ${currentSoc}% battery (+${currentSoc - lastNotifiedSoc}% gained).`,
+            data: { chargePointId, connectorId: targetConnId, soc: currentSoc },
+          });
+        });
       }
     }
 
@@ -720,6 +764,23 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
       },
       { merge: true }
     ).catch(() => {});
+
+    // Push Notification: When charging session has completed / stopped
+    getSubscribedPushTokens(chargePointId).then((tokens) => {
+      const gunName = Number(connIdStr) === 2 ? "Gun B" : "Gun A";
+      const socGainText = socGained ? ` (${socGained}% gained)` : "";
+      sendPushNotification(tokens, {
+        title: "🛑 Charging Completed",
+        body: `${gunName} finished: ${energyDeliveredKwh} kWh delivered${socGainText} for PKR ${totalCost}.`,
+        data: {
+          chargePointId,
+          transactionId,
+          energyDeliveredKwh,
+          cost: totalCost,
+          status: "Completed",
+        },
+      });
+    });
 
     console.log(
       `[Hybrid] Stopped transaction #${transactionId}: ${energyDeliveredKwh} kWh delivered, SoC: ${socStart ?? '--'}% -> ${socStop ?? '--'}%, Total: PKR ${totalCost}`
