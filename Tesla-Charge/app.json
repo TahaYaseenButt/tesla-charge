@@ -54,7 +54,15 @@
       ],
       "react-native-nfc-manager",
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/favicon.png",
+          "color": "#0284C7",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
