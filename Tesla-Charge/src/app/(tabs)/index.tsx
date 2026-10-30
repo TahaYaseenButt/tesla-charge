@@ -659,6 +659,11 @@ export default function HomeScreen() {
       {/* Header: Station ID, Simulator Test Trigger & Unified Minimal Status Badge */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Image
+            source={require('@/assets/images/brand-logo.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
           <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
           <SimulatorButton onOpen={() => setSimModalVisible(true)} />
         </View>
@@ -972,6 +977,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  headerLogo: {
+    width: 26,
+    height: 26,
   },
   stationId: {
     fontSize: 20,

@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/config/auth';
@@ -70,6 +71,11 @@ export default function LoginScreen() {
         <View style={styles.inner}>
           {/* Brand Header */}
           <View style={styles.brandContainer}>
+            <Image
+              source={require('@/assets/images/brand-logo.png')}
+              style={styles.brandLogo}
+              resizeMode="contain"
+            />
             <Text style={styles.brandTitle}>TESLA CHARGE</Text>
             <Text style={styles.brandSubtitle}>
               {authMode === 'signin'
@@ -183,6 +189,11 @@ const styles = StyleSheet.create({
   brandContainer: {
     alignItems: 'center',
     marginBottom: 24,
+  },
+  brandLogo: {
+    width: 88,
+    height: 88,
+    marginBottom: 14,
   },
   brandTitle: {
     fontSize: 24,
