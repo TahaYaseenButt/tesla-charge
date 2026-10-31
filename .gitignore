@@ -28,6 +28,24 @@ yarn-error.log*
 .env
 .env.local
 
+# Node & Symlinks
+node_modules
+
+# Expo & Build artifacts
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Large binaries & archives
+*.apk
+*.zip
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
 
 
 

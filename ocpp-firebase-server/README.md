@@ -34,11 +34,21 @@ Once started:
 
 ---
 
-## 🔌 Connecting your Voltronic EV Charger
+## 🔌 Connecting your EV Charger (OCPP 1.6-J)
 
-In your Voltronic charger's settings:
-- **OCPP Server URL**: `ws://tesla-charge.online:3000/api/ocpp/version/1.6`
-- **Identifier**: `charger1` (or whatever ID you choose)
+In your charger's network / OCPP settings:
+
+### Option A: Encrypted (Recommended)
+- **Server URL**: `wss://tesla-charge.online/api/ocpp/version/1.6`
+- **Port**: `443` (Default for WSS, do NOT enter 3000)
+- **Charge Point ID / Identifier**: `charger1` (or whatever ID you choose)
+
+### Option B: Plain WebSockets (If charger hardware has no SSL / TLS)
+- **Server URL**: `ws://tesla-charge.online/api/ocpp/version/1.6`
+- **Port**: `80` (Default for WS, do NOT enter 3000)
+- **Charge Point ID / Identifier**: `charger1`
+
+> ⚠️ **Important**: Do **NOT** use port `3000` with `tesla-charge.online`. Traffic is routed through Cloudflare, which only proxies standard web ports (80 / 443). Using `:3000` over the domain will result in a connection timeout.
 
 Once saved and connected, the charger will show as **Online** on the dashboard and in Firebase!
 

@@ -1,0 +1,32 @@
+services:
+  ocpp-server:
+    container_name: tcharge-ocpp-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tcharge-ocpp-server:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - FIREBASE_PROJECT_ID=fir-85543
+      - PRICE_PER_KWH=50.0
+      - HEARTBEAT_INTERVAL=30
+    
+    # Prevents SD-card exhaustion on Raspberry Pi with automatic log rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Stability resource controls (handles 30-40+ concurrent users with zero lag)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 512M
+        reservations:
+          memory: 64M

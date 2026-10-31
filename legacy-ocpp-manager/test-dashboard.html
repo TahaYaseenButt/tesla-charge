@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tesla Charger - Live Hardware Test Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6 md:p-10 flex flex-col items-center">
+
+  <div class="w-full max-w-4xl space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
+      <div>
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">⚡</span>
+          <h1 class="text-2xl font-black tracking-tight text-white">CHARGER TEST DASHBOARD</h1>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">LIVE SYNC</span>
+        </div>
+        <p class="text-xs text-slate-400 mt-1">Control simulated states for <strong class="text-cyan-400">charger1</strong> & watch your iPhone app update live</p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span id="station-badge" class="px-3 py-1 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          ONLINE
+        </span>
+        <button onclick="toggleOnline(true)" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold transition">Set Online</button>
+        <button onclick="toggleOnline(false)" class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-xs font-bold transition">Set Offline</button>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden px-4 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center gap-2 transition-all">
+      <span>⚡</span>
+      <span id="toast-text">Action executed</span>
+    </div>
+
+    <!-- Quick Presets -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <h2 class="text-xs font-extrabold tracking-wider uppercase text-slate-400">1. Instant Quick Presets</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button onclick="setBothCharging()" class="p-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 font-extrabold text-sm text-white shadow-lg shadow-emerald-950 transition flex items-center justify-center gap-2">
+          <span>⚡⚡</span> Both Guns Charging (Dual 22 kW)
+        </button>
+        <button onclick="resetStandby()" class="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 font-bold text-sm text-slate-200 border border-slate-700 transition flex items-center justify-center gap-2">
+          <span>🛑</span> Standby (Disconnect All)
+        </button>
+      </div>
+    </div>
+
+    <!-- Gun A & Gun B Controllers -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Gun A (Connector 1) -->
+      <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-cyan-400"></span>
+            <h3 class="font-extrabold text-sm text-white tracking-wide">GUN A (CONNECTOR 1)</h3>
+          </div>
+          <span id="gun-a-status" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">Available</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">Power (kW):</label>
+          <input id="gun-a-kw" type="number" step="0.5" value="11.0" class="w-20 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-xs font-mono font-bold text-white focus:outline-none focus:border-cyan-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="updateGun('1', 'Preparing', 0, 0)" class="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition">
+            🔌 Plug In
+          </button>
+          <button onclick="updateGun('1', 'Charging', getKw('gun-a-kw', 11.0), 16.0)" class="p-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition">
+            ⚡ Charge
+          </button>
+          <button onclick="updateGun('1', 'SuspendedEV', 0, 0)" class="p-2.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-bold transition">
+            ⏸️ Suspend
+          </button>
+          <button onclick="updateGun('1', 'Available', 0, 0)" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
+            🛑 Unplug
+          </button>
+        </div>
+      </div>
+
+      <!-- Gun B (Connector 2) -->
+      <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-cyan-400"></span>
+            <h3 class="font-extrabold text-sm text-white tracking-wide">GUN B (CONNECTOR 2)</h3>
+          </div>
+          <span id="gun-b-status" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700">Available</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">Power (kW):</label>
+          <input id="gun-b-kw" type="number" step="0.5" value="11.0" class="w-20 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-xs font-mono font-bold text-white focus:outline-none focus:border-cyan-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="updateGun('2', 'Preparing', 0, 0)" class="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition">
+            🔌 Plug In
+          </button>
+          <button onclick="updateGun('2', 'Charging', getKw('gun-b-kw', 11.0), 16.0)" class="p-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition">
+            ⚡ Charge
+          </button>
+          <button onclick="updateGun('2', 'SuspendedEV', 0, 0)" class="p-2.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-bold transition">
+            ⏸️ Suspend
+          </button>
+          <button onclick="updateGun('2', 'Available', 0, 0)" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
+            🛑 Unplug
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Virtual RFID Card Tap -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4">
+      <h2 class="text-xs font-extrabold tracking-wider uppercase text-slate-400">3. Virtual RFID Card Tap</h2>
+      <div class="flex flex-col sm:flex-row gap-3">
+        <input id="rfid-tag" type="text" value="TESLA_DRIVER_01" class="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500" placeholder="Enter Card UID">
+        <button onclick="sendRfidSwipe(1)" class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold transition">💳 Swipe Card on Gun A</button>
+        <button onclick="sendRfidSwipe(2)" class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold transition">💳 Swipe Card on Gun B</button>
+      </div>
+    </div>
+
+    <!-- Station Model & GPS Location from Mobile Setup -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs font-extrabold tracking-wider uppercase text-slate-400">4. Station Hardware & GPS Location (from Mobile Setup)</h2>
+        <span id="station-model-badge" class="px-2 py-0.5 rounded text-[11px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">AC_ThreePhase21KW</span>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-slate-950/80 p-3.5 rounded-xl border border-slate-800">
+        <div>
+          <span class="text-slate-400 font-semibold">Registered Location: </span>
+          <span id="station-location-text" class="text-slate-200 font-medium">Waiting for setup from mobile app...</span>
+        </div>
+        <a id="station-maps-link" href="#" target="_blank" class="hidden px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold transition text-center">
+          🗺️ Open in Google Maps
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase Integration -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, doc, setDoc, addDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBkc0CoqaW1Mg5hLl7kpXU3TAURebEWpcg",
+      authDomain: "fir-85543.firebaseapp.com",
+      projectId: "fir-85543",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const CHARGER_ID = "charger1";
+
+    function showToast(text) {
+      const t = document.getElementById("toast");
+      document.getElementById("toast-text").innerText = text;
+      t.classList.remove("hidden");
+      setTimeout(() => t.classList.add("hidden"), 3000);
+    }
+
+    // Real-time listener
+    onSnapshot(doc(db, "chargers", CHARGER_ID), (snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        const badge = document.getElementById("station-badge");
+        if (d.status === "Online") {
+          badge.className = "px-3 py-1 rounded-xl text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-2";
+          badge.innerHTML = '<span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span> ONLINE';
+        } else {
+          badge.className = "px-3 py-1 rounded-xl text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-2";
+          badge.innerHTML = '<span class="h-2 w-2 rounded-full bg-rose-400"></span> OFFLINE';
+        }
+
+        if (d.model) {
+          document.getElementById("station-model-badge").innerText = d.model;
+        }
+
+        if (d.location && d.location.latitude) {
+          const loc = d.location;
+          const locText = loc.address ? `${loc.address} (${loc.latitude}, ${loc.longitude})` : `${loc.latitude}, ${loc.longitude}`;
+          document.getElementById("station-location-text").innerText = `📍 ${locText}`;
+          const mapsLink = document.getElementById("station-maps-link");
+          mapsLink.href = `https://www.google.com/maps/search/?api=1&query=${loc.latitude},${loc.longitude}`;
+          mapsLink.classList.remove("hidden");
+        }
+      }
+    });
+
+    onSnapshot(doc(db, "chargers", CHARGER_ID, "connectors", "1"), (snap) => {
+      if (snap.exists()) {
+        document.getElementById("gun-a-status").innerText = snap.data().status || "Available";
+      }
+    });
+
+    onSnapshot(doc(db, "chargers", CHARGER_ID, "connectors", "2"), (snap) => {
+      if (snap.exists()) {
+        document.getElementById("gun-b-status").innerText = snap.data().status || "Available";
+      }
+    });
+
+    window.getKw = (id, fallback) => {
+      const val = parseFloat(document.getElementById(id).value);
+      return isNaN(val) ? fallback : val;
+    };
+
+    window.toggleOnline = async (online) => {
+      await setDoc(doc(db, "chargers", CHARGER_ID), {
+        status: online ? "Online" : "Offline",
+        lastHeartbeat: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      showToast(`Station marked ${online ? "ONLINE" : "OFFLINE"}`);
+    };
+
+    window.updateGun = async (connectorId, status, powerKw = 0, currentA = 0) => {
+      await setDoc(doc(db, "chargers", CHARGER_ID, "connectors", connectorId), {
+        connectorId: Number(connectorId),
+        status,
+        telemetry: {
+          powerKw,
+          voltage: 230,
+          currentL1: currentA,
+          energyKwh: status === "Charging" ? 14.85 : 0.0,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      await setDoc(doc(db, "chargers", CHARGER_ID), {
+        [`connector_${connectorId}_status`]: status,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      showToast(`Gun ${connectorId === '1' ? 'A' : 'B'} updated: ${status}`);
+    };
+
+    window.setBothCharging = async () => {
+      const kwA = window.getKw('gun-a-kw', 11.0);
+      const kwB = window.getKw('gun-b-kw', 11.0);
+      await window.updateGun('1', 'Charging', kwA, 16.0);
+      await window.updateGun('2', 'Charging', kwB, 16.0);
+      showToast('⚡ Both Gun A & Gun B Charging (Dual)!');
+    };
+
+    window.resetStandby = async () => {
+      await window.updateGun('1', 'Available', 0, 0);
+      await window.updateGun('2', 'Available', 0, 0);
+      showToast('Station reset to Standby');
+    };
+
+    window.sendRfidSwipe = async (connectorId) => {
+      const rfid = document.getElementById("rfid-tag").value || "RFID_TEST_01";
+      await addDoc(collection(db, "commands"), {
+        chargePointId: CHARGER_ID,
+        action: "RemoteStartTransaction",
+        connectorId,
+        idTag: rfid,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      });
+      await window.updateGun(String(connectorId), "Charging", 21.0, 31.8);
+      showToast(`Card [${rfid}] tapped on Gun ${connectorId === 1 ? 'A' : 'B'}!`);
+    };
+  </script>
+</body>
+</html>

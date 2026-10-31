@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tesla-Charge | Server Operations Center & System Telemetry</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .glass-card {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+    }
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.98); }
+    }
+    .animate-pulse-slow {
+      animation: pulse-slow 3s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="bg-[#070B14] text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500/30 selection:text-cyan-300">
+
+  <!-- Top Navbar / Server Header -->
+  <header class="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-6 py-4 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="h-11 w-11 rounded-2xl bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-600 flex items-center justify-center text-xl shadow-lg shadow-cyan-500/25">
+          🖥️
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-black tracking-tight text-white uppercase">Tesla Charge Server Node</h1>
+            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              ONLINE
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 font-mono" id="hdr-host-info">Tesla-OCPP-Server &bull; Linux x64 &bull; Port 3000</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
+          <span class="text-slate-500">UPTIME:</span>
+          <span id="hdr-uptime" class="text-cyan-400 font-bold">0d 0h 0m 0s</span>
+        </div>
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
+          <span class="text-slate-500">REFRESH:</span>
+          <span class="text-emerald-400 font-bold">1s LIVE</span>
+        </div>
+        <button onclick="fetchAll()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition">
+          🔄
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Telemetry Dashboard -->
+  <main class="max-w-7xl mx-auto px-6 py-6 flex-1 w-full space-y-6">
+
+    <!-- PRIMARY 4 METRIC GAUGES -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+      <!-- 1. CPU LOAD -->
+      <div class="glass-card rounded-2xl p-5 shadow-lg border-slate-800 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span class="flex items-center gap-1.5">⚡ CPU Load</span>
+          <span id="metric-cpu-cores" class="text-slate-500 font-mono font-bold">-- Cores</span>
+        </div>
+        <div class="my-4 flex items-baseline gap-2">
+          <span id="metric-cpu-val" class="text-4xl font-black text-cyan-400 font-mono">0%</span>
+          <span class="text-xs text-slate-400 font-mono">active load</span>
+        </div>
+        <div class="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800">
+          <div id="metric-cpu-bar" class="bg-gradient-to-r from-cyan-500 to-blue-500 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div id="metric-cpu-model" class="text-[11px] text-slate-500 mt-3 truncate font-mono">Detecting processor...</div>
+      </div>
+
+      <!-- 2. RAM MEMORY -->
+      <div class="glass-card rounded-2xl p-5 shadow-lg border-slate-800 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span class="flex items-center gap-1.5">🧠 RAM Memory</span>
+          <span id="metric-ram-gb" class="text-slate-500 font-mono font-bold">-- GB</span>
+        </div>
+        <div class="my-4 flex items-baseline gap-2">
+          <span id="metric-ram-val" class="text-4xl font-black text-emerald-400 font-mono">0%</span>
+          <span class="text-xs text-slate-400 font-mono" id="metric-ram-sub">0 / 0 MB</span>
+        </div>
+        <div class="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800">
+          <div id="metric-ram-bar" class="bg-gradient-to-r from-emerald-500 to-teal-400 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div id="metric-ram-free" class="text-[11px] text-slate-500 mt-3 font-mono">Free Memory: -- MB</div>
+      </div>
+
+      <!-- 3. SYSTEM LOAD AVERAGE -->
+      <div class="glass-card rounded-2xl p-5 shadow-lg border-slate-800 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span class="flex items-center gap-1.5">📈 System Load</span>
+          <span class="text-slate-500 font-mono">1m &bull; 5m &bull; 15m</span>
+        </div>
+        <div class="my-4 flex items-baseline gap-2">
+          <span id="metric-load-1m" class="text-4xl font-black text-amber-400 font-mono">0.00</span>
+          <span class="text-xs text-slate-400 font-mono" id="metric-load-5-15">/ 0.00 / 0.00</span>
+        </div>
+        <div class="flex items-center justify-between bg-slate-900/80 px-2.5 py-1.5 rounded-xl border border-slate-800 text-xs font-mono">
+          <span class="text-slate-400">Queue State:</span>
+          <span id="metric-load-status" class="text-emerald-400 font-bold">OPTIMAL</span>
+        </div>
+        <div class="text-[11px] text-slate-500 mt-3 font-mono">OS Kernel Process Queue</div>
+      </div>
+
+      <!-- 4. TOTAL CONNECTIONS -->
+      <div class="glass-card rounded-2xl p-5 shadow-lg border-slate-800 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span class="flex items-center gap-1.5">🔌 Sockets & Chargers</span>
+          <span class="text-indigo-400 font-mono font-bold animate-pulse">● LIVE</span>
+        </div>
+        <div class="my-4 flex items-baseline gap-2">
+          <span id="metric-conns-val" class="text-4xl font-black text-indigo-400 font-mono">0</span>
+          <span class="text-xs text-slate-400 font-mono">active sockets</span>
+        </div>
+        <div class="flex items-center justify-between bg-slate-900/80 px-2.5 py-1.5 rounded-xl border border-slate-800 text-xs font-mono">
+          <span class="text-slate-400">Physical Chargers:</span>
+          <span id="metric-chargers-online" class="text-emerald-400 font-bold">0 Online</span>
+        </div>
+        <div id="metric-proc-uptime" class="text-[11px] text-slate-500 mt-3 font-mono">Node uptime: 0h 0m</div>
+      </div>
+
+    </div>
+
+    <!-- SECOND ROW: FINE PROCESS DETAILS + CONNECTED HARDWARE -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT: Detailed System & Process Specs (5 Cols) -->
+      <div class="lg:col-span-5 glass-card rounded-3xl p-6 shadow-xl border-slate-800 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+          <h2 class="text-sm font-bold text-white flex items-center gap-2">
+            <span>⚙️</span> Process & Hardware Breakdown
+          </h2>
+          <span class="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/50 px-2 py-0.5 rounded-md">V8 Engine</span>
+        </div>
+
+        <div class="space-y-2.5 text-xs font-mono">
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">Node Process PID</span>
+            <span id="spec-pid" class="text-white font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800">--</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">Node.js Runtime</span>
+            <span id="spec-node" class="text-cyan-300 font-bold">--</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">Resident Set (RSS RAM)</span>
+            <span id="spec-rss" class="text-emerald-400 font-bold">-- MB</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">V8 Heap (Used / Total)</span>
+            <span id="spec-heap" class="text-slate-200">-- / -- MB</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">Operating System</span>
+            <span id="spec-os" class="text-slate-200">--</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5 border-b border-slate-900/90">
+            <span class="text-slate-400">Architecture</span>
+            <span id="spec-arch" class="text-slate-200">--</span>
+          </div>
+          <div class="flex items-center justify-between py-1.5">
+            <span class="text-slate-400">Cloudflare Tunnel Status</span>
+            <span class="text-emerald-400 font-bold flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              Active (tesla-charge.online)
+            </span>
+          </div>
+        </div>
+
+        <!-- Quick Switch to Controller -->
+        <div class="pt-2">
+          <a href="/" class="w-full block text-center py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-semibold transition">
+            🎮 Open EV Charger Remote Controller &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- RIGHT: Connected Physical EV Chargers + Live Stream (7 Cols) -->
+      <div class="lg:col-span-7 space-y-6">
+
+        <!-- Connected Chargers Box -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
+            <h2 class="text-sm font-bold text-white flex items-center gap-2">
+              <span>🔌</span> Connected EV Hardware Stations
+            </h2>
+            <span id="chargers-count-badge" class="text-xs font-mono px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold">
+              0 Online
+            </span>
+          </div>
+
+          <div id="chargers-table" class="space-y-2.5 max-h-48 overflow-y-auto">
+            <div class="text-slate-500 italic py-4 text-center text-xs font-mono">
+              Waiting for physical EV charger connection...
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Server Traffic Log Box -->
+        <div class="glass-card rounded-3xl p-6 shadow-xl border-slate-800">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
+            <h2 class="text-sm font-bold text-white flex items-center gap-2">
+              <span>📜</span> Live Server Traffic & Protocol Stream
+            </h2>
+            <span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded-md">Real-time Stream</span>
+          </div>
+          <div id="traffic-logs" class="h-44 overflow-y-auto bg-slate-950/90 border border-slate-800/90 rounded-2xl p-3 text-xs font-mono text-slate-400 space-y-1.5 select-text">
+            <div class="text-slate-600 italic">Listening for live charger requests...</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-800/80 py-3 text-center text-xs text-slate-500 bg-slate-950/40 font-mono">
+    Tesla-Charge &bull; Dedicated 24/7 Server Hardware Telemetry &bull; Automated Self-Healing
+  </footer>
+
+  <script>
+    function formatDuration(sec) {
+      if (!sec || sec <= 0) return '0s';
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const p = [];
+      if (d > 0) p.push(`${d}d`);
+      if (h > 0) p.push(`${h}h`);
+      if (m > 0) p.push(`${m}m`);
+      if (p.length === 0 || (d === 0 && h === 0)) p.push(`${s}s`);
+      return p.join(' ');
+    }
+
+    async function fetchAll() {
+      try {
+        const sRes = await fetch('/api/status');
+        if (!sRes.ok) return;
+        const s = await sRes.json();
+        const m = s.system;
+
+        if (m) {
+          // Header
+          document.getElementById('hdr-host-info').textContent = `${m.hostname || 'Server'} • ${m.platform} (${m.arch}) • Port 3000`;
+          document.getElementById('hdr-uptime').textContent = formatDuration(m.uptimeSeconds);
+
+          // CPU
+          const cpuVal = m.cpuUsagePercent || 0;
+          document.getElementById('metric-cpu-val').textContent = `${cpuVal}%`;
+          document.getElementById('metric-cpu-cores').textContent = `${m.cpuCores || 1} Cores`;
+          document.getElementById('metric-cpu-model').textContent = m.cpuModel || 'CPU';
+          const cpuBar = document.getElementById('metric-cpu-bar');
+          cpuBar.style.width = `${cpuVal}%`;
+          if (cpuVal > 80) {
+            cpuBar.className = 'bg-gradient-to-r from-rose-500 to-amber-500 h-2.5 rounded-full transition-all duration-500';
+          } else {
+            cpuBar.className = 'bg-gradient-to-r from-cyan-500 to-blue-500 h-2.5 rounded-full transition-all duration-500';
+          }
+
+          // RAM
+          const ramVal = m.ramUsagePercent || 0;
+          document.getElementById('metric-ram-val').textContent = `${ramVal}%`;
+          document.getElementById('metric-ram-gb').textContent = `${(m.ramTotalMB / 1024).toFixed(1)} GB Total`;
+          document.getElementById('metric-ram-sub').textContent = `${m.ramUsedMB} / ${m.ramTotalMB} MB`;
+          document.getElementById('metric-ram-free').textContent = `Free RAM: ${m.ramFreeMB} MB (${(m.ramFreeMB / 1024).toFixed(1)} GB)`;
+          const ramBar = document.getElementById('metric-ram-bar');
+          ramBar.style.width = `${ramVal}%`;
+
+          // Load Average
+          const load1 = m.loadAverage['1m'];
+          const load5 = m.loadAverage['5m'];
+          const load15 = m.loadAverage['15m'];
+          document.getElementById('metric-load-1m').textContent = load1.toFixed(2);
+          document.getElementById('metric-load-5-15').textContent = `/ ${load5.toFixed(2)} / ${load15.toFixed(2)}`;
+          const loadStatus = document.getElementById('metric-load-status');
+          const cores = m.cpuCores || 1;
+          if (load1 > cores * 1.5) {
+            loadStatus.textContent = 'HIGH LOAD';
+            loadStatus.className = 'text-rose-400 font-bold';
+          } else if (load1 > cores) {
+            loadStatus.textContent = 'MODERATE';
+            loadStatus.className = 'text-amber-400 font-bold';
+          } else {
+            loadStatus.textContent = 'OPTIMAL';
+            loadStatus.className = 'text-emerald-400 font-bold';
+          }
+
+          // Sockets & Chargers
+          document.getElementById('metric-conns-val').textContent = m.totalConnections || 0;
+          const chargers = s.connectedChargers || [];
+          document.getElementById('metric-chargers-online').textContent = `${chargers.length} Online`;
+          document.getElementById('chargers-count-badge').textContent = `${chargers.length} Online`;
+          document.getElementById('metric-proc-uptime').textContent = `Node uptime: ${formatDuration(m.procUptimeSeconds)}`;
+
+          // Specs Table
+          document.getElementById('spec-pid').textContent = m.pid;
+          document.getElementById('spec-node').textContent = m.nodeVersion;
+          document.getElementById('spec-rss').textContent = `${m.rssMB} MB`;
+          document.getElementById('spec-heap').textContent = `${m.heapUsedMB} / ${m.heapTotalMB} MB`;
+          document.getElementById('spec-os').textContent = `${m.platform} (${m.release})`;
+          document.getElementById('spec-arch').textContent = m.arch;
+
+          // Chargers Table
+          const table = document.getElementById('chargers-table');
+          if (chargers.length === 0) {
+            table.innerHTML = `<div class="text-slate-500 italic py-4 text-center text-xs font-mono">No physical EV chargers connected right now</div>`;
+          } else {
+            table.innerHTML = chargers.map(c => `
+              <div class="flex items-center justify-between p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono">
+                <div class="flex items-center gap-2.5">
+                  <span class="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span class="font-bold text-white text-sm">${c.chargePointId}</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">OCPP 1.6-J</span>
+                </div>
+                <div class="text-slate-400 text-[11px]">
+                  Connected: <span class="text-slate-200">${new Date(c.connectedAt).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            `).join('');
+          }
+        }
+
+        // Fetch Logs
+        const logsBox = document.getElementById('traffic-logs');
+        if (s.recentLogs && s.recentLogs.length > 0) {
+          logsBox.innerHTML = s.recentLogs.map(l => {
+            let color = 'text-slate-400';
+            if (l.includes('MeterValues')) color = 'text-cyan-300 font-semibold';
+            else if (l.includes('BootNotification') || l.includes('Connected')) color = 'text-emerald-300 font-semibold';
+            else if (l.includes('StatusNotification')) color = 'text-amber-300';
+            else if (l.includes('Unlock') || l.includes('Start')) color = 'text-indigo-300';
+            return `<div class="${color}">${l}</div>`;
+          }).join('');
+        }
+
+      } catch (err) {
+        console.warn("Telemetry fetch error:", err.message);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchAll();
+      setInterval(fetchAll, 1000);
+    });
+  </script>
+</body>
+</html>
