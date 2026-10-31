@@ -346,77 +346,51 @@ export default function RevenueScreen() {
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => loadRevenueData(true)}
-          tintColor="#0284C7"
-          colors={['#0284C7']}
+          tintColor="#0F172A"
+          colors={['#0F172A']}
         />
       }
     >
-      {/* Top Header */}
+      {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.screenSubtitle}>CHARGER REVENUE & EARNINGS</Text>
-          <Text style={styles.screenTitle}>{CHARGER_ID.toUpperCase()}</Text>
-        </View>
-
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>REAL-TIME</Text>
-        </View>
+        <Text style={styles.screenTitle}>{CHARGER_ID.toUpperCase()}</Text>
+        <Text style={styles.screenLabel}>Revenue</Text>
       </View>
 
-      {/* Lifetime Grand Revenue Hero Card */}
+      {/* Main Revenue Card */}
       <View style={styles.heroCard}>
-        <View style={styles.heroTopRow}>
-          <Text style={styles.heroLabel}>LIFETIME REVENUE</Text>
-          <Text style={styles.heroCurrency}>PKR</Text>
-        </View>
-
+        <Text style={styles.heroLabel}>Total Revenue</Text>
         <Text style={styles.heroRevenueValue}>
-          {lifetimeTotals.revenue.toLocaleString()}
+          PKR {lifetimeTotals.revenue.toLocaleString()}
         </Text>
 
-        <View style={styles.heroStatsGrid}>
-          <View style={styles.heroStatItem}>
-            <Text style={styles.heroStatLabel}>TOTAL ENERGY</Text>
-            <Text style={styles.heroStatVal}>{lifetimeTotals.kwh.toLocaleString()} kWh</Text>
-          </View>
-          <View style={styles.heroStatDivider} />
-          <View style={styles.heroStatItem}>
-            <Text style={styles.heroStatLabel}>SESSIONS</Text>
-            <Text style={styles.heroStatVal}>{lifetimeTotals.count}</Text>
-          </View>
-          <View style={styles.heroStatDivider} />
-          <View style={styles.heroStatItem}>
-            <Text style={styles.heroStatLabel}>AVG TARIFF</Text>
-            <Text style={styles.heroStatVal}>PKR {lifetimeTotals.avgPerKwh}/kWh</Text>
-          </View>
+        <View style={styles.heroMetaRow}>
+          <Text style={styles.heroMetaItem}>{lifetimeTotals.kwh.toLocaleString()} kWh</Text>
+          <Text style={styles.heroMetaDot}>•</Text>
+          <Text style={styles.heroMetaItem}>{lifetimeTotals.count} sessions</Text>
+          <Text style={styles.heroMetaDot}>•</Text>
+          <Text style={styles.heroMetaItem}>PKR {lifetimeTotals.avgPerKwh}/kWh</Text>
         </View>
       </View>
 
-      {/* Gun Contribution Cards (Gun A vs Gun B) */}
+      {/* Dual Connector Breakdown */}
       <View style={styles.gunSplitRow}>
-        <View style={[styles.gunSplitCard, { borderLeftColor: '#0284C7' }]}>
-          <View style={styles.gunSplitHeader}>
-            <View style={[styles.gunDot, { backgroundColor: '#0284C7' }]} />
-            <Text style={styles.gunSplitTitle}>GUN A REVENUE</Text>
-          </View>
+        <View style={styles.gunSplitCard}>
+          <Text style={styles.gunSplitTitle}>GUN 1</Text>
           <Text style={styles.gunSplitAmount}>PKR {lifetimeTotals.gunARevenue.toLocaleString()}</Text>
           <Text style={styles.gunSplitPercent}>
             {lifetimeTotals.revenue > 0
-              ? `${Math.round((lifetimeTotals.gunARevenue / lifetimeTotals.revenue) * 100)}% of total`
+              ? `${Math.round((lifetimeTotals.gunARevenue / lifetimeTotals.revenue) * 100)}%`
               : '0%'}
           </Text>
         </View>
 
-        <View style={[styles.gunSplitCard, { borderLeftColor: '#10B981' }]}>
-          <View style={styles.gunSplitHeader}>
-            <View style={[styles.gunDot, { backgroundColor: '#10B981' }]} />
-            <Text style={styles.gunSplitTitle}>GUN B REVENUE</Text>
-          </View>
+        <View style={styles.gunSplitCard}>
+          <Text style={styles.gunSplitTitle}>GUN 2</Text>
           <Text style={styles.gunSplitAmount}>PKR {lifetimeTotals.gunBRevenue.toLocaleString()}</Text>
           <Text style={styles.gunSplitPercent}>
             {lifetimeTotals.revenue > 0
-              ? `${Math.round((lifetimeTotals.gunBRevenue / lifetimeTotals.revenue) * 100)}% of total`
+              ? `${Math.round((lifetimeTotals.gunBRevenue / lifetimeTotals.revenue) * 100)}%`
               : '0%'}
           </Text>
         </View>
@@ -428,10 +402,10 @@ export default function RevenueScreen() {
           const isActive = timeFilter === tab;
           const labels: Record<TimeFilter, string> = {
             today: 'Today',
-            week: '7 Days',
-            month: 'By Month',
+            week: '7D',
+            month: 'Month',
             year: 'Year',
-            all: 'All Time',
+            all: 'All',
           };
           return (
             <TouchableOpacity
@@ -447,40 +421,33 @@ export default function RevenueScreen() {
         })}
       </View>
 
-      {/* Month Navigator (visible when 'month' filter is active) */}
+      {/* Month Navigator */}
       {timeFilter === 'month' && (
         <View style={styles.monthNavigator}>
           <TouchableOpacity onPress={prevMonth} style={styles.navArrowBtn}>
             <Text style={styles.navArrowText}>‹</Text>
           </TouchableOpacity>
-
-          <View style={{ alignItems: 'center' }}>
-            <Text style={styles.monthNavTitle}>{selectedMonthLabel}</Text>
-            <Text style={styles.monthNavSub}>
-              {periodTotals.count} {periodTotals.count === 1 ? 'session' : 'sessions'} &bull; {periodTotals.kwh} kWh
-            </Text>
-          </View>
-
+          <Text style={styles.monthNavTitle}>{selectedMonthLabel}</Text>
           <TouchableOpacity onPress={nextMonth} style={styles.navArrowBtn}>
             <Text style={styles.navArrowText}>›</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Period Summary KPI Bar */}
+      {/* Period Summary */}
       <View style={styles.periodKpiCard}>
         <View style={styles.periodKpiItem}>
-          <Text style={styles.periodKpiLabel}>PERIOD REVENUE</Text>
+          <Text style={styles.periodKpiLabel}>Revenue</Text>
           <Text style={styles.periodKpiVal}>PKR {periodTotals.revenue.toLocaleString()}</Text>
         </View>
         <View style={styles.periodKpiDivider} />
         <View style={styles.periodKpiItem}>
-          <Text style={styles.periodKpiLabel}>DELIVERED</Text>
+          <Text style={styles.periodKpiLabel}>Energy</Text>
           <Text style={styles.periodKpiVal}>{periodTotals.kwh} kWh</Text>
         </View>
         <View style={styles.periodKpiDivider} />
         <View style={styles.periodKpiItem}>
-          <Text style={styles.periodKpiLabel}>SESSIONS</Text>
+          <Text style={styles.periodKpiLabel}>Sessions</Text>
           <Text style={styles.periodKpiVal}>{periodTotals.count}</Text>
         </View>
       </View>
@@ -488,22 +455,15 @@ export default function RevenueScreen() {
       {/* Loading state indicator */}
       {loading && !refreshing && (
         <View style={styles.loadingBox}>
-          <ActivityIndicator size="small" color="#0284C7" />
-          <Text style={styles.loadingText}>Syncing revenue ledger...</Text>
+          <ActivityIndicator size="small" color="#0F172A" />
+          <Text style={styles.loadingText}>Updating...</Text>
         </View>
       )}
 
       {/* Section Title */}
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>
-          {timeFilter === 'year'
-            ? `${selectedYear} MONTHLY BREAKDOWN`
-            : timeFilter === 'all'
-            ? 'MONTHLY REVENUE OVERVIEW'
-            : 'DAILY REVENUE BREAKDOWN'}
-        </Text>
-        <Text style={styles.sectionSubtitle}>
-          {dailyBreakdown.length} {dailyBreakdown.length === 1 ? 'day recorded' : 'days recorded'}
+          {timeFilter === 'year' || timeFilter === 'all' ? 'Monthly Overview' : 'Breakdown'}
         </Text>
       </View>
 
@@ -512,8 +472,7 @@ export default function RevenueScreen() {
         <View style={styles.monthlyList}>
           {monthlyBreakdown.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No revenue records found</Text>
-              <Text style={styles.emptySub}>No completed charging sessions recorded for this period.</Text>
+              <Text style={styles.emptySub}>No sessions recorded</Text>
             </View>
           ) : (
             monthlyBreakdown.map((m) => (
@@ -522,15 +481,10 @@ export default function RevenueScreen() {
                   <View>
                     <Text style={styles.monthCardTitle}>{m.monthLabel}</Text>
                     <Text style={styles.monthCardMeta}>
-                      {m.sessions} {m.sessions === 1 ? 'session' : 'sessions'} &bull; {m.kwh.toFixed(2)} kWh delivered
+                      {m.sessions} {m.sessions === 1 ? 'session' : 'sessions'} • {m.kwh.toFixed(1)} kWh
                     </Text>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.monthCardRev}>PKR {m.revenue.toLocaleString()}</Text>
-                    <Text style={styles.monthCardAvg}>
-                      Avg: PKR {m.sessions > 0 ? Math.round(m.revenue / m.sessions).toLocaleString() : 0}
-                    </Text>
-                  </View>
+                  <Text style={styles.monthCardRev}>PKR {m.revenue.toLocaleString()}</Text>
                 </View>
               </View>
             ))
@@ -538,52 +492,32 @@ export default function RevenueScreen() {
         </View>
       )}
 
-      {/* Daily Breakdown List (for Today, Week, and Month filters) */}
+      {/* Daily Breakdown List */}
       {timeFilter !== 'year' && timeFilter !== 'all' && (
         <View style={styles.dailyList}>
           {dailyBreakdown.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No revenue records found</Text>
-              <Text style={styles.emptySub}>
-                {timeFilter === 'today'
-                  ? 'No completed sessions recorded today yet.'
-                  : 'No charging sessions recorded for the selected period.'}
-              </Text>
+              <Text style={styles.emptySub}>No sessions recorded</Text>
             </View>
           ) : (
             dailyBreakdown.map((day) => {
-              const barPercent = Math.min(100, Math.max(8, (day.revenue / maxDailyRevenue) * 100));
               const isToday = day.dateStr === todayKey;
 
               return (
                 <View key={day.dateStr} style={[styles.dayCard, isToday && styles.dayCardToday]}>
-                  {/* Top Day Info Row */}
                   <View style={styles.dayTopRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      {isToday && <View style={styles.todayPill}><Text style={styles.todayPillText}>TODAY</Text></View>}
-                      <Text style={styles.dayDateText}>{day.dayLabel}</Text>
-                    </View>
+                    <Text style={styles.dayDateText}>
+                      {day.dayLabel} {isToday ? '(Today)' : ''}
+                    </Text>
                     <Text style={styles.dayRevText}>PKR {day.revenue.toLocaleString()}</Text>
                   </View>
-
-                  {/* Visual Proportional Fill Bar */}
-                  <View style={styles.barTrack}>
-                    <View style={[styles.barFill, { width: `${barPercent}%` }]} />
-                  </View>
-
-                  {/* Day Detail Meta Row */}
                   <View style={styles.dayMetaRow}>
                     <Text style={styles.dayMetaText}>
-                      {day.sessions} {day.sessions === 1 ? 'session' : 'sessions'} &bull; {day.kwh.toFixed(2)} kWh
+                      {day.sessions} {day.sessions === 1 ? 'session' : 'sessions'} • {day.kwh.toFixed(1)} kWh
                     </Text>
-                    <View style={{ flexDirection: 'row', gap: 10 }}>
-                      <Text style={styles.dayGunText}>
-                        Gun A: <Text style={{ color: '#0284C7', fontWeight: '700' }}>PKR {day.gunARevenue.toLocaleString()}</Text>
-                      </Text>
-                      <Text style={styles.dayGunText}>
-                        Gun B: <Text style={{ color: '#10B981', fontWeight: '700' }}>PKR {day.gunBRevenue.toLocaleString()}</Text>
-                      </Text>
-                    </View>
+                    <Text style={styles.dayMetaText}>
+                      Gun 1: {day.gunARevenue.toLocaleString()} • Gun 2: {day.gunBRevenue.toLocaleString()}
+                    </Text>
                   </View>
                 </View>
               );
@@ -596,7 +530,7 @@ export default function RevenueScreen() {
       {lastSyncTime && (
         <View style={styles.syncFooter}>
           <Text style={styles.syncFooterText}>
-            Updated {new Date(lastSyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} &bull; Source: Live OCPP Server
+            Updated {new Date(lastSyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
         </View>
       )}
@@ -607,171 +541,96 @@ export default function RevenueScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   content: {
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'ios' ? 56 : 36,
-    paddingBottom: 48,
+    paddingBottom: 40,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginBottom: 20,
-  },
-  screenSubtitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
   },
   screenTitle: {
     fontSize: 22,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: -0.5,
+  },
+  screenLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
     marginTop: 2,
   },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-  },
-  liveText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#059669',
-    letterSpacing: 0.8,
-  },
 
-  /* Lifetime Hero Card */
+  /* Total Revenue Card */
   heroCard: {
     backgroundColor: '#0F172A',
     borderRadius: 16,
-    padding: 22,
-    marginBottom: 14,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
+    padding: 20,
+    marginBottom: 12,
   },
   heroLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 1.4,
-  },
-  heroCurrency: {
     fontSize: 12,
-    fontWeight: '800',
-    color: '#38BDF8',
-    letterSpacing: 1,
+    fontWeight: '600',
+    color: '#94A3B8',
   },
   heroRevenueValue: {
-    fontSize: 38,
+    fontSize: 34,
     fontWeight: '900',
     color: '#FFFFFF',
-    letterSpacing: -1,
+    letterSpacing: -0.5,
     marginVertical: 4,
   },
-  heroStatsGrid: {
+  heroMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 14,
-    paddingTop: 14,
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
-  heroStatItem: {
-    flex: 1,
+  heroMetaItem: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#CBD5E1',
   },
-  heroStatLabel: {
-    fontSize: 9,
-    fontWeight: '800',
+  heroMetaDot: {
+    fontSize: 12,
     color: '#64748B',
-    letterSpacing: 0.8,
-    marginBottom: 2,
-  },
-  heroStatVal: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#F1F5F9',
-  },
-  heroStatDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    marginHorizontal: 10,
   },
 
   /* Gun Split Cards */
   gunSplitRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 18,
+    gap: 10,
+    marginBottom: 16,
   },
   gunSplitCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderLeftWidth: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  gunSplitHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  gunDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
   },
   gunSplitTitle: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '700',
     color: '#64748B',
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   gunSplitAmount: {
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#0F172A',
-    letterSpacing: -0.3,
+    marginTop: 4,
   },
   gunSplitPercent: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#94A3B8',
     marginTop: 2,
   },
@@ -779,7 +638,7 @@ const styles = StyleSheet.create({
   /* Filter Pills */
   filterPillsRow: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
     borderRadius: 10,
     padding: 3,
     marginBottom: 14,
@@ -791,21 +650,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   filterPillActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
+    backgroundColor: '#0F172A',
   },
   filterPillText: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
     color: '#64748B',
   },
   filterPillTextActive: {
-    color: '#0284C7',
-    fontWeight: '800',
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 
   /* Month Navigator */
@@ -813,152 +667,108 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   navArrowBtn: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
   },
   navArrowText: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#0F172A',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   monthNavTitle: {
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#0F172A',
   },
-  monthNavSub: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 1,
-  },
 
-  /* Period KPI Bar */
+  /* Period Summary */
   periodKpiCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   periodKpiItem: {
     flex: 1,
     alignItems: 'center',
   },
   periodKpiLabel: {
-    fontSize: 9,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '600',
     color: '#64748B',
-    letterSpacing: 0.8,
     marginBottom: 2,
   },
   periodKpiVal: {
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '800',
     color: '#0F172A',
   },
   periodKpiDivider: {
     width: 1,
-    height: 24,
+    height: 20,
     backgroundColor: '#E2E8F0',
   },
 
   /* Section Title */
   sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
     marginBottom: 10,
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 0.8,
-  },
-  sectionSubtitle: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   /* Daily List Cards */
   dailyList: {
-    gap: 10,
+    gap: 8,
   },
   dayCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.02,
-    shadowRadius: 3,
-    elevation: 1,
   },
   dayCardToday: {
-    borderColor: 'rgba(2, 132, 199, 0.4)',
-    backgroundColor: '#FAFCFF',
+    borderColor: '#0F172A',
   },
   dayTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   dayDateText: {
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '700',
     color: '#0F172A',
   },
-  todayPill: {
-    backgroundColor: 'rgba(2, 132, 199, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  todayPillText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#0284C7',
-    letterSpacing: 0.6,
-  },
   dayRevText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  barTrack: {
-    height: 5,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  barFill: {
-    height: '100%',
-    backgroundColor: '#0284C7',
-    borderRadius: 3,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
   },
   dayMetaRow: {
     flexDirection: 'row',
@@ -967,23 +777,18 @@ const styles = StyleSheet.create({
   },
   dayMetaText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#64748B',
-  },
-  dayGunText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#94A3B8',
   },
 
   /* Monthly Overview List */
   monthlyList: {
-    gap: 10,
+    gap: 8,
   },
   monthCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -993,45 +798,33 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   monthCardTitle: {
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
     color: '#0F172A',
   },
   monthCardMeta: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#64748B',
     marginTop: 2,
   },
   monthCardRev: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  monthCardAvg: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#94A3B8',
-    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
   },
 
   /* Empty & Loading states */
   emptyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 24,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 20,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  emptyTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 4,
-  },
   emptySub: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
     color: '#64748B',
     textAlign: 'center',
@@ -1045,16 +838,16 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#64748B',
   },
   syncFooter: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 20,
   },
   syncFooterText: {
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#94A3B8',
   },
 });

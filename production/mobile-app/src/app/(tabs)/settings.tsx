@@ -265,7 +265,7 @@ export default function SettingsScreen() {
         setUpdateStatusText('Update ready to install');
         Alert.alert(
           'Update Ready',
-          `A new update (v1.0.1) has been downloaded.\n\nWhat's New:\n• Over-The-Air instant updates active & verified\n• Real-time dual 22kW connector sync\n• PKR electricity tariff precision\n\nRestart now to apply?`,
+          `A new update (v1.0.1) has been downloaded.\n\nWhat's New:\n• Over-The-Air instant updates active & verified\n• Dual 22kW connector sync\n• PKR electricity tariff precision\n\nRestart now to apply?`,
           [
             { text: 'Later', style: 'cancel' },
             {
@@ -520,7 +520,7 @@ export default function SettingsScreen() {
           </View>
           <View style={styles.changeItem}>
             <Text style={styles.changeBullet}>🔌</Text>
-            <Text style={styles.changeText}>Real-time dual 22kW connector sync</Text>
+            <Text style={styles.changeText}>Dual 22kW connector sync</Text>
           </View>
           <View style={styles.changeItem}>
             <Text style={styles.changeBullet}>🇵🇰</Text>

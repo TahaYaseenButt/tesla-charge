@@ -25,7 +25,6 @@ import {
 } from '@/services/storage';
 import { DashboardSkeleton } from '@/components/skeleton';
 import { useSimulator } from '@/config/simulator';
-import { SimulatorModal, SimulatorButton } from '@/components/SimulatorModal';
 
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
@@ -111,7 +110,6 @@ export default function HomeScreen() {
 
   // In-app UI Simulator hook for desk testing without physical cars
   const { scenario, isSimulating, gunA: simGunA, gunB: simGunB } = useSimulator();
-  const [simModalVisible, setSimModalVisible] = useState(false);
 
   const prevStatus1Ref = useRef<string | null>(null);
   const prevStatus2Ref = useRef<string | null>(null);
@@ -528,7 +526,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID, Simulator Test Trigger & Unified Minimal Status Badge */}
+      {/* Header: Station ID & Unified Minimal Status Badge */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Image
@@ -537,7 +535,6 @@ export default function HomeScreen() {
             resizeMode="contain"
           />
           <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
-          <SimulatorButton onOpen={() => setSimModalVisible(true)} />
         </View>
         <View style={[styles.statusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border || 'transparent', borderWidth: 1 }]}>
           <View style={[styles.statusDot, { backgroundColor: activeTheme.color }]} />
@@ -822,8 +819,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* UI Test Simulator Modal for Testing without physical cars */}
-      <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
     </ScrollView>
   );
 }
