@@ -116,6 +116,41 @@ async function run() {
     const aHasOnlyOwn = listDataA.chargers.every((c) => c.chargePointId === "charger1");
     assert(aHasOnlyOwn && listDataA.chargers.length === 1, "User A only sees charger1 in /api/chargers");
 
+    // 10. Register User C without providing stationId (e.g. fresh signup)
+    const emailC = `newuser_${Date.now()}@example.com`;
+    const regResC = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: emailC, password: "password123", displayName: "NewUser" }),
+    });
+    const dataC = await regResC.json();
+    assert(dataC.success && (!dataC.user.stationId || dataC.user.stationId === ""), "New User C registered with NO station assigned (NOT charger1)");
+    const tokenC = dataC.token;
+
+    // 11. User C attempts cross-access on charger1 -> MUST BE 403 FORBIDDEN
+    const crossTariffC = await fetch(`${BASE_URL}/api/chargers/charger1/tariff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenC}` },
+      body: JSON.stringify({ tariffRate: 50 }),
+    });
+    assert(crossTariffC.status === 403, "Unconfigured User C blocked (403) from modifying charger1 tariff");
+
+    // 12. User C completes setup with their own station "charger3"
+    const setupResC = await fetch(`${BASE_URL}/api/auth/station`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenC}` },
+      body: JSON.stringify({ stationId: "charger3" }),
+    });
+    const setupDataC = await setupResC.json();
+    assert(setupResC.status === 200 && setupDataC.stationId === "charger3", "User C successfully saved their own station ID");
+
+    // 13. Verify /auth/me for User C now reflects charger3
+    const meResC = await fetch(`${BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${tokenC}` },
+    });
+    const meDataC = await meResC.json();
+    assert(meDataC.user.stationId === "charger3", "User C /auth/me confirms bound station is charger3 (never charger1)");
+
     console.log("\n====================================================");
     console.log(`📊 TENANT ISOLATION SUMMARY: Passed: ${passed}, Failed: ${failed}`);
     console.log("====================================================");

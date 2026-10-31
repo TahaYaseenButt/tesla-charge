@@ -75,15 +75,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [chargerId, setChargerId] = useState<string>('charger1');
+  const [chargerId, setChargerId] = useState<string>('');
   const [chargerModel, setChargerModel] = useState<string>('240kW');
   const [stationLocation, setStationLocation] = useState<StationLocation | null>(null);
-  const [isConfigured, setIsConfigured] = useState<boolean>(true);
+  const [isConfigured, setIsConfigured] = useState<boolean>(false);
   const [tariffRate, setTariffRate] = useState<number>(125.0);
   const [currency, setCurrency] = useState<string>('PKR');
 
   const fetchRemoteConfig = async (id: string) => {
-    const cleanId = (id || 'charger1').trim().toLowerCase();
+    const cleanId = (id || '').trim().toLowerCase();
+    if (!cleanId) {
+      return { isConfigured: false, tariffRate: 125, currency: 'PKR', model: '240kW' };
+    }
 
     // 1. Try local/remote /api/chargers/:id
     try {
@@ -173,8 +176,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         // Determine active charger: prioritize user's bound stationId, then storedId
-        const boundStation = parsedUser?.stationId || parsedUser?.defaultChargerId;
-        const activeId = boundStation ? boundStation.trim().toLowerCase() : (storedId ? storedId.trim().toLowerCase() : 'charger1');
+        const boundStation = (parsedUser?.stationId || parsedUser?.defaultChargerId || '').trim().toLowerCase();
+        const activeId = boundStation || (storedId ? storedId.trim().toLowerCase() : '');
+        const configured = Boolean(activeId);
 
         if (isMounted) {
           setChargerId(activeId);
@@ -194,8 +198,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        await fetchRemoteConfig(activeId);
-        if (isMounted) setIsConfigured(true);
+        if (activeId) {
+          await fetchRemoteConfig(activeId);
+        }
+        if (isMounted) setIsConfigured(configured);
       } catch (err) {
         console.error('Error restoring auth:', err);
       } finally {
@@ -247,7 +253,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res && res.success && res.token && res.user) {
         loginSuccess = true;
         tokenToStore = res.token;
-        const userStation = (res.user.stationId || res.user.defaultChargerId || targetId || 'charger1').trim().toLowerCase();
+        const userStation = (res.user.stationId || res.user.defaultChargerId || targetId || '').trim().toLowerCase();
         userProfile = {
           uid: res.user.uid || res.user.id,
           email: res.user.email,
@@ -315,12 +321,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } catch (_e) {}
 
-          // Fallback defaults based on known users if not retrieved
+          // Fallback defaults ONLY for legacy hardcoded accounts if Firestore record was missing
           if (!assignedStation) {
-            if (email.toLowerCase().includes('hafeez')) {
+            const em = email.toLowerCase();
+            if (em.includes('hafeez')) {
               assignedStation = 'aziz light and solar';
               assignedModel = assignedModel || '60kW';
-            } else {
+            } else if (em === 'telsa@teksa.cok' || em === 'tahayaseen942@gmail.com') {
               assignedStation = 'charger1';
               assignedModel = assignedModel || '240kW';
             }
@@ -377,24 +384,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setAuthToken(tokenToStore);
       }
 
+      const configured = Boolean(userProfile.stationId);
+
       setIsAuthenticated(true);
       setUser(userProfile);
-      setChargerId(userProfile.stationId || 'charger1');
+      setChargerId(userProfile.stationId || '');
       if (userProfile.defaultChargerModel) {
         setChargerModel(userProfile.defaultChargerModel);
       }
-      setIsConfigured(true);
+      setIsConfigured(configured);
 
       await AsyncStorage.setItem(AUTH_KEY, 'true');
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(userProfile));
-      await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId || 'charger1');
+      if (userProfile.stationId) {
+        await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId);
+        await fetchRemoteConfig(userProfile.stationId);
+      } else {
+        await AsyncStorage.removeItem(CHARGER_ID_KEY);
+      }
       if (userProfile.defaultChargerModel) {
         await AsyncStorage.setItem(CHARGER_MODEL_KEY, userProfile.defaultChargerModel);
       }
 
-      await fetchRemoteConfig(userProfile.stationId || 'charger1');
-
-      return { success: true, isConfigured: true };
+      return { success: true, isConfigured: configured };
     }
 
     return {
@@ -407,7 +419,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (emailInput: string, passInput: string, targetId?: string): Promise<LoginResult> => {
     const email = emailInput.trim();
     const password = passInput;
-    const requestedStation = (targetId || 'charger1').trim().toLowerCase();
+    const requestedStation = targetId ? targetId.trim().toLowerCase() : '';
+    const hasInitialStation = Boolean(requestedStation);
 
     let registerSuccess = false;
     let userProfile: UserProfile | null = null;
@@ -479,7 +492,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     stationId: { stringValue: requestedStation },
                     defaultChargerId: { stringValue: requestedStation },
                     role: { stringValue: 'driver' },
-                    setupCompleted: { booleanValue: true },
+                    setupCompleted: { booleanValue: hasInitialStation },
                     createdAt: { stringValue: new Date().toISOString() },
                     lastLoginAt: { stringValue: new Date().toISOString() },
                   },
@@ -527,18 +540,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setAuthToken(tokenToStore);
       }
 
+      const configured = Boolean(userProfile.stationId);
+
       setIsAuthenticated(true);
       setUser(userProfile);
-      setChargerId(userProfile.stationId || 'charger1');
-      setIsConfigured(true);
+      setChargerId(userProfile.stationId || '');
+      setIsConfigured(configured);
 
       await AsyncStorage.setItem(AUTH_KEY, 'true');
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(userProfile));
-      await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId || 'charger1');
+      if (userProfile.stationId) {
+        await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId);
+        await fetchRemoteConfig(userProfile.stationId);
+      } else {
+        await AsyncStorage.removeItem(CHARGER_ID_KEY);
+      }
 
-      await fetchRemoteConfig(userProfile.stationId || 'charger1');
-
-      return { success: true, isConfigured: true };
+      return { success: true, isConfigured: configured };
     }
 
     return {
@@ -551,7 +569,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setIsAuthenticated(false);
     setUser(null);
-    setChargerId('charger1');
+    setChargerId('');
+    setIsConfigured(false);
     await setAuthToken(null);
     await AsyncStorage.multiRemove([
       AUTH_KEY,
@@ -565,17 +584,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const saveSetup = async (model: string, id: string, loc: StationLocation | null) => {
-    const cleanId = (id || 'charger1').trim().toLowerCase();
+    const cleanId = (id || '').trim().toLowerCase();
+    if (!cleanId) return;
+
     setChargerModel(model);
     setChargerId(cleanId);
     setStationLocation(loc);
     setIsConfigured(true);
+
+    if (user) {
+      const updatedUser: UserProfile = {
+        ...user,
+        stationId: cleanId,
+        defaultChargerId: cleanId,
+        defaultChargerModel: model,
+      };
+      setUser(updatedUser);
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+    }
 
     await Promise.all([
       AsyncStorage.setItem(CHARGER_MODEL_KEY, model),
       AsyncStorage.setItem(CHARGER_ID_KEY, cleanId),
       loc ? AsyncStorage.setItem(LOCATION_KEY, JSON.stringify(loc)) : AsyncStorage.removeItem(LOCATION_KEY),
     ]);
+
+    // 1. Sync station ID with local backend server if active
+    try {
+      await apiRequest('/api/auth/station', {
+        method: 'POST',
+        body: { stationId: cleanId, model },
+      });
+    } catch (_e) {}
+
+    // 2. Persist stationId & defaultChargerModel into Firestore REST
+    try {
+      const token = await getAuthToken();
+      if (token && user?.uid) {
+        await fetch(
+          `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${user.uid}?updateMask.fieldPaths=stationId&updateMask.fieldPaths=defaultChargerId&updateMask.fieldPaths=defaultChargerModel&updateMask.fieldPaths=setupCompleted`,
+          {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fields: {
+                stationId: { stringValue: cleanId },
+                defaultChargerId: { stringValue: cleanId },
+                defaultChargerModel: { stringValue: model },
+                setupCompleted: { booleanValue: true },
+              },
+            }),
+          }
+        );
+      }
+    } catch (e) {
+      console.warn('Failed to update Firestore user document on setup:', e);
+    }
+
+    await fetchRemoteConfig(cleanId);
   };
 
   const saveTariffRate = async (rate: number, curr: string = 'PKR') => {

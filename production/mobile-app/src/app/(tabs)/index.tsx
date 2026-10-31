@@ -87,6 +87,7 @@ export default function HomeScreen() {
     chargerModel,
     stationLocation,
     isAuthenticated,
+    isConfigured,
     isLoading: authLoading,
     user,
     logout,
@@ -94,7 +95,7 @@ export default function HomeScreen() {
     currency,
   } = useAuth();
 
-  const CHARGER_ID = configuredId || 'charger1';
+  const CHARGER_ID = configuredId || '';
 
   const [chargerData, setChargerData] = useState<any>(null);
   const [connector1Data, setConnector1Data] = useState<any>(null);
@@ -515,6 +516,10 @@ export default function HomeScreen() {
 
   if (!isAuthenticated) {
     return <Redirect href="/login" />;
+  }
+
+  if (!isConfigured || !CHARGER_ID) {
+    return <Redirect href="/setup" />;
   }
 
   if (loading && !chargerData) {

@@ -47,7 +47,7 @@ apiRouter.post("/auth/register", async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
     const userId = "usr_" + crypto.randomUUID().replace(/-/g, "").substring(0, 16);
     const now = new Date().toISOString();
-    const assignedStation = (stationId || "charger1").trim().toLowerCase();
+    const assignedStation = stationId ? stationId.trim().toLowerCase() : "";
 
     db.prepare(`
       INSERT INTO users (id, email, password_hash, display_name, role, station_id, created_at)
@@ -86,7 +86,7 @@ apiRouter.post("/auth/login", async (req, res) => {
       return res.status(401).json({ success: false, error: "Invalid email or password" });
     }
 
-    const stationId = userRow.station_id || "charger1";
+    const stationId = (userRow.station_id || "").trim().toLowerCase();
 
     const user = {
       uid: userRow.id,
@@ -120,9 +120,22 @@ apiRouter.get("/auth/me", authenticateToken, (req, res) => {
       email: userRow.email,
       displayName: userRow.display_name,
       role: userRow.role,
-      stationId: userRow.station_id || "charger1",
+      stationId: (userRow.station_id || "").trim().toLowerCase(),
     },
   });
+});
+
+apiRouter.post("/auth/station", authenticateToken, (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+  const { stationId } = req.body;
+  if (!stationId) {
+    return res.status(400).json({ success: false, error: "stationId is required" });
+  }
+  const cleanId = stationId.trim().toLowerCase();
+  db.prepare("UPDATE users SET station_id = ? WHERE id = ?").run(cleanId, req.user.id || req.user.uid);
+  return res.json({ success: true, stationId: cleanId });
 });
 
 // ==========================================

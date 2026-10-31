@@ -43,6 +43,7 @@ export default function SetupScreen() {
     chargerId: initialId,
     chargerModel: initialModel,
     saveSetup,
+    isConfigured,
   } = useAuth();
 
   // Step 1: Model, Step 2: Identifier
@@ -62,7 +63,9 @@ export default function SetupScreen() {
       : '60kW'
   );
 
-  const [chargerId, setChargerId] = useState<string>(initialId || 'charger1');
+  const [chargerId, setChargerId] = useState<string>(
+    initialId && initialId !== 'charger1' ? initialId : ''
+  );
   const [saving, setSaving] = useState<boolean>(false);
 
   const handleStep1Next = () => {
@@ -71,10 +74,10 @@ export default function SetupScreen() {
 
   const handleCompleteSetup = async () => {
     const finalModel = selectedModel;
-    const finalId = chargerId.trim().toLowerCase() || 'charger1';
+    const finalId = chargerId.trim().toLowerCase();
 
     if (!finalId) {
-      Alert.alert('Required', 'Please enter a charger identifier.');
+      Alert.alert('Required', 'Please enter your charger identifier.');
       return;
     }
 
@@ -97,9 +100,11 @@ export default function SetupScreen() {
           <View style={styles.stepBadge}>
             <Text style={styles.stepBadgeText}>STEP {step} OF 2</Text>
           </View>
-          <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.cancelBtn}>
-            <Text style={styles.cancelBtnText}>&larr; Dashboard</Text>
-          </TouchableOpacity>
+          {isConfigured && (
+            <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.cancelBtn}>
+              <Text style={styles.cancelBtnText}>&larr; Dashboard</Text>
+            </TouchableOpacity>
+          )}
         </View>
         <Text style={styles.title}>
           {step === 1 ? 'SELECT CHARGER MODEL' : 'CHARGER IDENTIFIER'}
@@ -171,7 +176,7 @@ export default function SetupScreen() {
 
             <TextInput
               style={styles.input}
-              placeholder="charger1"
+              placeholder="e.g. charger1, station2"
               placeholderTextColor="#94A3B8"
               autoCapitalize="none"
               autoCorrect={false}
