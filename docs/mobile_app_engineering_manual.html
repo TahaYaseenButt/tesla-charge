@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tesla Charge - Mobile App Architecture & Engineering Manual</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 16mm 14mm 16mm 14mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      line-height: 1.55;
+      font-size: 9.8pt;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    .page-break { page-break-after: always; }
+    .no-break { page-break-inside: avoid; }
+
+    /* Cover Page */
+    .cover {
+      height: 94vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      border: 2px solid #0284c7;
+      padding: 48px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f8fafc 0%, #f0f9ff 100%);
+    }
+    .cover-top h1 {
+      font-size: 26pt;
+      color: #0f172a;
+      margin: 0 0 10px 0;
+      letter-spacing: -0.5px;
+      font-weight: 800;
+    }
+    .cover-top h2 {
+      font-size: 15pt;
+      color: #0284c7;
+      margin: 0 0 24px 0;
+      font-weight: 600;
+    }
+    .cover-badge {
+      display: inline-block;
+      background: #0284c7;
+      color: #ffffff;
+      padding: 4px 12px;
+      font-size: 9pt;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 24px;
+    }
+    .cover-desc {
+      font-size: 11pt;
+      color: #475569;
+      max-width: 620px;
+      line-height: 1.7;
+    }
+    .cover-meta {
+      border-top: 1px solid #cbd5e1;
+      padding-top: 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      font-size: 9pt;
+      color: #334155;
+    }
+    .cover-meta strong { color: #0f172a; }
+
+    /* Headings */
+    h2.section-title {
+      font-size: 15pt;
+      color: #0f172a;
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 6px;
+      margin-top: 28px;
+      margin-bottom: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h3 {
+      font-size: 11.5pt;
+      color: #1e293b;
+      margin-top: 18px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    h4 {
+      font-size: 10pt;
+      color: #334155;
+      margin-top: 14px;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    /* Paragraphs and Lists */
+    p { margin: 0 0 10px 0; }
+    ul, ol { margin: 0 0 12px 0; padding-left: 20px; }
+    li { margin-bottom: 4px; }
+
+    /* Code & Tables */
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 8.5pt;
+      background: #f1f5f9;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: #0369a1;
+    }
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 8pt;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 10px 0 14px 0;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 16px 0;
+      font-size: 8.8pt;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f5f9;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    tr:nth-child(even) td { background: #f8fafc; }
+
+    /* Callout Boxes */
+    .callout {
+      border-left: 4px solid #0284c7;
+      background: #f0f9ff;
+      padding: 10px 14px;
+      margin: 12px 0 16px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 9pt;
+    }
+    .callout.warning {
+      border-left-color: #f59e0b;
+      background: #fffbeb;
+    }
+    .callout.success {
+      border-left-color: #10b981;
+      background: #ecfdf5;
+    }
+    .callout strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #0f172a;
+    }
+
+    /* Diagram Containers */
+    .diagram-box {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 14px 0 18px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      text-align: center;
+    }
+    .diagram-caption {
+      font-size: 8pt;
+      color: #64748b;
+      margin-top: 8px;
+      font-style: italic;
+    }
+
+    /* Tree View */
+    .tree {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 8pt;
+      line-height: 1.5;
+      color: #1e293b;
+      margin: 10px 0;
+    }
+    .tree-comment { color: #64748b; font-style: italic; }
+  </style>
+</head>
+<body>
+
+  <!-- COVER PAGE -->
+  <div class="cover">
+    <div class="cover-top">
+      <div class="cover-badge">Mobile Engineering & Architecture Specification</div>
+      <h1>TESLA CHARGE</h1>
+      <h2>Mobile Client Architecture & Engineering Manual</h2>
+      <p class="cover-desc">
+        A comprehensive technical manual for mobile developers and engineering teams detailing the React Native / Expo Router frontend architecture, direct HTTP REST polling engine, 0ms local storage caching, live plug-in push notification dispatch, desk simulation harness, and EAS Over-The-Air (OTA) deployment pipeline.
+      </p>
+    </div>
+    <div class="cover-meta">
+      <div>
+        <strong>Application:</strong> Tesla Charge (Driver & Station Operator App)<br>
+        <strong>Framework:</strong> React Native 0.79 / Expo SDK 52 / Expo Router v4<br>
+        <strong>Language:</strong> TypeScript (Strict Compilation, 0 errors)<br>
+        <strong>OTA Updates:</strong> Expo Application Services (EAS) Runtime 1.0.0
+      </div>
+      <div>
+        <strong>Document Version:</strong> 2.4.0 (Production Release)<br>
+        <strong>Classification:</strong> Internal Engineering Reference<br>
+        <strong>Author:</strong> Lead Mobile Systems Architecture Team<br>
+        <strong>Date:</strong> October 2026
+      </div>
+    </div>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 1: ARCHITECTURE OVERVIEW -->
+  <h2 class="section-title">1.0 Architecture Overview & State Pipeline</h2>
+  <p>
+    The Tesla Charge mobile application delivers real-time monitoring and control for DC Fast EV Charging stations. In the current standalone architecture, the application communicates directly with the self-hosted T-Charge server (<code>https://tesla-charge.online</code>) via lightweight HTTP REST endpoints and local state subscriptions, bypassing heavy third-party Firebase SDKs.
+  </p>
+
+  <div class="diagram-box no-break">
+    <svg width="100%" height="240" viewBox="0 0 760 240" xmlns="http://www.w3.org/2000/svg">
+      <!-- Screen Layer -->
+      <rect x="20" y="20" width="160" height="200" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="100" y="42" fill="#0f172a" font-size="10" font-weight="bold" text-anchor="middle">Expo Router UI Layer</text>
+
+      <rect x="35" y="55" width="130" height="28" rx="4" fill="#e0f2fe" stroke="#0284c7"/>
+      <text x="100" y="73" fill="#0369a1" font-size="8.5" font-weight="bold" text-anchor="middle">Dashboard (index.tsx)</text>
+
+      <rect x="35" y="90" width="130" height="28" rx="4" fill="#f1f5f9" stroke="#64748b"/>
+      <text x="100" y="108" fill="#334155" font-size="8.5" font-weight="bold" text-anchor="middle">Control (control.tsx)</text>
+
+      <rect x="35" y="125" width="130" height="28" rx="4" fill="#f1f5f9" stroke="#64748b"/>
+      <text x="100" y="143" fill="#334155" font-size="8.5" font-weight="bold" text-anchor="middle">History (history.tsx)</text>
+
+      <rect x="35" y="160" width="130" height="28" rx="4" fill="#fef3c7" stroke="#d97706"/>
+      <text x="100" y="178" fill="#92400e" font-size="8.5" font-weight="bold" text-anchor="middle">SimulatorModal.tsx</text>
+
+      <!-- Arrow to Hook -->
+      <line x1="180" y1="120" x2="230" y2="120" stroke="#0284c7" stroke-width="2"/>
+      <polygon points="228,116 238,120 228,124" fill="#0284c7"/>
+      <text x="205" y="112" fill="#0284c7" font-size="7.5" text-anchor="middle">Hook State</text>
+
+      <!-- Hook Box -->
+      <rect x="240" y="40" width="160" height="160" rx="6" fill="#0f172a" stroke="#0284c7" stroke-width="2"/>
+      <text x="320" y="65" fill="#ffffff" font-size="10.5" font-weight="bold" text-anchor="middle">useChargerLive Hook</text>
+      <text x="320" y="85" fill="#38bdf8" font-size="8" text-anchor="middle">Connector 1 & 2 State</text>
+
+      <rect x="255" y="100" width="130" height="35" rx="3" fill="#1e293b" stroke="#38bdf8"/>
+      <text x="320" y="115" fill="#f8fafc" font-size="7.5" font-weight="bold" text-anchor="middle">Dual Gun Booleans</text>
+      <text x="320" y="128" fill="#94a3b8" font-size="6.8" text-anchor="middle">isGunAConnected, isGunB...</text>
+
+      <rect x="255" y="145" width="130" height="40" rx="3" fill="#1e293b" stroke="#059669"/>
+      <text x="320" y="160" fill="#34d399" font-size="7.5" font-weight="bold" text-anchor="middle">Plug-In Detector</text>
+      <text x="320" y="174" fill="#94a3b8" font-size="6.8" text-anchor="middle">prevStatus1Ref Transitions</text>
+
+      <!-- Arrow to API & Storage -->
+      <line x1="400" y1="90" x2="460" y2="70" stroke="#0284c7" stroke-width="2"/>
+      <polygon points="456,66 466,68 458,74" fill="#0284c7"/>
+
+      <line x1="400" y1="150" x2="460" y2="170" stroke="#059669" stroke-width="2"/>
+      <polygon points="458,166 466,172 456,174" fill="#059669"/>
+
+      <!-- API Client Box -->
+      <rect x="470" y="35" width="130" height="70" rx="4" fill="#f8fafc" stroke="#0284c7" stroke-width="1.5"/>
+      <text x="535" y="55" fill="#0f172a" font-size="9" font-weight="bold" text-anchor="middle">API Client (api.ts)</text>
+      <text x="535" y="70" fill="#64748b" font-size="7.5" text-anchor="middle">2.5s Polling Engine</text>
+      <text x="535" y="85" fill="#0369a1" font-size="7" text-anchor="middle">GET /api/status</text>
+
+      <!-- Local Storage Box -->
+      <rect x="470" y="140" width="130" height="70" rx="4" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+      <text x="535" y="160" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">AsyncStorage</text>
+      <text x="535" y="175" fill="#334155" font-size="7.5" text-anchor="middle">0ms Local Cache</text>
+      <text x="535" y="190" fill="#64748b" font-size="7" text-anchor="middle">Offline Persistence</text>
+
+      <!-- Arrow to Server -->
+      <line x1="600" y1="70" x2="660" y2="70" stroke="#0284c7" stroke-width="2"/>
+      <polygon points="658,66 668,70 658,74" fill="#0284c7"/>
+      <text x="630" y="62" fill="#0284c7" font-size="7" text-anchor="middle">HTTPS</text>
+
+      <!-- Server Target Box -->
+      <rect x="670" y="45" width="80" height="50" rx="4" fill="#0f172a"/>
+      <text x="710" y="68" fill="#ffffff" font-size="8.5" font-weight="bold" text-anchor="middle">T-Charge</text>
+      <text x="710" y="82" fill="#38bdf8" font-size="7.5" text-anchor="middle">Server</text>
+
+      <!-- Notification Service Box -->
+      <rect x="630" y="140" width="120" height="70" rx="4" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+      <text x="690" y="160" fill="#92400e" font-size="8.5" font-weight="bold" text-anchor="middle">Expo Notifications</text>
+      <text x="690" y="175" fill="#92400e" font-size="7" text-anchor="middle">Instant Local Alert</text>
+      <text x="690" y="190" fill="#64748b" font-size="6.8" text-anchor="middle">Remote Push Tokens</text>
+    </svg>
+    <div class="diagram-caption">Figure 1.1: Mobile Application Architecture, State Flow, and Telemetry Engine</div>
+  </div>
+
+  <h3>1.1 Zero-Latency Initial Render (0ms Cache Pattern)</h3>
+  <p>
+    When the driver opens the app, waiting for a network roundtrip introduces layout shifting and perceived sluggishness. <code>useChargerLive</code> implements a two-tier fetch:
+  </p>
+  <ol>
+    <li><strong>Tier 1 (Synchronous Cache, 0ms):</strong> Reads previous session telemetry, connector statuses, and charger metadata from local <code>AsyncStorage</code>. The UI immediately renders the station and last-known gun states without a loading spinner.</li>
+    <li><strong>Tier 2 (Live Network Stream, 2.5s Polling):</strong> Connects via <code>subscribeToLiveStatus</code> to fetch real-time SoC, kW, voltage, and transaction state directly from the server. Upon receipt, local cache is silently refreshed.</li>
+  </ol>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 2: CODEBASE TOUR -->
+  <h2 class="section-title">2.0 Directory Structure & Source Code Breakdown</h2>
+  <p>
+    The production mobile application source code resides in <code>production/mobile-app/</code>. Below is the complete directory structure with engineering notes:
+  </p>
+
+  <div class="tree no-break">
+production/mobile-app/
+├── app.json                     <span class="tree-comment"># Expo configuration, permissions, runtimeVersion="1.0.0"</span>
+├── eas.json                     <span class="tree-comment"># EAS Build profiles (preview APK, production)</span>
+├── package.json                 <span class="tree-comment"># React Native 0.79, Expo SDK 52 dependencies</span>
+├── tsconfig.json                <span class="tree-comment"># TypeScript compiler rules (@/* path alias mappings)</span>
+├── assets/
+│   └── images/
+│       ├── brand-logo.png       <span class="tree-comment"># Custom brand logo rendered on splash and header</span>
+│       ├── icon.png             <span class="tree-comment"># Application launcher icon</span>
+│       ├── models/              <span class="tree-comment"># 240kW, 60kW, 30kW charger hardware graphics</span>
+│       └── states/              <span class="tree-comment"># Gun state vectors (idle, left, right, both)</span>
+└── src/
+    ├── app/
+    │   ├── _layout.tsx          <span class="tree-comment"># Root layout: font loading, notification listener, theme</span>
+    │   ├── login.tsx            <span class="tree-comment"># Driver authentication with JWT token storage</span>
+    │   ├── setup.tsx            <span class="tree-comment"># Initial station onboarding wizard</span>
+    │   └── (tabs)/
+    │       ├── _layout.tsx      <span class="tree-comment"># Bottom tab bar with glowing neon active badges</span>
+    │       ├── index.tsx        <span class="tree-comment"># Dashboard: dual-gun cards, dynamic LEDs, quick actions</span>
+    │       ├── control.tsx      <span class="tree-comment"># Live Charging Controller: start, stop, target slider</span>
+    │       ├── history.tsx      <span class="tree-comment"># Charging history receipts, kWh, duration, cost</span>
+    │       ├── revenue.tsx      <span class="tree-comment"># Operator financial analytics & daily revenue</span>
+    │       └── settings.tsx     <span class="tree-comment"># Server URL configuration & theme selector</span>
+    ├── components/
+    │   ├── SimulatorModal.tsx   <span class="tree-comment"># Built-in desk testing simulator modal</span>
+    │   ├── animated-icon.tsx    <span class="tree-comment"># Custom animated iconography</span>
+    │   └── ui/collapsible.tsx   <span class="tree-comment"># Accessible accordion components</span>
+    ├── config/
+    │   ├── api.ts               <span class="tree-comment"># HTTP REST client, JWT interceptor, polling stream</span>
+    │   ├── auth.tsx             <span class="tree-comment"># Authentication Context & user state provider</span>
+    │   └── simulator.tsx        <span class="tree-comment"># Simulator Context for offline testing</span>
+    ├── hooks/
+    │   └── useChargerLive.ts    <span class="tree-comment"># Central state hook with dual-gun booleans & telemetry</span>
+    └── services/
+        ├── control.ts           <span class="tree-comment"># Command dispatch: start, stop, unlock, tariff updates</span>
+        ├── notifications.ts     <span class="tree-comment"># Push token registration and local notification triggers</span>
+        └── storage.ts           <span class="tree-comment"># AsyncStorage key-value wrappers</span>
+  </div>
+
+  <h3>2.1 Critical Source Modules & Interfaces</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Module</th>
+        <th style="width: 25%;">Primary Functions / Types</th>
+        <th style="width: 50%;">Technical Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/config/api.ts</code></td>
+        <td><code>apiRequest&lt;T&gt;()</code><br><code>subscribeToLiveStatus()</code><br><code>getServerUrl()</code></td>
+        <td>Direct fetch wrapper that injects <code>Authorization: Bearer &lt;jwt&gt;</code>. Handles automatic fallback to <code>https://tesla-charge.online</code> and polls <code>/api/status</code> every 2.5 seconds.</td>
+      </tr>
+      <tr>
+        <td><code>src/hooks/useChargerLive.ts</code></td>
+        <td><code>useChargerLive()</code><br><code>LiveConnectorData</code></td>
+        <td>Tracks real-time state for Gun A and Gun B. Exposes boolean helpers: <code>isGunAConnected</code>, <code>isGunBConnected</code>, <code>hasAnyGunConnected</code>, and <code>bothConnected</code>.</td>
+      </tr>
+      <tr>
+        <td><code>src/services/control.ts</code></td>
+        <td><code>startChargingSession()</code><br><code>stopChargingSession()</code><br><code>dispatchCommandWithConfirmation()</code></td>
+        <td>Dispatches remote commands with retry exponential backoff (2 attempts, 10-second timeout). Automatically computes target kWh from budget PKR or duration limits.</td>
+      </tr>
+      <tr>
+        <td><code>src/services/notifications.ts</code></td>
+        <td><code>registerForPushNotificationsAsync()</code><br><code>scheduleLocalNotification()</code></td>
+        <td>Configures Android notification channel <code>charging-status</code> with MAX importance. Requests push permissions, retrieves Expo token, and registers it with the server.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 3: REAL-TIME NOTIFICATION ENGINE -->
+  <h2 class="section-title">3.0 In-App Telemetry & Notification Engine</h2>
+  <p>
+    One of the most critical user experience requirements is instantaneous notification when a physical charging cable is plugged into a vehicle. The mobile application employs a dual-channel notification strategy:
+  </p>
+
+  <div class="diagram-box no-break">
+    <svg width="100%" height="220" viewBox="0 0 760 220" xmlns="http://www.w3.org/2000/svg">
+      <!-- Charger Gun State -->
+      <rect x="20" y="60" width="130" height="90" rx="4" fill="#0f172a" stroke="#0284c7" stroke-width="1.5"/>
+      <text x="85" y="85" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Physical Gun State</text>
+      <text x="85" y="105" fill="#94a3b8" font-size="7.5" text-anchor="middle">Connector 1 (Gun A)</text>
+      <rect x="35" y="115" width="100" height="22" rx="3" fill="#e0f2fe"/>
+      <text x="85" y="130" fill="#0369a1" font-size="7.5" font-weight="bold" text-anchor="middle">Status: "Preparing"</text>
+
+      <!-- Arrow to App -->
+      <line x1="150" y1="105" x2="210" y2="105" stroke="#0284c7" stroke-width="2"/>
+      <polygon points="208,101 218,105 208,109" fill="#0284c7"/>
+      <text x="180" y="98" fill="#0284c7" font-size="7" text-anchor="middle">Telemetry</text>
+
+      <!-- App Detection Box -->
+      <rect x="220" y="30" width="230" height="150" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="335" y="52" fill="#0f172a" font-size="10" font-weight="bold" text-anchor="middle">index.tsx Status Monitor</text>
+
+      <rect x="235" y="65" width="200" height="40" rx="3" fill="#1e293b"/>
+      <text x="335" y="82" fill="#38bdf8" font-size="7.5" font-weight="bold" text-anchor="middle">Transition Detection Logic</text>
+      <text x="335" y="95" fill="#94a3b8" font-size="6.8" text-anchor="middle">prevStatus1Ref !== "Preparing" &amp;&amp; status === "Preparing"</text>
+
+      <rect x="235" y="115" width="200" height="50" rx="3" fill="#ecfdf5" stroke="#059669"/>
+      <text x="335" y="132" fill="#065f46" font-size="8" font-weight="bold" text-anchor="middle">1. Schedule Local Notification</text>
+      <text x="335" y="146" fill="#065f46" font-size="7" text-anchor="middle">"Vehicle Connected to Gun A!"</text>
+      <text x="335" y="158" fill="#64748b" font-size="6.8" text-anchor="middle">Immediate trigger: null, Priority: HIGH</text>
+
+      <!-- Arrow to System -->
+      <line x1="450" y1="140" x2="520" y2="140" stroke="#059669" stroke-width="2"/>
+      <polygon points="518,136 528,140 518,144" fill="#059669"/>
+      <text x="485" y="132" fill="#059669" font-size="7" text-anchor="middle">Local OS</text>
+
+      <!-- OS Notification Box -->
+      <rect x="530" y="110" width="200" height="60" rx="6" fill="#0f172a" stroke="#10b981" stroke-width="2"/>
+      <text x="630" y="132" fill="#10b981" font-size="8.5" font-weight="bold" text-anchor="middle">Android / iOS System Banner</text>
+      <text x="630" y="148" fill="#ffffff" font-size="7.5" text-anchor="middle">⚡ Vehicle Connected to Gun A!</text>
+      <text x="630" y="160" fill="#94a3b8" font-size="6.8" text-anchor="middle">Tap to configure limit and start charging</text>
+    </svg>
+    <div class="diagram-caption">Figure 3.1: In-App Plug-In Transition Detection and Immediate Notification Flow</div>
+  </div>
+
+  <h3>3.1 State Tracking Implementation in <code>index.tsx</code></h3>
+  <pre>const prevStatus1Ref = useRef&lt;string | null&gt;(null);
+const prevStatus2Ref = useRef&lt;string | null&gt;(null);
+
+useEffect(() => {
+  const status1 = connector1?.status;
+  if (status1 && prevStatus1Ref.current && prevStatus1Ref.current !== status1) {
+    if (status1 === 'Preparing') {
+      scheduleLocalNotification(
+        '⚡ Vehicle Connected to Gun A!',
+        'Gun A is plugged into your vehicle. Tap here to start charging.',
+        { gun: 'A', connectorId: 1 }
+      );
+    } else if (status1 === 'Charging') {
+      scheduleLocalNotification('⚡ Gun A Charging Started', 'Power is now flowing to your vehicle.');
+    }
+  }
+  prevStatus1Ref.current = status1 || null;
+}, [connector1?.status]);</pre>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 4: OFFLINE SIMULATOR -->
+  <h2 class="section-title">4.0 Built-In Desk Simulator Architecture</h2>
+  <p>
+    To enable mobile engineers to build, refine, and debug UI layouts, charging animations, and session receipts without access to a physical 240kW DC fast charging station, the application includes a full-fidelity embedded simulator (<code>src/components/SimulatorModal.tsx</code> and <code>src/config/simulator.tsx</code>).
+  </p>
+
+  <h3>4.1 Simulator Capabilities</h3>
+  <ul>
+    <li><strong>Independent Gun Simulation:</strong> Toggle Gun A or Gun B between <code>Available</code>, <code>Preparing</code>, <code>Charging</code>, and <code>Faulted</code> states.</li>
+    <li><strong>Real-Time Power & Meter Progression:</strong> Simulates realistic DC charging curves from 20kW up to 240kW, automatically advancing delivered energy (kWh), elapsed time, and State of Charge (SoC %).</li>
+    <li><strong>Limit Trigger Testing:</strong> Simulates automatic session completion when budget (PKR) or kWh limits are reached.</li>
+    <li><strong>Zero Server Pollution:</strong> All simulator calculations execute in React memory; no test transactions are sent to the production SQLite database.</li>
+  </ul>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 5: EAS BUILD & OTA PIPELINE -->
+  <h2 class="section-title">5.0 EAS Build, Release & OTA Update Pipeline</h2>
+  <p>
+    The application leverages Expo Application Services (EAS) for both binary compilation and instantaneous Over-The-Air (OTA) updates. This allows engineering to push bug fixes and feature enhancements directly to driver phones without submitting new APKs to store review.
+  </p>
+
+  <h3>5.1 EAS Configuration Matrix (<code>eas.json</code>)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Build Profile</th>
+        <th>Distribution</th>
+        <th>Target Output</th>
+        <th>EAS Update Channel</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>development</code></td>
+        <td>Internal</td>
+        <td>Expo Development Client APK</td>
+        <td><code>development</code></td>
+      </tr>
+      <tr>
+        <td><code>preview</code></td>
+        <td>Internal</td>
+        <td>Standalone Android APK (Release mode)</td>
+        <td><code>preview</code></td>
+      </tr>
+      <tr>
+        <td><code>production</code></td>
+        <td>Store / Release</td>
+        <td>Optimized Android App Bundle (AAB) / APK</td>
+        <td><code>production</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>5.2 Publishing Over-The-Air (OTA) Updates</h3>
+  <p>
+    Because <code>app.json</code> defines <code>runtimeVersion: "1.0.0"</code>, any JavaScript, TypeScript, or asset changes can be deployed in under 60 seconds using the following command:
+  </p>
+  <pre># From production/mobile-app directory:
+npx eas-cli update --channel preview --environment preview --message "feat: live telemetry updates" --non-interactive</pre>
+
+  <div class="callout warning">
+    <strong>Runtime Version Boundary:</strong>
+    OTA updates apply only to JavaScript bundle and asset updates. If a new native library is added (e.g., changes to <code>android/</code> or native dependencies in <code>package.json</code>), a full binary build must be compiled using <code>eas build --platform android --profile preview</code>.
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- SECTION 6: DEVELOPER SETUP & RUNBOOK -->
+  <h2 class="section-title">6.0 Mobile Developer Runbook & Verification</h2>
+
+  <h3>6.1 Prerequisites & Local Setup</h3>
+  <ul>
+    <li>Node.js v18.16.0 or higher.</li>
+    <li>Expo CLI (<code>npx expo</code>) and EAS CLI (<code>npx eas-cli</code>).</li>
+    <li>Android Studio / Android Emulator or a physical Android test device with USB debugging enabled.</li>
+  </ul>
+
+  <h3>6.2 Running the Mobile Application Locally</h3>
+  <pre># 1. Navigate to mobile app directory
+cd production/mobile-app
+
+# 2. Start the Metro bundler
+npm start
+
+# 3. Press 'a' to open Android Emulator, or scan the QR code with Expo Go on device.</pre>
+
+  <h3>6.3 Typechecking & Compilation Audit</h3>
+  <p>
+    Prior to submitting any code commit or OTA update, run the strict TypeScript audit to ensure 0 compilation errors:
+  </p>
+  <pre># Run TypeScript compiler check
+./node_modules/.bin/tsc --noEmit</pre>
+  <div class="callout success">
+    <strong>Engineering Audit Pass:</strong>
+    The production mobile app codebase passes <code>tsc --noEmit</code> with zero errors and zero warnings, verifying full type safety across all navigation routes, hooks, and services.
+  </div>
+
+</body>
+</html>
