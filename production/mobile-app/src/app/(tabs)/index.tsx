@@ -526,7 +526,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID & Unified Minimal Status Badge */}
+      {/* Header: Station ID */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Image
@@ -535,12 +535,6 @@ export default function HomeScreen() {
             resizeMode="contain"
           />
           <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border || 'transparent', borderWidth: 1 }]}>
-          <View style={[styles.statusDot, { backgroundColor: activeTheme.color }]} />
-          <Text style={[styles.statusText, { color: activeTheme.color }]}>
-            {activeTheme.label}
-          </Text>
         </View>
       </View>
 

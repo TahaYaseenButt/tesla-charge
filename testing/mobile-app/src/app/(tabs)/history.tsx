@@ -40,9 +40,6 @@ export default function HistoryScreen() {
   const [dataSource, setDataSource] = useState<'local' | 'cloud'>('local');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
-  // Account scope filter: 'all' (all station sessions) vs 'mine' (personal user sessions)
-  // Default to 'all' so every device immediately sees all transactions on this charger
-  const [accountScope, setAccountScope] = useState<'mine' | 'all'>('all');
 
   // Today key
   const todayKey = useMemo(() => formatDateKey(new Date()), []);
@@ -108,15 +105,9 @@ export default function HistoryScreen() {
     };
   }, [CHARGER_ID, user?.uid, loadHistory]);
 
-  // Isolate transactions per user account and deduplicate by transactionId
+  // Deduplicate by transactionId
   const scopedTransactions = useMemo(() => {
-    const list = accountScope === 'all'
-      ? transactions
-      : transactions.filter((tx) => {
-          if (tx.userId) return tx.userId === user?.uid;
-          if (tx.userEmail) return tx.userEmail.toLowerCase() === (user?.email || '').toLowerCase();
-          return true;
-        });
+    const list = transactions;
 
     // Deduplicate by transactionId or start minute so duplicate records never display twice
     const map = new Map<string, any>();
@@ -156,7 +147,7 @@ export default function HistoryScreen() {
       const timeB = new Date(b.startTime || b.createdAt || b.stopTime || 0).getTime();
       return timeB - timeA;
     });
-  }, [transactions, accountScope, user]);
+  }, [transactions]);
 
   // 2. Map transactions to date keys (YYYY-MM-DD)
   const getTxDateKey = (tx: any): string => {
@@ -303,14 +294,6 @@ export default function HistoryScreen() {
       {/* Screen Title */}
       <View style={styles.topHeader}>
         <Text style={styles.pageTitle}>CHARGING HISTORY</Text>
-        <TouchableOpacity
-          style={styles.collapseToggle}
-          onPress={() => setCalendarCollapsed((prev) => !prev)}
-        >
-          <Text style={styles.collapseToggleText}>
-            {calendarCollapsed ? '📅 Show Calendar' : '📅 Hide Calendar'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
       {/* Storage Source & Sync Bar */}
@@ -338,28 +321,6 @@ export default function HistoryScreen() {
           ) : (
             <Text style={styles.syncButtonText}>🔄 Sync Cloud</Text>
           )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Account Scope Switcher: All Station Activity vs My Sessions */}
-      <View style={styles.scopeSelector}>
-        <TouchableOpacity
-          style={[styles.scopeBtn, accountScope === 'all' && styles.scopeBtnActive]}
-          onPress={() => setAccountScope('all')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.scopeBtnText, accountScope === 'all' && styles.scopeBtnTextActive]}>
-            ⚡ All Station Activity
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.scopeBtn, accountScope === 'mine' && styles.scopeBtnActive]}
-          onPress={() => setAccountScope('mine')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.scopeBtnText, accountScope === 'mine' && styles.scopeBtnTextActive]}>
-            👤 My Sessions
-          </Text>
         </TouchableOpacity>
       </View>
 
