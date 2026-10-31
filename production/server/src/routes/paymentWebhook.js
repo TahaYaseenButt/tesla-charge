@@ -553,4 +553,153 @@ apiRouter.get("/network-summary", async (_req, res) => {
   }
 });
 
+/**
+ * Direct API to get charger live configuration and telemetry
+ */
+apiRouter.get("/chargers/:chargePointId", async (req, res) => {
+  const { chargePointId } = req.params;
+  const data = await getChargerLiveState(chargePointId);
+  return res.json({ success: true, ...data });
+});
+
+/**
+ * Direct Auth API: Login with Firebase Identity Toolkit
+ */
+apiRouter.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Email and password are required" });
+  }
+
+  try {
+    const fbRes = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyBkc0CoqaW1Mg5hLl7kpXU3TAURebEWpcg",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, returnSecureToken: true }),
+      }
+    );
+
+    const fbData = await fbRes.json();
+    if (!fbRes.ok) {
+      const msg = fbData?.error?.message;
+      if (msg === "INVALID_LOGIN_CREDENTIALS" || msg === "INVALID_PASSWORD" || msg === "EMAIL_NOT_FOUND") {
+        return res.status(401).json({ success: false, error: "Invalid email or password" });
+      }
+      return res.status(400).json({ success: false, error: msg || "Authentication failed" });
+    }
+
+    const uid = fbData.localId;
+    let stationId = "charger1";
+    let role = "driver";
+    let defaultChargerModel = "240kW";
+
+    try {
+      const userSnap = await getDoc(doc(db, "users", uid));
+      if (userSnap.exists()) {
+        const u = userSnap.data();
+        stationId = (u.defaultChargerId || u.stationId || stationId).trim().toLowerCase();
+        role = u.role || role;
+        defaultChargerModel = u.defaultChargerModel || defaultChargerModel;
+      }
+    } catch (_err) {}
+
+    return res.json({
+      success: true,
+      token: fbData.idToken,
+      user: {
+        uid,
+        id: uid,
+        email: fbData.email || email.trim(),
+        displayName: fbData.displayName || email.trim().split("@")[0],
+        role,
+        stationId,
+        defaultChargerId: stationId,
+        defaultChargerModel,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct Auth API: Register with Firebase Identity Toolkit
+ */
+apiRouter.post("/auth/register", async (req, res) => {
+  const { email, password, displayName, stationId } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Email and password are required" });
+  }
+
+  try {
+    const fbRes = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=AIzaSyBkc0CoqaW1Mg5hLl7kpXU3TAURebEWpcg",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, returnSecureToken: true }),
+      }
+    );
+
+    const fbData = await fbRes.json();
+    if (!fbRes.ok) {
+      const msg = fbData?.error?.message;
+      if (msg === "EMAIL_EXISTS") {
+        return res.status(409).json({ success: false, error: "User with this email already exists" });
+      }
+      return res.status(400).json({ success: false, error: msg || "Registration failed" });
+    }
+
+    const uid = fbData.localId;
+    const assignedStation = (stationId || "charger1").trim().toLowerCase();
+
+    try {
+      await setDoc(
+        doc(db, "users", uid),
+        {
+          uid,
+          email: email.trim(),
+          stationId: assignedStation,
+          defaultChargerId: assignedStation,
+          role: "driver",
+          setupCompleted: true,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (_err) {}
+
+    return res.json({
+      success: true,
+      token: fbData.idToken,
+      user: {
+        uid,
+        id: uid,
+        email: email.trim(),
+        displayName: displayName || email.trim().split("@")[0],
+        stationId: assignedStation,
+        defaultChargerId: assignedStation,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Current authenticated user profile
+ */
+apiRouter.get("/auth/me", async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+  return res.json({ success: true, message: "Authenticated" });
+});
+
+
 
