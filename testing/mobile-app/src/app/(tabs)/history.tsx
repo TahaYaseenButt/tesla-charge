@@ -32,7 +32,7 @@ function formatDateKey(date: Date): string {
 
 export default function HistoryScreen() {
   const { chargerId, user } = useAuth();
-  const CHARGER_ID = chargerId || 'charger1';
+  const CHARGER_ID = (chargerId || user?.stationId || user?.defaultChargerId || 'charger1').trim().toLowerCase();
 
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

@@ -546,6 +546,48 @@ apiRouter.get("/transactions", authenticateToken, (req, res) => {
   }
 });
 
+apiRouter.get("/chargers/:id/history", authenticateToken, (req, res) => {
+  try {
+    const targetId = String(req.params.id || "").toLowerCase();
+    const limit = Number(req.query.limit) || 100;
+
+    // Tenant isolation: if user is logged in and not admin, verify ownership
+    if (req.user && req.user.role !== "admin") {
+      const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+      if (userStation && userStation !== targetId) {
+        return res.status(403).json({ success: false, error: "Access denied to this charger's history" });
+      }
+    }
+
+    const rows = db.prepare("SELECT * FROM transactions WHERE charge_point_id = ? ORDER BY start_time DESC LIMIT ?").all(targetId, limit);
+    const transactions = rows.map((r) => ({
+      id: r.transaction_id,
+      transactionId: Number(r.transaction_id) || r.transaction_id,
+      chargePointId: r.charge_point_id,
+      connectorId: r.connector_id,
+      userId: r.user_id,
+      userEmail: r.user_email,
+      idTag: r.id_tag,
+      status: r.status,
+      startTime: r.start_time,
+      stopTime: r.stop_time,
+      meterStart: r.meter_start,
+      meterStop: r.meter_stop,
+      energyDeliveredKwh: r.energy_delivered_kwh,
+      energyDeliveredWh: r.energy_delivered_wh,
+      cost: r.cost,
+      tariffRate: r.tariff_rate,
+      paymentStatus: r.payment_status,
+      reason: r.reason,
+      stopReason: r.reason,
+    }));
+
+    return res.json({ success: true, count: transactions.length, transactions });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // 5. REAL-TIME SERVER-SENT EVENTS (SSE) STREAM
 // ==========================================

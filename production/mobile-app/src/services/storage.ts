@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiRequest } from '@/config/api';
+import { fetchFirestoreCollection } from '@/config/firebase';
 
 const PREFIX = '@tesla_charge_';
 
@@ -181,13 +182,13 @@ export async function fetchTransactionsWithCacheStrategy(
   forceRefresh: boolean = false,
   userId?: string
 ): Promise<FetchHistoryResult> {
-  const cleanId = chargerId?.trim().toLowerCase() || 'charger1';
+  const cleanId = (chargerId || '').trim().toLowerCase() || 'charger1';
 
   // 1. Fast local cache check
   if (!forceRefresh) {
     const cached = await getLocalTransactions(cleanId, userId);
     const syncTime = await getLastSyncTimestamp(cleanId, userId);
-    const isFresh = syncTime ? Date.now() - new Date(syncTime).getTime() < 2 * 60 * 1000 : false;
+    const isFresh = syncTime ? Date.now() - new Date(syncTime).getTime() < 30 * 1000 : false;
 
     if (cached && cached.length > 0 && isFresh) {
       return {
@@ -198,17 +199,44 @@ export async function fetchTransactionsWithCacheStrategy(
     }
   }
 
-  // 2. Direct Server Query (SQLite backend)
   let fetchedList: any[] = [];
+
+  // 2. Primary Remote Endpoint: /api/chargers/:id/history (remote server)
   try {
     const res = await apiRequest<{ success: boolean; transactions: any[] }>(
-      `/api/transactions?chargePointId=${cleanId}&limit=${MAX_CACHED_TRANSACTIONS}`
+      `/api/chargers/${encodeURIComponent(cleanId)}/history`
     );
-    if (res && res.transactions) {
+    if (res && Array.isArray(res.transactions) && res.transactions.length > 0) {
       fetchedList = res.transactions;
     }
-  } catch (err: any) {
-    console.warn('[Storage Direct] fetch notice:', err.message);
+  } catch (_e) {}
+
+  // 2b. Secondary query: /api/transactions?chargePointId=...
+  if (fetchedList.length === 0) {
+    try {
+      const res = await apiRequest<{ success: boolean; transactions: any[] }>(
+        `/api/transactions?chargePointId=${encodeURIComponent(cleanId)}&limit=${MAX_CACHED_TRANSACTIONS}`
+      );
+      if (res && Array.isArray(res.transactions) && res.transactions.length > 0) {
+        fetchedList = res.transactions;
+      }
+    } catch (_e) {}
+  }
+
+  // 2c. Direct Firestore REST query fallback (collection "transactions")
+  if (fetchedList.length === 0) {
+    try {
+      const docs = await fetchFirestoreCollection('transactions', 200);
+      if (docs && docs.length > 0) {
+        const chargerDocs = docs.filter((d: any) => {
+          const cId = String(d.chargePointId || '').trim().toLowerCase();
+          return cId === cleanId;
+        });
+        if (chargerDocs.length > 0) {
+          fetchedList = chargerDocs;
+        }
+      }
+    } catch (_e) {}
   }
 
   // 3. Offline fallback

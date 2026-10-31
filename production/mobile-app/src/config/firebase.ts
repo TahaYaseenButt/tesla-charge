@@ -144,7 +144,7 @@ export async function fetchFirestoreDoc(
     const headers = await getAuthHeaders();
     const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${collectionName}/${encodeURIComponent(
       docId
-    )}`;
+    )}?key=${firebaseConfig.apiKey}`;
     const res = await fetch(url, {
       method: "GET",
       headers,
@@ -173,7 +173,7 @@ export async function fetchFirestoreCollection(
   try {
     const headers = await getAuthHeaders();
     do {
-      let url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${collectionName}?pageSize=100`;
+      let url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${collectionName}?pageSize=100&key=${firebaseConfig.apiKey}`;
       if (pageToken) {
         url += `&pageToken=${encodeURIComponent(pageToken)}`;
       }

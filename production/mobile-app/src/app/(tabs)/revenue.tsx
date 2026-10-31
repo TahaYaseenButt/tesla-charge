@@ -39,8 +39,8 @@ interface MonthSummary {
 
 export default function RevenueScreen() {
   const { chargerId: configuredId, user } = useAuth();
-  const CHARGER_ID = configuredId || 'charger1';
-  const cleanId = CHARGER_ID.trim().toLowerCase();
+  const CHARGER_ID = (configuredId || user?.stationId || user?.defaultChargerId || 'charger1').trim().toLowerCase();
+  const cleanId = CHARGER_ID;
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
