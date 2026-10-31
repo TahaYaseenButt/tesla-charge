@@ -701,5 +701,79 @@ apiRouter.get("/auth/me", async (req, res) => {
   return res.json({ success: true, message: "Authenticated" });
 });
 
+/**
+ * Register Expo push notification token for charger and user
+ */
+apiRouter.post("/notifications/register-token", async (req, res) => {
+  const { token, chargerId, userId, platform } = req.body;
+  if (!token) {
+    return res.status(400).json({ success: false, error: "Missing token" });
+  }
+
+  const cleanId = (chargerId || "charger1").trim().toLowerCase();
+  const safeToken = String(token).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  try {
+    // 1. Save to Firestore charger document in pushTokens array
+    try {
+      const chargerRef = doc(db, "chargers", cleanId);
+      const cSnap = await getDoc(chargerRef);
+      let existingTokens = [];
+      if (cSnap.exists()) {
+        const cData = cSnap.data();
+        existingTokens = Array.isArray(cData.pushTokens) ? cData.pushTokens : [];
+      }
+      if (!existingTokens.includes(token)) {
+        existingTokens.push(token);
+      }
+      await setDoc(
+        chargerRef,
+        {
+          pushTokens: existingTokens,
+          lastPushToken: token,
+          pushTokenUpdatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (fErr) {
+      console.warn("[Push] Error saving token to Firestore charger:", fErr.message);
+    }
+
+    // 2. Save to Firestore user document
+    if (userId && userId !== "anonymous" && userId !== "admin_local") {
+      try {
+        await setDoc(
+          doc(db, "users", userId),
+          {
+            pushToken: token,
+            pushTokenUpdatedAt: new Date().toISOString(),
+            defaultChargerId: cleanId,
+          },
+          { merge: true }
+        );
+      } catch (uErr) {
+        console.warn("[Push] Error saving token to Firestore user:", uErr.message);
+      }
+    }
+
+    // 3. Save to RTDB live subscribers if permissions allow
+    try {
+      await set(ref(rtdb, `notifications/subscribers/${cleanId}/${safeToken}`), {
+        token,
+        userId: userId || "anonymous",
+        platform: platform || "unknown",
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (_rtdbErr) {}
+
+    console.log(`[Push] Successfully registered token for [${cleanId}]: ${token.substring(0, 30)}...`);
+    return res.json({ success: true, message: "Token registered successfully" });
+  } catch (err) {
+    console.error("[Push Error] Failed to register token:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 
 

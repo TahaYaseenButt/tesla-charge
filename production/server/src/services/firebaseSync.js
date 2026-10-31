@@ -6,19 +6,56 @@ import path from "path";
 import { sendPushNotification } from "./notificationService.js";
 
 /**
- * Fetch push tokens registered for a charger
+ * Fetch push tokens registered for a charger (Firestore + RTDB fallback)
  */
 async function getSubscribedPushTokens(chargePointId) {
+  const cleanId = (chargePointId || "charger1").trim().toLowerCase();
+  const tokens = new Set();
+
+  // 1. Fetch from Firestore chargers/${cleanId}
   try {
-    const snap = await get(ref(rtdb, `notifications/subscribers/${chargePointId}`));
-    if (snap.exists()) {
-      const data = snap.val();
-      return Object.values(data).map((v) => v.token).filter(Boolean);
+    const cSnap = await getDoc(doc(db, "chargers", cleanId));
+    if (cSnap.exists()) {
+      const cData = cSnap.data();
+      if (Array.isArray(cData.pushTokens)) {
+        cData.pushTokens.forEach((t) => { if (t) tokens.add(t); });
+      }
+      if (cData.lastPushToken) tokens.add(cData.lastPushToken);
+      if (cData.pushToken) tokens.add(cData.pushToken);
+
+      if (cData.configuredByUserId) {
+        try {
+          const uSnap = await getDoc(doc(db, "users", cData.configuredByUserId));
+          if (uSnap.exists() && uSnap.data().pushToken) {
+            tokens.add(uSnap.data().pushToken);
+          }
+        } catch (_uErr) {}
+      }
     }
   } catch (err) {
-    console.warn("[Push] Error fetching push tokens:", err.message);
+    console.warn("[Push] Error fetching tokens from Firestore charger:", err.message);
   }
-  return [];
+
+  // 2. Query users assigned to this charger
+  try {
+    const uQuery = query(collection(db, "users"), where("defaultChargerId", "==", cleanId));
+    const uDocs = await getDocs(uQuery);
+    uDocs.forEach((d) => {
+      const pToken = d.data()?.pushToken;
+      if (pToken) tokens.add(pToken);
+    });
+  } catch (_e) {}
+
+  // 3. Fallback to RTDB
+  try {
+    const snap = await get(ref(rtdb, `notifications/subscribers/${cleanId}`));
+    if (snap.exists()) {
+      const data = snap.val();
+      Object.values(data).forEach((v) => { if (v?.token) tokens.add(v.token); });
+    }
+  } catch (_e) {}
+
+  return Array.from(tokens);
 }
 
 const LOCAL_DATA_FILE = path.join(process.cwd(), "data", "transactions.json");
@@ -219,6 +256,15 @@ export async function saveConnectorStatus(chargePointId, connectorId, status, er
           title: "🔌 Vehicle Connected",
           body: `A vehicle was plugged into ${gunName} at ${chargePointId.toUpperCase()}.`,
           data: { chargePointId, connectorId: connIdNum, status: "Preparing" },
+        });
+      });
+    } else if (status === "Charging") {
+      getSubscribedPushTokens(chargePointId).then((tokens) => {
+        const gunName = connIdNum === 2 ? "Gun B" : "Gun A";
+        sendPushNotification(tokens, {
+          title: "⚡ Charging Started",
+          body: `Vehicle started charging on ${gunName} at ${chargePointId.toUpperCase()}.`,
+          data: { chargePointId, connectorId: connIdNum, status: "Charging" },
         });
       });
     }
@@ -600,6 +646,17 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
     );
 
     await saveConnectorStatus(chargePointId, connectorId, "Charging", "NoError", `Transaction #${transactionId}`);
+    
+    // Explicit push notification for transaction start
+    const gunLabel = Number(connectorId) === 2 ? "Gun B" : "Gun A";
+    getSubscribedPushTokens(chargePointId).then((tokens) => {
+      sendPushNotification(tokens, {
+        title: "⚡ Charging Started",
+        body: `Charging session #${transactionId} started on ${gunLabel} at ${chargePointId.toUpperCase()}.`,
+        data: { chargePointId, connectorId: Number(connectorId), transactionId: Number(transactionId), status: "Charging" },
+      });
+    });
+
     console.log(`[Hybrid] Started transaction #${transactionId} for charger ${chargePointId} [Limit: ${limitMode} (${limitValue || 'unlimited'})] (User: ${userEmail || userId || 'Anonymous'})`);
   } catch (err) {
     console.error(`[Hybrid Error] saveStartTransaction:`, err.message);

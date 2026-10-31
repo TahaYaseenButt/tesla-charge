@@ -114,7 +114,7 @@ export default function HomeScreen() {
 
   const prevStatus1Ref = useRef<string | null>(null);
   const prevStatus2Ref = useRef<string | null>(null);
-
+  const prevActiveTxIdRef = useRef<string | null>(null);
 
   // Safety fallback: Ensure skeleton loader never hangs indefinitely if offline
   useEffect(() => {
@@ -188,14 +188,18 @@ export default function HomeScreen() {
           setActiveTx1Data(null);
         }
 
-        if (prevStatus1Ref.current && prevStatus1Ref.current !== c1.status) {
+        const oldStatus1 = prevStatus1Ref.current;
+        prevStatus1Ref.current = c1.status;
+
+        if (oldStatus1 !== null && oldStatus1 !== c1.status) {
           if (c1.status === 'Preparing') {
             scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun A.');
           } else if (c1.status === 'Charging') {
             scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun A.');
+          } else if ((oldStatus1 === 'Charging' || oldStatus1 === 'Preparing') && c1.status === 'Available') {
+            scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun A.');
           }
         }
-        prevStatus1Ref.current = c1.status;
       }
 
       if (c2) {
@@ -207,18 +211,22 @@ export default function HomeScreen() {
           setActiveTx2Data(null);
         }
 
-        if (prevStatus2Ref.current && prevStatus2Ref.current !== c2.status) {
+        const oldStatus2 = prevStatus2Ref.current;
+        prevStatus2Ref.current = c2.status;
+
+        if (oldStatus2 !== null && oldStatus2 !== c2.status) {
           if (c2.status === 'Preparing') {
             scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun B.');
           } else if (c2.status === 'Charging') {
             scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun B.');
+          } else if ((oldStatus2 === 'Charging' || oldStatus2 === 'Preparing') && c2.status === 'Available') {
+            scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun B.');
           }
         }
-        prevStatus2Ref.current = c2.status;
       }
 
-      const active = data.activeTransaction;
-      if (active && active.status === 'Charging') {
+      const active = data.activeTransaction || c1?.activeTx || c2?.activeTx;
+      if (active && (active.status === 'Charging' || Number(active.currentPowerKw || 0) > 0)) {
         const primaryTx = (c2?.status === 'Charging' && active.connector_id === 2)
           ? active
           : (c1?.status === 'Charging' && active.connector_id === 1)
@@ -226,7 +234,19 @@ export default function HomeScreen() {
           : active;
         setActiveTxData(primaryTx);
         saveLocalActiveTx(CHARGER_ID, primaryTx);
+
+        // Notify when a new active transaction ID appears
+        const txIdStr = String(primaryTx.transactionId || primaryTx.transaction_id || primaryTx.id || '');
+        if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
+          prevActiveTxIdRef.current = txIdStr;
+          const gunLabel = Number(primaryTx.connectorId || primaryTx.connector_id) === 2 ? 'Gun B' : 'Gun A';
+          scheduleLocalNotification('⚡ Charging Started', `Vehicle started charging on ${gunLabel} (Session #${txIdStr}).`);
+        }
       } else {
+        if (prevActiveTxIdRef.current) {
+          prevActiveTxIdRef.current = null;
+          scheduleLocalNotification('✅ Charging Completed', 'Charging session has finished.');
+        }
         setActiveTxData(null);
       }
 
