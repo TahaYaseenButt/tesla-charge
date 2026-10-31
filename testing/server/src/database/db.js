@@ -30,6 +30,7 @@ export function initDatabase() {
       display_name TEXT,
       role TEXT DEFAULT 'user',
       rfid_card TEXT,
+      station_id TEXT DEFAULT 'charger1',
       created_at TEXT NOT NULL
     );
 
@@ -144,28 +145,59 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_push_tokens_charger ON push_tokens(charge_point_id);
   `);
 
-  // Seed default charger if table is empty
-  const count = db.prepare("SELECT count(*) as count FROM chargers").get().count;
-  if (count === 0) {
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT INTO chargers (
-        charge_point_id, model, display_model, vendor, hardware_model, firmware_version,
-        status, tariff_rate, currency, updated_at
-      ) VALUES (
-        'charger1', '240kW', '240kW', 'DC_TYPE', '240kW', '1.0.0',
-        'Offline', 125.0, 'PKR', ?
-      )
-    `).run(now);
-
-    // Seed default connectors 1 and 2
-    for (const cId of [0, 1, 2]) {
-      db.prepare(`
-        INSERT OR IGNORE INTO connectors (
-          charge_point_id, connector_id, status, error_code, info, updated_at
-        ) VALUES ('charger1', ?, 'Available', 'NoError', '', ?)
-      `).run(cId, now);
-    }
-    console.log("[Database] Initialized and seeded default charger: charger1");
+  // Migration: Ensure station_id column exists on users table
+  try {
+    db.prepare("ALTER TABLE users ADD COLUMN station_id TEXT DEFAULT 'charger1'").run();
+  } catch (_e) {
+    // Column already exists
   }
+
+  const now = new Date().toISOString();
+
+  // Ensure 'charger1' exists with owner telsa@teksa.cok and tariff 125
+  db.prepare(`
+    INSERT INTO chargers (
+      charge_point_id, model, display_model, vendor, hardware_model, firmware_version,
+      status, tariff_rate, currency, configured_by_user_id, configured_by_user_email, updated_at
+    ) VALUES (
+      'charger1', '240kW', '240kW', 'DC_TYPE', '240kW', '1.0.0',
+      'Offline', 125.0, 'PKR', 'XIiBSAyJdugfkuAH9ceTGhgCBSh2', 'telsa@teksa.cok', ?
+    )
+    ON CONFLICT(charge_point_id) DO UPDATE SET
+      tariff_rate = excluded.tariff_rate,
+      configured_by_user_id = COALESCE(chargers.configured_by_user_id, excluded.configured_by_user_id),
+      configured_by_user_email = COALESCE(chargers.configured_by_user_email, excluded.configured_by_user_email)
+  `).run(now);
+
+  // Ensure 'aziz light and solar' exists with owner hafeezabro22@gmail.com and tariff 90
+  db.prepare(`
+    INSERT INTO chargers (
+      charge_point_id, model, display_model, vendor, hardware_model, firmware_version,
+      status, tariff_rate, currency, configured_by_user_id, configured_by_user_email, updated_at
+    ) VALUES (
+      'aziz light and solar', '60kW', '60kW', 'DC_TYPE', '60kW', '1.0.0',
+      'Offline', 90.0, 'PKR', 'xO36Rwrs3ZYkiK4N0jm1MYe21hv2', 'hafeezabro22@gmail.com', ?
+    )
+    ON CONFLICT(charge_point_id) DO UPDATE SET
+      tariff_rate = excluded.tariff_rate,
+      configured_by_user_id = COALESCE(chargers.configured_by_user_id, excluded.configured_by_user_id),
+      configured_by_user_email = COALESCE(chargers.configured_by_user_email, excluded.configured_by_user_email)
+  `).run(now);
+
+  // Seed default connectors for both stations
+  for (const cId of [0, 1, 2]) {
+    db.prepare(`
+      INSERT OR IGNORE INTO connectors (
+        charge_point_id, connector_id, status, error_code, info, updated_at
+      ) VALUES ('charger1', ?, 'Available', 'NoError', '', ?)
+    `).run(cId, now);
+
+    db.prepare(`
+      INSERT OR IGNORE INTO connectors (
+        charge_point_id, connector_id, status, error_code, info, updated_at
+      ) VALUES ('aziz light and solar', ?, 'Available', 'NoError', '', ?)
+    `).run(cId, now);
+  }
+
+  console.log("[Database] Initialized and verified tenant-isolated chargers: charger1 (125 PKR) and aziz light and solar (90 PKR)");
 }

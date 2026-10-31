@@ -52,7 +52,7 @@ export function useChargerLive(chargerId: string) {
 
   // 2. Direct Real-Time Server Subscription
   useEffect(() => {
-    const unsub = subscribeToLiveStatus((statusRes) => {
+    const unsub = subscribeToLiveStatus(cleanId, (statusRes) => {
       if (!statusRes) return;
 
       const live = statusRes.live || {};

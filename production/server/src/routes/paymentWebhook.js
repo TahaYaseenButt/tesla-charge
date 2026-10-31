@@ -3,7 +3,7 @@ import os from "os";
 import { ocppServer } from "../ocpp/OCPPServer.js";
 import { updateTransactionPayment, getChargerLiveState, getLocalServerTransactions } from "../services/firebaseSync.js";
 import { db, rtdb } from "../config/firebase.js";
-import { collection, getDocs, doc, getDoc, query, orderBy, limit } from "firebase/firestore";
+import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, limit } from "firebase/firestore";
 import { ref, get } from "firebase/database";
 
 export const apiRouter = express.Router();
@@ -146,6 +146,44 @@ apiRouter.get("/chargers/:chargePointId/config", async (req, res) => {
   try {
     const result = await ocppServer.getConfiguration(chargePointId, []);
     return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct API to update tariff with tenant ownership check
+ */
+apiRouter.post("/chargers/:chargePointId/tariff", async (req, res) => {
+  const { chargePointId } = req.params;
+  const { tariffRate, userId, userEmail } = req.body;
+  if (!tariffRate || Number(tariffRate) <= 0) {
+    return res.status(400).json({ success: false, error: "Valid tariffRate required" });
+  }
+
+  const cleanId = chargePointId.trim().toLowerCase();
+
+  try {
+    const chargerSnap = await getDoc(doc(db, "chargers", cleanId));
+    if (chargerSnap.exists()) {
+      const cData = chargerSnap.data();
+      if (userId && cData.configuredByUserId && cData.configuredByUserId !== userId) {
+        console.warn(`[Security Alert] User ${userEmail || userId} attempted unauthorized tariff change on [${cleanId}]`);
+        return res.status(403).json({ success: false, error: "Forbidden: You do not own this charger." });
+      }
+    }
+
+    await setDoc(
+      doc(db, "chargers", cleanId),
+      {
+        tariffRate: Number(tariffRate),
+        tariffUpdatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    console.log(`[Tariff Updated] Station [${cleanId}] tariff set to ${tariffRate} PKR/kWh`);
+    return res.json({ success: true, tariffRate: Number(tariffRate), chargePointId: cleanId });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

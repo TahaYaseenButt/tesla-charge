@@ -32,7 +32,7 @@ export function authenticateToken(req, res, next) {
 // ==========================================
 
 apiRouter.post("/auth/register", async (req, res) => {
-  const { email, password, displayName } = req.body;
+  const { email, password, displayName, stationId } = req.body;
   if (!email || !password) {
     return res.status(400).json({ success: false, error: "Email and password are required" });
   }
@@ -47,13 +47,20 @@ apiRouter.post("/auth/register", async (req, res) => {
     const passwordHash = await bcrypt.hash(password, salt);
     const userId = "usr_" + crypto.randomUUID().replace(/-/g, "").substring(0, 16);
     const now = new Date().toISOString();
+    const assignedStation = (stationId || "charger1").trim().toLowerCase();
 
     db.prepare(`
-      INSERT INTO users (id, email, password_hash, display_name, role, created_at)
-      VALUES (?, ?, ?, ?, 'user', ?)
-    `).run(userId, email.trim(), passwordHash, displayName || email.split("@")[0], now);
+      INSERT INTO users (id, email, password_hash, display_name, role, station_id, created_at)
+      VALUES (?, ?, ?, ?, 'user', ?, ?)
+    `).run(userId, email.trim(), passwordHash, displayName || email.split("@")[0], assignedStation, now);
 
-    const user = { uid: userId, id: userId, email: email.trim(), displayName: displayName || email.split("@")[0] };
+    const user = {
+      uid: userId,
+      id: userId,
+      email: email.trim(),
+      displayName: displayName || email.split("@")[0],
+      stationId: assignedStation,
+    };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: "90d" });
 
     return res.json({ success: true, token, user });
@@ -79,12 +86,15 @@ apiRouter.post("/auth/login", async (req, res) => {
       return res.status(401).json({ success: false, error: "Invalid email or password" });
     }
 
+    const stationId = userRow.station_id || "charger1";
+
     const user = {
       uid: userRow.id,
       id: userRow.id,
       email: userRow.email,
       displayName: userRow.display_name || userRow.email.split("@")[0],
       role: userRow.role,
+      stationId,
     };
 
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: "90d" });
@@ -98,7 +108,7 @@ apiRouter.get("/auth/me", authenticateToken, (req, res) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: "Unauthorized" });
   }
-  const userRow = db.prepare("SELECT id, email, display_name, role, created_at FROM users WHERE id = ?").get(req.user.id || req.user.uid);
+  const userRow = db.prepare("SELECT id, email, display_name, role, station_id, created_at FROM users WHERE id = ?").get(req.user.id || req.user.uid);
   if (!userRow) {
     return res.status(404).json({ success: false, error: "User not found" });
   }
@@ -110,6 +120,7 @@ apiRouter.get("/auth/me", authenticateToken, (req, res) => {
       email: userRow.email,
       displayName: userRow.display_name,
       role: userRow.role,
+      stationId: userRow.station_id || "charger1",
     },
   });
 });
@@ -118,8 +129,8 @@ apiRouter.get("/auth/me", authenticateToken, (req, res) => {
 // 2. LIVE SYSTEM STATUS & CHARGERS
 // ==========================================
 
-apiRouter.get("/status", (_req, res) => {
-  const targetId = "charger1";
+apiRouter.get("/status", authenticateToken, (req, res) => {
+  const targetId = String(req.query.chargerId || req.user?.stationId || "charger1").toLowerCase();
   const live = getLocalChargerLive(targetId);
   const connectedList = ocppServer.getConnectedChargers();
   const isConnected = connectedList.some((c) => c.chargePointId.toLowerCase() === targetId);
@@ -179,9 +190,21 @@ apiRouter.get("/status", (_req, res) => {
   });
 });
 
-apiRouter.get("/chargers", (_req, res) => {
+apiRouter.get("/chargers", authenticateToken, (req, res) => {
   try {
-    const chargers = db.prepare("SELECT * FROM chargers").all();
+    let chargers = db.prepare("SELECT * FROM chargers").all();
+
+    // Tenant isolation: non-admin users only see their assigned station(s)
+    if (req.user && req.user.role !== "admin") {
+      const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+      chargers = chargers.filter(
+        (ch) =>
+          ch.charge_point_id.toLowerCase() === userStation ||
+          ch.configured_by_user_id === req.user.id ||
+          (req.user.email && ch.configured_by_user_email?.toLowerCase() === req.user.email.toLowerCase())
+      );
+    }
+
     const result = chargers.map((ch) => {
       const live = getLocalChargerLive(ch.charge_point_id);
       return {
@@ -193,6 +216,8 @@ apiRouter.get("/chargers", (_req, res) => {
         tariffRate: ch.tariff_rate,
         currency: ch.currency,
         status: ch.status,
+        configuredByUserId: ch.configured_by_user_id,
+        configuredByUserEmail: ch.configured_by_user_email,
         connectors: live.connectors,
         activeTransaction: live.activeTransaction,
         lastCompletedTx: live.lastCompletedTx,
@@ -217,17 +242,37 @@ const handleTariffUpdate = (req, res) => {
     return res.status(400).json({ success: false, error: "Valid tariffRate required" });
   }
 
+  const cleanId = chargePointId.toLowerCase();
+
+  // Tenant authorization check
+  if (req.user && req.user.role !== "admin") {
+    const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+    const charger = db.prepare("SELECT configured_by_user_id, configured_by_user_email FROM chargers WHERE charge_point_id = ?").get(cleanId);
+    const isOwner =
+      userStation === cleanId ||
+      (charger && charger.configured_by_user_id === req.user.id) ||
+      (charger && req.user.email && charger.configured_by_user_email?.toLowerCase() === req.user.email.toLowerCase());
+
+    if (!isOwner) {
+      console.warn(`[Security Alert] User ${req.user.email} attempted unauthorized tariff change on [${cleanId}]`);
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: You do not have permission to modify tariff for charger [${cleanId}].`,
+      });
+    }
+  }
+
   try {
     db.prepare("UPDATE chargers SET tariff_rate = ?, updated_at = ? WHERE charge_point_id = ?")
-      .run(Number(tariffRate), new Date().toISOString(), chargePointId.toLowerCase());
+      .run(Number(tariffRate), new Date().toISOString(), cleanId);
     return res.json({ success: true, tariffRate: Number(tariffRate) });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
 
-apiRouter.post("/chargers/:chargePointId/tariff", handleTariffUpdate);
-apiRouter.patch("/chargers/:chargePointId/tariff", handleTariffUpdate);
+apiRouter.post("/chargers/:chargePointId/tariff", authenticateToken, handleTariffUpdate);
+apiRouter.patch("/chargers/:chargePointId/tariff", authenticateToken, handleTariffUpdate);
 
 // ==========================================
 // 3. DIRECT REMOTE COMMANDS (Zero Firestore Polling!)
@@ -246,6 +291,25 @@ apiRouter.post("/commands/dispatch", authenticateToken, async (req, res) => {
 
   const safeId = (chargePointId || "charger1").toLowerCase();
   const connId = Number(connectorId || 1);
+
+  // Tenant authorization check
+  if (req.user && req.user.role !== "admin") {
+    const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+    const charger = db.prepare("SELECT configured_by_user_id, configured_by_user_email FROM chargers WHERE charge_point_id = ?").get(safeId);
+    const isAuthorized =
+      !userStation ||
+      userStation === safeId ||
+      (charger && charger.configured_by_user_id === req.user.id) ||
+      (charger && req.user.email && charger.configured_by_user_email?.toLowerCase() === req.user.email.toLowerCase());
+
+    if (!isAuthorized) {
+      console.warn(`[Security Alert] User ${req.user.email} attempted unauthorized command on [${safeId}]`);
+      return res.status(403).json({
+        success: false,
+        error: `Forbidden: You are not authorized to control charger [${safeId}].`,
+      });
+    }
+  }
 
   console.log(`[Command Dispatch] Action: ${action} on [${safeId}] Gun ${connId} by user: ${req.user?.email || "App"}`);
 
@@ -345,35 +409,67 @@ apiRouter.post("/commands/dispatch", authenticateToken, async (req, res) => {
 });
 
 // Shortcuts
-apiRouter.post("/chargers/:chargePointId/unlock", async (req, res) => {
+apiRouter.post("/chargers/:chargePointId/unlock", authenticateToken, async (req, res) => {
   const { chargePointId } = req.params;
   const connectorId = req.body.connectorId || 1;
+  const safeId = chargePointId.toLowerCase();
+
+  if (req.user && req.user.role !== "admin") {
+    const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+    const charger = db.prepare("SELECT configured_by_user_id, configured_by_user_email FROM chargers WHERE charge_point_id = ?").get(safeId);
+    const isAuthorized =
+      !userStation ||
+      userStation === safeId ||
+      (charger && charger.configured_by_user_id === req.user.id) ||
+      (charger && req.user.email && charger.configured_by_user_email?.toLowerCase() === req.user.email.toLowerCase());
+
+    if (!isAuthorized) {
+      return res.status(403).json({ success: false, error: "Forbidden: Cannot unlock another user's charger." });
+    }
+  }
+
   try {
-    const result = await ocppServer.unlockConnector(chargePointId, connectorId);
+    const result = await ocppServer.unlockConnector(safeId, connectorId);
     return res.json({ success: true, result, response: result });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-apiRouter.post("/chargers/:chargePointId/stop", async (req, res) => {
+apiRouter.post("/chargers/:chargePointId/stop", authenticateToken, async (req, res) => {
   const { chargePointId } = req.params;
   const connectorId = req.body.connectorId || 1;
+  const safeId = chargePointId.toLowerCase();
+
+  if (req.user && req.user.role !== "admin") {
+    const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+    const charger = db.prepare("SELECT configured_by_user_id, configured_by_user_email FROM chargers WHERE charge_point_id = ?").get(safeId);
+    const isAuthorized =
+      !userStation ||
+      userStation === safeId ||
+      (charger && charger.configured_by_user_id === req.user.id) ||
+      (charger && req.user.email && charger.configured_by_user_email?.toLowerCase() === req.user.email.toLowerCase());
+
+    if (!isAuthorized) {
+      return res.status(403).json({ success: false, error: "Forbidden: Cannot stop another user's session." });
+    }
+  }
+
   try {
     const active = db.prepare(`
       SELECT transaction_id FROM transactions
       WHERE charge_point_id = ? AND connector_id = ? AND status = 'Charging'
       ORDER BY start_time DESC LIMIT 1
-    `).get(chargePointId.toLowerCase(), connectorId);
+    `).get(safeId, connectorId);
 
     const txId = req.body.transactionId || active?.transaction_id;
     if (!txId) {
       return res.status(400).json({ success: false, error: "No active session to stop" });
     }
 
-    const result = await ocppServer.remoteStopTransaction(chargePointId, Number(txId));
+    const result = await ocppServer.remoteStopTransaction(safeId, Number(txId));
     setTimeout(async () => {
-      try { await ocppServer.unlockConnector(chargePointId, connectorId); } catch (_e) {}
+      try { await ocppServer.unlockConnector(safeId, connectorId); } catch (_e) {}
     }, 1000);
 
     return res.json({ success: true, result, response: result });
@@ -388,9 +484,17 @@ apiRouter.post("/chargers/:chargePointId/stop", async (req, res) => {
 
 apiRouter.get("/transactions", authenticateToken, (req, res) => {
   try {
-    const { chargePointId, limit = 50 } = req.query;
+    let { chargePointId, limit = 50 } = req.query;
     let query = "SELECT * FROM transactions";
     const params = [];
+
+    // Tenant isolation: if user is logged in and not admin, default to their assigned station
+    if (req.user && req.user.role !== "admin") {
+      const userStation = (req.user.stationId || req.user.station_id || "").toLowerCase();
+      if (!chargePointId && userStation) {
+        chargePointId = userStation;
+      }
+    }
 
     if (chargePointId) {
       query += " WHERE charge_point_id = ?";
@@ -398,7 +502,7 @@ apiRouter.get("/transactions", authenticateToken, (req, res) => {
     }
 
     query += " ORDER BY start_time DESC LIMIT ?";
-    params.push(Number(limit));
+    params.push(Number(limit) || 50);
 
     const rows = db.prepare(query).all(...params);
     const transactions = rows.map((r) => ({

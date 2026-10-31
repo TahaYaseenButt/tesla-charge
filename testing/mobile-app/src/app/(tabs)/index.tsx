@@ -159,7 +159,7 @@ export default function HomeScreen() {
     });
 
     // 2. Direct Server Live Status Stream / Polling
-    const unsubscribe = subscribeToLiveStatus((data) => {
+    const unsubscribe = subscribeToLiveStatus(CHARGER_ID, (data) => {
       if (!isMounted || !data) return;
       setLoading(false);
 

@@ -14,6 +14,10 @@ export interface UserProfile {
   uid: string;
   email: string;
   displayName?: string | null;
+  stationId?: string;
+  defaultChargerId?: string;
+  defaultChargerModel?: string;
+  role?: string;
 }
 
 export interface LoginResult {
@@ -115,7 +119,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             AsyncStorage.getItem(CURRENCY_KEY),
           ]);
 
-        const activeId = storedId ? storedId.trim().toLowerCase() : 'charger1';
+        let parsedUser: UserProfile | null = null;
+        if (storedUser) {
+          try {
+            parsedUser = JSON.parse(storedUser);
+          } catch {}
+        }
+
+        // Determine active charger: prioritize user's bound stationId, then storedId
+        const boundStation = parsedUser?.stationId || parsedUser?.defaultChargerId;
+        const activeId = boundStation ? boundStation.trim().toLowerCase() : (storedId ? storedId.trim().toLowerCase() : 'charger1');
+
         if (isMounted) {
           setChargerId(activeId);
           if (storedModel) setChargerModel(storedModel);
@@ -127,14 +141,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const token = await getAuthToken();
-        if (token && storedAuth === 'true' && storedUser) {
-          try {
-            const profile = JSON.parse(storedUser);
-            if (isMounted) {
-              setUser(profile);
-              setIsAuthenticated(true);
-            }
-          } catch {}
+        if (token && storedAuth === 'true' && parsedUser) {
+          if (isMounted) {
+            setUser(parsedUser);
+            setIsAuthenticated(true);
+          }
         }
 
         await fetchRemoteConfig(activeId);
@@ -149,19 +160,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       isMounted = false;
     };
-  }, [chargerId]);
+  }, []);
 
   const login = async (emailInput: string, passInput: string, targetId?: string): Promise<LoginResult> => {
     const email = emailInput.trim();
     const password = passInput;
-    const activeId = targetId?.trim().toLowerCase() || chargerId || 'charger1';
 
     // 1. Offline admin emergency fallback
     if (email.toLowerCase() === 'admin' && password === 'admin') {
+      const activeId = targetId?.trim().toLowerCase() || 'charger1';
       const adminProfile: UserProfile = {
         uid: 'admin_local',
         email: 'admin@tesla-charge.local',
         displayName: 'Station Admin',
+        stationId: activeId,
       };
       setIsAuthenticated(true);
       setUser(adminProfile);
@@ -183,20 +195,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res && res.success && res.token) {
         await setAuthToken(res.token);
 
+        // Derive user station strictly from server mapping or fallback target
+        const userStation = (res.user.stationId || res.user.defaultChargerId || targetId || 'charger1').trim().toLowerCase();
+
         const profile: UserProfile = {
           uid: res.user.uid || res.user.id,
           email: res.user.email,
           displayName: res.user.displayName || email.split('@')[0],
+          stationId: userStation,
+          defaultChargerId: userStation,
+          role: res.user.role,
         };
 
         setIsAuthenticated(true);
         setUser(profile);
-        setChargerId(activeId);
+        setChargerId(userStation);
         setIsConfigured(true);
 
         await AsyncStorage.setItem(AUTH_KEY, 'true');
         await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
-        await AsyncStorage.setItem(CHARGER_ID_KEY, activeId);
+        await AsyncStorage.setItem(CHARGER_ID_KEY, userStation);
+
+        await fetchRemoteConfig(userStation);
 
         return { success: true, isConfigured: true };
       }
@@ -209,31 +229,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (emailInput: string, passInput: string, targetId?: string): Promise<LoginResult> => {
     const email = emailInput.trim();
     const password = passInput;
-    const activeId = targetId?.trim().toLowerCase() || chargerId || 'charger1';
+    const requestedStation = (targetId || 'charger1').trim().toLowerCase();
 
     try {
       const res = await apiRequest('/api/auth/register', {
         method: 'POST',
-        body: { email, password, displayName: email.split('@')[0] },
+        body: { email, password, displayName: email.split('@')[0], stationId: requestedStation },
       });
 
       if (res && res.success && res.token) {
         await setAuthToken(res.token);
 
+        const assignedStation = (res.user.stationId || requestedStation).trim().toLowerCase();
+
         const profile: UserProfile = {
           uid: res.user.uid || res.user.id,
           email: res.user.email,
           displayName: res.user.displayName,
+          stationId: assignedStation,
+          defaultChargerId: assignedStation,
         };
 
         setIsAuthenticated(true);
         setUser(profile);
-        setChargerId(activeId);
+        setChargerId(assignedStation);
         setIsConfigured(true);
 
         await AsyncStorage.setItem(AUTH_KEY, 'true');
         await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
-        await AsyncStorage.setItem(CHARGER_ID_KEY, activeId);
+        await AsyncStorage.setItem(CHARGER_ID_KEY, assignedStation);
+
+        await fetchRemoteConfig(assignedStation);
 
         return { success: true, isConfigured: true };
       }
@@ -246,9 +272,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setIsAuthenticated(false);
     setUser(null);
+    setChargerId('charger1');
     await setAuthToken(null);
-    await AsyncStorage.removeItem(AUTH_KEY);
-    await AsyncStorage.removeItem(USER_KEY);
+    await AsyncStorage.multiRemove([
+      AUTH_KEY,
+      USER_KEY,
+      CHARGER_ID_KEY,
+      CHARGER_MODEL_KEY,
+      LOCATION_KEY,
+      TARIFF_KEY,
+      CURRENCY_KEY,
+    ]);
   };
 
   const saveSetup = async (model: string, id: string, loc: StationLocation | null) => {
@@ -267,13 +301,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const saveTariffRate = async (rate: number, curr: string = 'PKR') => {
     const r = Math.max(0, rate);
+    const activeTarget = (chargerId || user?.stationId || 'charger1').trim().toLowerCase();
     setTariffRate(r);
     setCurrency(curr);
     await AsyncStorage.setItem(TARIFF_KEY, String(r));
     await AsyncStorage.setItem(CURRENCY_KEY, curr);
 
     try {
-      await apiRequest(`/api/chargers/${chargerId}/tariff`, {
+      await apiRequest(`/api/chargers/${encodeURIComponent(activeTarget)}/tariff`, {
         method: 'POST',
         body: { tariffRate: r },
       });

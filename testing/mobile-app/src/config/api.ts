@@ -91,23 +91,38 @@ export async function apiRequest<T = any>(
 
 /**
  * Direct Live Telemetry Stream (SSE / Polling Fallback)
+ * Supports passing target chargerId for strict tenant data isolation
  */
 export function subscribeToLiveStatus(
-  onData: (data: any) => void,
+  chargerIdOrCb: string | ((data: any) => void),
+  onDataOrErr?: ((data: any) => void) | ((err: any) => void),
   onError?: (err: any) => void
 ): () => void {
+  let cleanId = 'charger1';
+  let onData: (data: any) => void;
+  let errCb: ((err: any) => void) | undefined;
+
+  if (typeof chargerIdOrCb === 'string') {
+    cleanId = chargerIdOrCb.trim().toLowerCase() || 'charger1';
+    onData = onDataOrErr as (data: any) => void;
+    errCb = onError;
+  } else {
+    onData = chargerIdOrCb;
+    errCb = onDataOrErr as (err: any) => void;
+  }
+
   let isSubscribed = true;
   let intervalId: any = null;
 
   async function poll() {
     if (!isSubscribed) return;
     try {
-      const res = await apiRequest('/api/status', { timeoutMs: 5000 });
-      if (res && isSubscribed) {
+      const res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 5000 });
+      if (res && isSubscribed && onData) {
         onData(res);
       }
     } catch (err) {
-      if (onError && isSubscribed) onError(err);
+      if (errCb && isSubscribed) errCb(err);
     }
   }
 

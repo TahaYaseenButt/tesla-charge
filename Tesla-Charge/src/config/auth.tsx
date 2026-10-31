@@ -159,6 +159,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await AsyncStorage.setItem(CURRENCY_KEY, activeCurrency);
 
     const cleanId = chargerId?.trim().toLowerCase() || 'charger1';
+
+    // Tenant Isolation Guard: Verify user is authorized for this charger before writing to Firestore
+    if (user?.uid) {
+      try {
+        const uSnap = await getDoc(doc(db, 'users', user.uid));
+        if (uSnap.exists()) {
+          const uData = uSnap.data();
+          const assignedStation = (uData.defaultChargerId || uData.stationId || '').trim().toLowerCase();
+          if (assignedStation && assignedStation !== cleanId && uData.role !== 'admin') {
+            console.warn(`[Tenant Isolation Alert] Blocked attempt by ${user.email} to modify station [${cleanId}]. User belongs to [${assignedStation}].`);
+            return;
+          }
+        }
+      } catch (_authCheckErr) {}
+    }
+
     try {
       await setDoc(
         doc(db, 'chargers', cleanId),
@@ -265,6 +281,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         await AsyncStorage.setItem(AUTH_KEY, 'true');
         await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
+
+        // CRITICAL TENANT ISOLATION: Fetch this user's assigned defaultChargerId from Firestore
+        try {
+          const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userSnap.exists()) {
+            const uData = userSnap.data();
+            const userCharger = (uData.defaultChargerId || uData.stationId || '').trim().toLowerCase();
+            if (userCharger && isMounted) {
+              setChargerId(userCharger);
+              await AsyncStorage.setItem(CHARGER_ID_KEY, userCharger);
+              if (uData.defaultChargerModel) {
+                setChargerModel(uData.defaultChargerModel);
+                await AsyncStorage.setItem(CHARGER_MODEL_KEY, uData.defaultChargerModel);
+              }
+              setIsConfigured(true);
+              fetchRemoteConfig(userCharger);
+            }
+          }
+        } catch (_fetchErr) {}
       }
     });
 
@@ -450,8 +485,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (_) {}
     setIsAuthenticated(false);
     setUser(null);
-    await AsyncStorage.removeItem(AUTH_KEY);
-    await AsyncStorage.removeItem(USER_KEY);
+    setChargerId('charger1');
+    await AsyncStorage.multiRemove([
+      AUTH_KEY,
+      USER_KEY,
+      CHARGER_ID_KEY,
+      CHARGER_MODEL_KEY,
+      LOCATION_KEY,
+      TARIFF_KEY,
+      CURRENCY_KEY,
+    ]);
   };
 
   const saveSetup = async (model: string, id: string, loc: StationLocation | null) => {
