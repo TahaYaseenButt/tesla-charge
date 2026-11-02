@@ -952,15 +952,15 @@ const styles = StyleSheet.create({
   /* Hero Charger Image */
   heroChargerContainer: {
     width: '100%',
-    height: 380,
+    height: 420,
     justifyContent: 'center',
     alignItems: 'center',
-    marginVertical: 14,
+    marginVertical: 16,
   },
   heroChargerImage: {
     width: '100%',
-    height: 380,
-    maxWidth: 500,
+    height: '100%',
+    maxWidth: 550,
   },
 
   /* Battery Hero Card on Main Screen */
