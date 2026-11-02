@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -105,6 +105,8 @@ export default function HomeScreen() {
   const [activeTx2Data, setActiveTx2Data] = useState<any>(null);
   const [lastCompletedTx, setLastCompletedTx] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isIdentifying, setIsIdentifying] = useState(true);
+  const [isServerReachable, setIsServerReachable] = useState<boolean | null>(null);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
   const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
@@ -115,25 +117,45 @@ export default function HomeScreen() {
   const prevStatus1Ref = useRef<string | null>(null);
   const prevStatus2Ref = useRef<string | null>(null);
   const prevActiveTxIdRef = useRef<string | null>(null);
+  const mountTimeRef = useRef(Date.now());
+  const initialResolvedRef = useRef(false);
 
-  // Safety fallback: Ensure skeleton loader never hangs indefinitely if offline
+  // Initial identification resolver: ensures skeleton stays visible for minimum 1.2s
+  // so server reachability, charger connectivity, and live conditions are all calculated.
+  const resolveIdentification = useCallback(() => {
+    if (initialResolvedRef.current) return;
+    initialResolvedRef.current = true;
+
+    const MIN_IDENTIFY_MS = 1200;
+    const elapsed = Date.now() - mountTimeRef.current;
+    const remaining = Math.max(0, MIN_IDENTIFY_MS - elapsed);
+
+    setTimeout(() => {
+      setLoading(false);
+      setIsIdentifying(false);
+    }, remaining);
+  }, []);
+
+  // Safety fallback: Ensure skeleton loader never hangs indefinitely if network is completely down
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
-      setLoading(false);
-    }, 1200);
+      if (!initialResolvedRef.current) {
+        setIsServerReachable((prev) => (prev === null ? false : prev));
+        resolveIdentification();
+      }
+    }, 2500);
     return () => clearTimeout(safetyTimer);
-  }, []);
+  }, [resolveIdentification]);
 
   useEffect(() => {
     if (!CHARGER_ID || !isAuthenticated) return;
 
     let isMounted = true;
 
-    // 1. Immediately read from user local storage so UI displays in 0ms without waiting for network
+    // 1. Read from local storage in background for fallback without dismissing the skeleton
     getLocalChargerData(CHARGER_ID).then((local) => {
       if (isMounted && local) {
         setChargerData((prev: any) => prev || local);
-        setLoading(false);
       }
     });
     getLocalConnectorData(CHARGER_ID, '1').then((d) => {
@@ -159,123 +181,134 @@ export default function HomeScreen() {
     });
 
     // 2. Direct Server Live Status Stream / Polling
-    const unsubscribe = subscribeToLiveStatus(CHARGER_ID, (data) => {
-      if (!isMounted || !data) return;
-      setLoading(false);
+    const unsubscribe = subscribeToLiveStatus(
+      CHARGER_ID,
+      (data) => {
+        if (!isMounted || !data) return;
+        setIsServerReachable(true);
 
-      if (data.serverTime) {
-        const serverMs = new Date(data.serverTime).getTime();
-        if (!isNaN(serverMs)) {
-          setServerTimeOffset(serverMs - Date.now());
-        }
-      }
-
-      if (data.charger) {
-        setChargerData(data.charger);
-        saveLocalChargerData(CHARGER_ID, data.charger);
-      }
-
-      const connectorsList = Array.isArray(data.connectors) ? data.connectors : Object.values(data.connectors || {});
-      const c1 = connectorsList.find((c: any) => Number(c.connectorId) === 1);
-      const c2 = connectorsList.find((c: any) => Number(c.connectorId) === 2);
-
-      if (c1) {
-        setConnector1Data(c1);
-        saveLocalConnectorData(CHARGER_ID, '1', c1);
-        if (c1.activeTx && c1.status === 'Charging') {
-          setActiveTx1Data(c1.activeTx);
-        } else {
-          setActiveTx1Data(null);
-        }
-
-        const oldStatus1 = prevStatus1Ref.current;
-        prevStatus1Ref.current = c1.status;
-
-        if (oldStatus1 !== null && oldStatus1 !== c1.status) {
-          if (c1.status === 'Preparing') {
-            scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun A.');
-          } else if (c1.status === 'Charging') {
-            scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun A.');
-          } else if ((oldStatus1 === 'Charging' || oldStatus1 === 'Preparing') && c1.status === 'Available') {
-            scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun A.');
+        if (data.serverTime) {
+          const serverMs = new Date(data.serverTime).getTime();
+          if (!isNaN(serverMs)) {
+            setServerTimeOffset(serverMs - Date.now());
           }
         }
-      }
 
-      if (c2) {
-        setConnector2Data(c2);
-        saveLocalConnectorData(CHARGER_ID, '2', c2);
-        if (c2.activeTx && c2.status === 'Charging') {
-          setActiveTx2Data(c2.activeTx);
-        } else {
-          setActiveTx2Data(null);
+        if (data.charger) {
+          setChargerData(data.charger);
+          saveLocalChargerData(CHARGER_ID, data.charger);
         }
 
-        const oldStatus2 = prevStatus2Ref.current;
-        prevStatus2Ref.current = c2.status;
+        const connectorsList = Array.isArray(data.connectors) ? data.connectors : Object.values(data.connectors || {});
+        const c1 = connectorsList.find((c: any) => Number(c.connectorId) === 1);
+        const c2 = connectorsList.find((c: any) => Number(c.connectorId) === 2);
 
-        if (oldStatus2 !== null && oldStatus2 !== c2.status) {
-          if (c2.status === 'Preparing') {
-            scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun B.');
-          } else if (c2.status === 'Charging') {
-            scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun B.');
-          } else if ((oldStatus2 === 'Charging' || oldStatus2 === 'Preparing') && c2.status === 'Available') {
-            scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun B.');
+        if (c1) {
+          setConnector1Data(c1);
+          saveLocalConnectorData(CHARGER_ID, '1', c1);
+          if (c1.activeTx && c1.status === 'Charging') {
+            setActiveTx1Data(c1.activeTx);
+          } else {
+            setActiveTx1Data(null);
+          }
+
+          const oldStatus1 = prevStatus1Ref.current;
+          prevStatus1Ref.current = c1.status;
+
+          if (oldStatus1 !== null && oldStatus1 !== c1.status) {
+            if (c1.status === 'Preparing') {
+              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun A.');
+            } else if (c1.status === 'Charging') {
+              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun A.');
+            } else if ((oldStatus1 === 'Charging' || oldStatus1 === 'Preparing') && c1.status === 'Available') {
+              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun A.');
+            }
           }
         }
-      }
 
-      const active = data.activeTransaction || c1?.activeTx || c2?.activeTx;
-      if (active && (active.status === 'Charging' || Number(active.currentPowerKw || 0) > 0)) {
-        const primaryTx = (c2?.status === 'Charging' && active.connector_id === 2)
-          ? active
-          : (c1?.status === 'Charging' && active.connector_id === 1)
-          ? active
-          : active;
-        setActiveTxData(primaryTx);
-        saveLocalActiveTx(CHARGER_ID, primaryTx);
+        if (c2) {
+          setConnector2Data(c2);
+          saveLocalConnectorData(CHARGER_ID, '2', c2);
+          if (c2.activeTx && c2.status === 'Charging') {
+            setActiveTx2Data(c2.activeTx);
+          } else {
+            setActiveTx2Data(null);
+          }
 
-        // Notify when a new active transaction ID appears
-        const txIdStr = String(primaryTx.transactionId || primaryTx.transaction_id || primaryTx.id || '');
-        if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
-          prevActiveTxIdRef.current = txIdStr;
-          const gunLabel = Number(primaryTx.connectorId || primaryTx.connector_id) === 2 ? 'Gun B' : 'Gun A';
-          scheduleLocalNotification('⚡ Charging Started', `Vehicle started charging on ${gunLabel} (Session #${txIdStr}).`);
-        }
-      } else {
-        if (prevActiveTxIdRef.current) {
-          prevActiveTxIdRef.current = null;
-          scheduleLocalNotification('✅ Charging Completed', 'Charging session has finished.');
-        }
-        setActiveTxData(null);
-      }
+          const oldStatus2 = prevStatus2Ref.current;
+          prevStatus2Ref.current = c2.status;
 
-      if (data.lastCompletedTx) {
-        const done = data.lastCompletedTx;
-        const doneId = String(done.transaction_id || done.transactionId || done.id || '');
-        if (doneId !== '275384' && doneId !== '72089') {
-          const formatted = {
-            id: doneId,
-            transactionId: doneId,
-            connectorId: done.connector_id || done.connectorId || 1,
-            energyDeliveredKwh: done.energy_kwh ?? done.energyDeliveredKwh ?? 0,
-            cost: done.cost ?? 0,
-            startTime: done.start_time || done.startTime,
-            stopTime: done.stop_time || done.stopTime,
-            status: done.status || 'Completed',
-            idTag: done.id_tag || done.idTag || '',
-          };
-          setLastCompletedTx(formatted);
-          mergeLocalTransaction(CHARGER_ID, formatted, user?.uid);
+          if (oldStatus2 !== null && oldStatus2 !== c2.status) {
+            if (c2.status === 'Preparing') {
+              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun B.');
+            } else if (c2.status === 'Charging') {
+              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun B.');
+            } else if ((oldStatus2 === 'Charging' || oldStatus2 === 'Preparing') && c2.status === 'Available') {
+              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun B.');
+            }
+          }
         }
+
+        const active = data.activeTransaction || c1?.activeTx || c2?.activeTx;
+        if (active && (active.status === 'Charging' || Number(active.currentPowerKw || 0) > 0)) {
+          const primaryTx = (c2?.status === 'Charging' && active.connector_id === 2)
+            ? active
+            : (c1?.status === 'Charging' && active.connector_id === 1)
+            ? active
+            : active;
+          setActiveTxData(primaryTx);
+          saveLocalActiveTx(CHARGER_ID, primaryTx);
+
+          // Notify when a new active transaction ID appears
+          const txIdStr = String(primaryTx.transactionId || primaryTx.transaction_id || primaryTx.id || '');
+          if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
+            prevActiveTxIdRef.current = txIdStr;
+            const gunLabel = Number(primaryTx.connectorId || primaryTx.connector_id) === 2 ? 'Gun B' : 'Gun A';
+            scheduleLocalNotification('⚡ Charging Started', `Vehicle started charging on ${gunLabel} (Session #${txIdStr}).`);
+          }
+        } else {
+          if (prevActiveTxIdRef.current) {
+            prevActiveTxIdRef.current = null;
+            scheduleLocalNotification('✅ Charging Completed', 'Charging session has finished.');
+          }
+          setActiveTxData(null);
+        }
+
+        if (data.lastCompletedTx) {
+          const done = data.lastCompletedTx;
+          const doneId = String(done.transaction_id || done.transactionId || done.id || '');
+          if (doneId !== '275384' && doneId !== '72089') {
+            const formatted = {
+              id: doneId,
+              transactionId: doneId,
+              connectorId: done.connector_id || done.connectorId || 1,
+              energyDeliveredKwh: done.energy_kwh ?? done.energyDeliveredKwh ?? 0,
+              cost: done.cost ?? 0,
+              startTime: done.start_time || done.startTime,
+              stopTime: done.stop_time || done.stopTime,
+              status: done.status || 'Completed',
+              idTag: done.id_tag || done.idTag || '',
+            };
+            setLastCompletedTx(formatted);
+            mergeLocalTransaction(CHARGER_ID, formatted, user?.uid);
+          }
+        }
+
+        // Live calculation finished -> resolve identification on the skeleton
+        resolveIdentification();
+      },
+      (err) => {
+        if (!isMounted) return;
+        setIsServerReachable(false);
+        resolveIdentification();
       }
-    });
+    );
 
     return () => {
       isMounted = false;
       unsubscribe();
     };
-  }, [CHARGER_ID, isAuthenticated, user?.uid]);
+  }, [CHARGER_ID, isAuthenticated, user?.uid, resolveIdentification]);
 
   // 30kW single-gun detection
   const is30kW =
@@ -292,11 +325,14 @@ export default function HomeScreen() {
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
-  // Track true Firebase server time with 300s tolerance (or always active if plugged in or simulating)
+  // Track true server connectivity and charger online status
   const nowServer = Date.now() + serverTimeOffset;
   const lastHbTime = chargerData?.lastHeartbeat ? new Date(chargerData.lastHeartbeat).getTime() : 0;
-  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : true;
-  const isOnline = isSimulating || ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged));
+  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : (chargerData?.status === 'Online');
+  const isOnline = isSimulating || (
+    isServerReachable !== false &&
+    ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged))
+  );
 
   const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
   const status2 = (isOnline || isGunBPlugged) && !is30kW ? rawStatus2 : 'Unavailable';
@@ -521,7 +557,7 @@ export default function HomeScreen() {
     return <Redirect href="/setup" />;
   }
 
-  if (loading && !chargerData) {
+  if (isIdentifying) {
     return <DashboardSkeleton isSingleGun={is30kW} />;
   }
 
@@ -684,6 +720,13 @@ export default function HomeScreen() {
                 <Text style={styles.priceHeroVal}>{Number(totalCost.replace(/,/g, '')) > 0 ? totalCost : 'READY'}</Text>
                 <Text style={styles.priceHeroCurr}>
                   {Number(totalCost.replace(/,/g, '')) > 0 ? `${curr} (session)` : 'PLUGGED IN • READY TO CHARGE'}
+                </Text>
+              </View>
+            ) : !isOnline ? (
+              <View style={styles.priceHeroColumn}>
+                <Text style={styles.priceHeroVal}>OFFLINE</Text>
+                <Text style={styles.priceHeroCurr}>
+                  {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
                 </Text>
               </View>
             ) : lastSessionCost > 0 ? (
