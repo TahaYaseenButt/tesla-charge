@@ -521,28 +521,6 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
-        {/* What's New Box */}
-        <View style={styles.whatsNewBox}>
-          <View style={styles.whatsNewHeader}>
-            <Text style={styles.whatsNewTitle}>What's New in v{appVersion}</Text>
-            <View style={styles.whatsNewTag}>
-              <Text style={styles.whatsNewTagText}>OTA LATEST</Text>
-            </View>
-          </View>
-          <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>👆</Text>
-            <Text style={styles.changeText}>Slide on screen to switch tabs</Text>
-          </View>
-          <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>⚡</Text>
-            <Text style={styles.changeText}>Startup server & charger condition identification</Text>
-          </View>
-          <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>📊</Text>
-            <Text style={styles.changeText}>Minimalist revenue & session breakdown</Text>
-          </View>
-        </View>
-
         {updateReady ? (
           <TouchableOpacity
             style={[styles.updateBtn, styles.restartBtn]}

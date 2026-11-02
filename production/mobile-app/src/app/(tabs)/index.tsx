@@ -25,6 +25,7 @@ import {
 } from '@/services/storage';
 import { DashboardSkeleton } from '@/components/skeleton';
 import { useSimulator } from '@/config/simulator';
+import { SimulatorModal } from '@/components/SimulatorModal';
 import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 import {
   ElectricFlowPulse,
@@ -119,6 +120,7 @@ export default function HomeScreen() {
 
   // In-app UI Simulator hook for desk testing without physical cars
   const { scenario, isSimulating, gunA: simGunA, gunB: simGunB } = useSimulator();
+  const [simModalVisible, setSimModalVisible] = useState(false);
 
   const prevStatus1Ref = useRef<string | null>(null);
   const prevStatus2Ref = useRef<string | null>(null);
@@ -570,7 +572,7 @@ export default function HomeScreen() {
   return (
     <SwipeableTabScreen currentTab="index">
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID */}
+      {/* Header: Station ID & Test UI */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Image
@@ -580,6 +582,14 @@ export default function HomeScreen() {
           />
           <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.testUiBtn}
+          onPress={() => setSimModalVisible(true)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.testUiBtnText}>🧪 Test UI</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Prominent Hero Image */}
@@ -746,12 +756,9 @@ export default function HomeScreen() {
             ) : !isOnline ? (
               <View style={styles.priceHeroColumn}>
                 <Text style={styles.priceHeroVal}>OFFLINE</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                  <ReconnectionHeartbeat color={isServerReachable === false ? '#EF4444' : '#94A3B8'} />
-                  <Text style={styles.priceHeroCurr}>
-                    {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
-                  </Text>
-                </View>
+                <Text style={styles.priceHeroCurr}>
+                  {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
+                </Text>
               </View>
             ) : lastSessionCost > 0 ? (
               <View style={styles.priceHeroColumn}>
@@ -892,6 +899,8 @@ export default function HomeScreen() {
         </View>
       )}
 
+      {/* UI Test Simulator Modal for Testing without physical cars */}
+      <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
     </ScrollView>
     </SwipeableTabScreen>
   );
@@ -919,6 +928,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
     marginBottom: 14,
+  },
+  testUiBtn: {
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  testUiBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   headerLogo: {
     width: 32,
