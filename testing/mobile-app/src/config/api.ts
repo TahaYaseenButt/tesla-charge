@@ -119,7 +119,16 @@ export function subscribeToLiveStatus(
     try {
       const res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 5000 });
       if (res && isSubscribed && onData) {
-        onData(res);
+        const live = res.live || {};
+        const normalized = {
+          ...res,
+          charger: res.charger || live.charger,
+          connectors: res.connectors || live.connectors,
+          activeTransaction: res.activeTransaction || live.activeTransaction,
+          lastCompletedTx: res.lastCompletedTx || live.lastCompletedTx,
+          isConnected: res.isConnected ?? (res.status === 'Online' || live.charger?.status === 'Online'),
+        };
+        onData(normalized);
       }
     } catch (err) {
       if (errCb && isSubscribed) errCb(err);

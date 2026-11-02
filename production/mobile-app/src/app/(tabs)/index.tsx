@@ -114,6 +114,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [isIdentifying, setIsIdentifying] = useState(true);
   const [isServerReachable, setIsServerReachable] = useState<boolean | null>(null);
+  const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(true);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
   const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
@@ -144,6 +145,8 @@ export default function HomeScreen() {
     }, remaining);
   }, []);
 
+  const consecutiveFailuresRef = useRef(0);
+
   // Safety fallback: Ensure skeleton loader never hangs indefinitely if network is completely down
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
@@ -151,7 +154,7 @@ export default function HomeScreen() {
         setIsServerReachable((prev) => (prev === null ? false : prev));
         resolveIdentification();
       }
-    }, 2500);
+    }, 4500);
     return () => clearTimeout(safetyTimer);
   }, [resolveIdentification]);
 
@@ -193,7 +196,10 @@ export default function HomeScreen() {
       CHARGER_ID,
       (data) => {
         if (!isMounted || !data) return;
+        consecutiveFailuresRef.current = 0;
         setIsServerReachable(true);
+
+        const live = data.live || {};
 
         if (data.serverTime) {
           const serverMs = new Date(data.serverTime).getTime();
@@ -202,12 +208,22 @@ export default function HomeScreen() {
           }
         }
 
-        if (data.charger) {
-          setChargerData(data.charger);
-          saveLocalChargerData(CHARGER_ID, data.charger);
+        const charger = data.charger || live.charger;
+        if (charger) {
+          setChargerData(charger);
+          saveLocalChargerData(CHARGER_ID, charger);
         }
 
-        const connectorsList = Array.isArray(data.connectors) ? data.connectors : Object.values(data.connectors || {});
+        if (typeof data.isConnected === 'boolean') {
+          setIsWebSocketConnected(data.isConnected);
+        } else if (charger?.status) {
+          setIsWebSocketConnected(charger.status === 'Online');
+        }
+
+        const rawConnectors = data.connectors || live.connectors;
+        const connectorsList = Array.isArray(rawConnectors)
+          ? rawConnectors
+          : Object.values(rawConnectors || {});
         const c1 = connectorsList.find((c: any) => Number(c.connectorId) === 1);
         const c2 = connectorsList.find((c: any) => Number(c.connectorId) === 2);
 
@@ -257,7 +273,7 @@ export default function HomeScreen() {
           }
         }
 
-        const active = data.activeTransaction || c1?.activeTx || c2?.activeTx;
+        const active = data.activeTransaction || live.activeTransaction || c1?.activeTx || c2?.activeTx;
         if (active && (active.status === 'Charging' || Number(active.currentPowerKw || 0) > 0)) {
           const primaryTx = (c2?.status === 'Charging' && active.connector_id === 2)
             ? active
@@ -282,8 +298,9 @@ export default function HomeScreen() {
           setActiveTxData(null);
         }
 
-        if (data.lastCompletedTx) {
-          const done = data.lastCompletedTx;
+        const completed = data.lastCompletedTx || live.lastCompletedTx;
+        if (completed) {
+          const done = completed;
           const doneId = String(done.transaction_id || done.transactionId || done.id || '');
           if (doneId !== '275384' && doneId !== '72089') {
             const formatted = {
@@ -307,7 +324,10 @@ export default function HomeScreen() {
       },
       (err) => {
         if (!isMounted) return;
-        setIsServerReachable(false);
+        consecutiveFailuresRef.current += 1;
+        if (consecutiveFailuresRef.current >= 3) {
+          setIsServerReachable(false);
+        }
         resolveIdentification();
       }
     );
@@ -334,12 +354,9 @@ export default function HomeScreen() {
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
   // Track true server connectivity and charger online status
-  const nowServer = Date.now() + serverTimeOffset;
-  const lastHbTime = chargerData?.lastHeartbeat ? new Date(chargerData.lastHeartbeat).getTime() : 0;
-  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : (chargerData?.status === 'Online');
   const isOnline = isSimulating || (
     isServerReachable !== false &&
-    ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged))
+    (isWebSocketConnected || chargerData?.status === 'Online' || isActivelyEngaged)
   );
 
   const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
@@ -936,6 +953,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    marginRight: 40,
   },
   testUiBtnText: {
     fontSize: 12,
