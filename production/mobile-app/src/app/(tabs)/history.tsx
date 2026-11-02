@@ -17,6 +17,7 @@ import {
   saveLocalTransactions,
 } from '@/services/storage';
 import { HistorySkeleton } from '@/components/skeleton';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
 type FilterMode = 'today' | 'day' | 'range' | 'month';
 
@@ -280,9 +281,10 @@ export default function HistoryScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
+    <SwipeableTabScreen currentTab="history">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -645,6 +647,7 @@ export default function HistoryScreen() {
 
       <View style={{ height: 60 }} />
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

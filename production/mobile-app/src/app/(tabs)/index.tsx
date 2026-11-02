@@ -25,6 +25,7 @@ import {
 } from '@/services/storage';
 import { DashboardSkeleton } from '@/components/skeleton';
 import { useSimulator } from '@/config/simulator';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
@@ -525,7 +526,8 @@ export default function HomeScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <SwipeableTabScreen currentTab="index">
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Header: Station ID */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -814,6 +816,7 @@ export default function HomeScreen() {
       )}
 
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

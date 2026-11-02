@@ -15,6 +15,7 @@ import {
   getLocalTransactions,
   saveLocalTransactions,
 } from '@/services/storage';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
 type TimeFilter = 'today' | 'week' | 'month' | 'year' | 'all';
 
@@ -339,9 +340,10 @@ export default function RevenueScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
+    <SwipeableTabScreen currentTab="revenue">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -535,6 +537,7 @@ export default function RevenueScreen() {
         </View>
       )}
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

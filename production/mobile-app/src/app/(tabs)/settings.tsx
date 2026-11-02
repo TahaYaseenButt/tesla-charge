@@ -16,6 +16,7 @@ import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { apiRequest } from '@/config/api';
 import { useAuth } from '@/config/auth';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 import {
   isNfcSupported,
   isNfcEnabled,
@@ -317,9 +318,10 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
+    <SwipeableTabScreen currentTab="settings">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
       {/* Header */}
@@ -707,6 +709,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 
