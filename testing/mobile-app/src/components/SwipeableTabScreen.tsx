@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from 'react';
-import { View, PanResponder, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import React, { useMemo, useRef, useEffect } from 'react';
+import { View, PanResponder, StyleSheet, StyleProp, ViewStyle, Animated, Easing } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/config/auth';
 import { useChargerLive } from '@/hooks/useChargerLive';
@@ -18,6 +18,19 @@ export function SwipeableTabScreen({ currentTab, children, style }: SwipeableTab
   const { hasAnyGunConnected } = useChargerLive(CHARGER_ID);
 
   const lastSwipeTimeRef = useRef(0);
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(0.92)).current;
+
+  // Mount animation for screen entry
+  useEffect(() => {
+    fadeAnim.setValue(0.92);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }, [currentTab, fadeAnim]);
 
   const tabs: TabName[] = useMemo(() => {
     if (hasAnyGunConnected) {
@@ -51,6 +64,15 @@ export function SwipeableTabScreen({ currentTab, children, style }: SwipeableTab
           return dx > 25 && dx > dy * 1.5;
         },
 
+        onPanResponderGrant: () => {
+          slideAnim.setValue(0);
+        },
+
+        onPanResponderMove: (_, gestureState) => {
+          // Dampen drag translation
+          slideAnim.setValue(gestureState.dx * 0.25);
+        },
+
         onPanResponderTerminationRequest: () => false,
 
         onPanResponderRelease: (_, gestureState) => {
@@ -59,14 +81,29 @@ export function SwipeableTabScreen({ currentTab, children, style }: SwipeableTab
           const SWIPE_THRESHOLD = 40;
           const VELOCITY_THRESHOLD = 0.2;
 
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            friction: 7,
+            tension: 80,
+            useNativeDriver: true,
+          }).start();
+
           if (dx < -SWIPE_THRESHOLD || (dx < -15 && vx < -VELOCITY_THRESHOLD)) {
             triggerSwipe('next');
           } else if (dx > SWIPE_THRESHOLD || (dx > 15 && vx > VELOCITY_THRESHOLD)) {
             triggerSwipe('prev');
           }
         },
+        onPanResponderTerminate: () => {
+          Animated.spring(slideAnim, {
+            toValue: 0,
+            friction: 7,
+            tension: 80,
+            useNativeDriver: true,
+          }).start();
+        },
       }),
-    [currentIndex, tabs]
+    [currentIndex, tabs, slideAnim]
   );
 
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
@@ -107,14 +144,21 @@ export function SwipeableTabScreen({ currentTab, children, style }: SwipeableTab
   };
 
   return (
-    <View
-      style={[styles.container, style]}
+    <Animated.View
+      style={[
+        styles.container,
+        style,
+        {
+          opacity: fadeAnim,
+          transform: [{ translateX: slideAnim }],
+        },
+      ]}
       {...panResponder.panHandlers}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       {children}
-    </View>
+    </Animated.View>
   );
 }
 
