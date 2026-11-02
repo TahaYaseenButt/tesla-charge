@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,9 +14,9 @@ import {
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { apiRequest } from '@/config/api';
 import { useAuth } from '@/config/auth';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 import {
   isNfcSupported,
   isNfcEnabled,
@@ -75,37 +75,35 @@ export default function SettingsScreen() {
   const [updateStatusText, setUpdateStatusText] = useState<string | null>(null);
   const [updateReady, setUpdateReady] = useState<boolean>(false);
 
-  // Real-time synchronization of authorized RFID / NFC cards for this station
-  useEffect(() => {
+  // Fetch authorized RFID / NFC cards from server for this station
+  const loadCards = useCallback(async () => {
     setLoadingCards(true);
-    const colRef = collection(db, 'chargers', CHARGER_ID, 'rfidTags');
-    const unsubscribe = onSnapshot(
-      colRef,
-      (snapshot) => {
-        const cards: RfidCardItem[] = [];
-        snapshot.forEach((docSnap) => {
-          const d = docSnap.data();
-          const tagId = d.idTag || docSnap.id;
-          cards.push({
+    try {
+      const res = await apiRequest(`/api/chargers/${CHARGER_ID}/rfid-tags`);
+      if (res && res.tags) {
+        const cards: RfidCardItem[] = res.tags.map((t: any) => {
+          const tagId = t.tag_id || t.idTag;
+          return {
             idTag: tagId,
-            formattedUid: d.formattedUid || (tagId.match(/.{1,2}/g)?.join(':') ?? tagId),
-            label: d.label || 'Driver RFID Card',
-            status: d.status || 'Accepted',
-            createdAt: d.createdAt,
-            techType: d.techType || 'ISO 14443-A',
-          });
+            formattedUid: t.formatted_uid || (tagId.match(/.{1,2}/g)?.join(':') ?? tagId),
+            label: t.user_email || 'Driver RFID Card',
+            status: t.status || 'Accepted',
+            createdAt: t.created_at,
+            techType: 'ISO 14443-A',
+          };
         });
         setRfidCards(cards);
-        setLoadingCards(false);
-      },
-      (err) => {
-        console.warn('Notice loading RFID tags:', err.message);
-        setLoadingCards(false);
       }
-    );
-
-    return () => unsubscribe();
+    } catch (err: any) {
+      console.warn('Notice loading RFID tags:', err.message);
+    } finally {
+      setLoadingCards(false);
+    }
   }, [CHARGER_ID]);
+
+  useEffect(() => {
+    loadCards();
+  }, [loadCards]);
 
   const handleOpenNfcModal = async () => {
     setScannedCard(null);
@@ -194,14 +192,16 @@ export default function SettingsScreen() {
         techType: scannedCard.techType || 'ISO 14443-A',
       };
 
-      // 1. Save to charger-specific authorized cards list
-      await setDoc(doc(db, 'chargers', CHARGER_ID, 'rfidTags', scannedCard.idTag), tagData, {
-        merge: true,
+      // Save card directly to the server database
+      await apiRequest(`/api/chargers/${CHARGER_ID}/rfid-tags`, {
+        method: 'POST',
+        body: {
+          tagId: scannedCard.idTag,
+          userEmail: cardLabel.trim() || user?.email || 'Driver Card',
+        },
       });
 
-      // 2. Save to global authorizedTags collection so OCPP server authorizes swipes
-      await setDoc(doc(db, 'authorizedTags', scannedCard.idTag), tagData, { merge: true });
-
+      await loadCards();
       setModalVisible(false);
       setScannedCard(null);
 
@@ -227,8 +227,10 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'chargers', CHARGER_ID, 'rfidTags', tagId));
-              await deleteDoc(doc(db, 'authorizedTags', tagId));
+              await apiRequest(`/api/chargers/${CHARGER_ID}/rfid-tags/${tagId}`, {
+                method: 'DELETE',
+              });
+              await loadCards();
             } catch (err: any) {
               Alert.alert('Error', err.message || 'Could not revoke card.');
             }
@@ -264,7 +266,7 @@ export default function SettingsScreen() {
         setUpdateStatusText('Update ready to install');
         Alert.alert(
           'Update Ready',
-          `A new update (v1.0.1) has been downloaded.\n\nWhat's New:\n• Over-The-Air instant updates active & verified\n• Real-time dual 22kW connector sync\n• PKR electricity tariff precision\n\nRestart now to apply?`,
+          `A new update has been downloaded.\n\nWhat's New:\n• Slide on screen to switch tabs\n• Startup server & charger condition calculation\n• Minimalist revenue & session breakdown\n\nRestart now to apply?`,
           [
             { text: 'Later', style: 'cancel' },
             {
@@ -316,9 +318,10 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
+    <SwipeableTabScreen currentTab="settings">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
       {/* Header */}
@@ -510,20 +513,20 @@ export default function SettingsScreen() {
           <View style={styles.whatsNewHeader}>
             <Text style={styles.whatsNewTitle}>What's New in v{appVersion}</Text>
             <View style={styles.whatsNewTag}>
-              <Text style={styles.whatsNewTagText}>OTA UPDATE</Text>
+              <Text style={styles.whatsNewTagText}>OTA LATEST</Text>
             </View>
           </View>
           <View style={styles.changeItem}>
+            <Text style={styles.changeBullet}>👆</Text>
+            <Text style={styles.changeText}>Slide on screen to switch tabs</Text>
+          </View>
+          <View style={styles.changeItem}>
             <Text style={styles.changeBullet}>⚡</Text>
-            <Text style={styles.changeText}>Over-The-Air instant updates verified</Text>
+            <Text style={styles.changeText}>Startup server & charger condition identification</Text>
           </View>
           <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>🔌</Text>
-            <Text style={styles.changeText}>Real-time dual 22kW connector sync</Text>
-          </View>
-          <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>🇵🇰</Text>
-            <Text style={styles.changeText}>PKR electricity tariff precision</Text>
+            <Text style={styles.changeBullet}>📊</Text>
+            <Text style={styles.changeText}>Minimalist revenue & session breakdown</Text>
           </View>
         </View>
 
@@ -706,6 +709,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

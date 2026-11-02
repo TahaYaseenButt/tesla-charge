@@ -266,7 +266,7 @@ export default function SettingsScreen() {
         setUpdateStatusText('Update ready to install');
         Alert.alert(
           'Update Ready',
-          `A new update (v1.0.1) has been downloaded.\n\nWhat's New:\n• Over-The-Air instant updates active & verified\n• Dual 22kW connector sync\n• PKR electricity tariff precision\n\nRestart now to apply?`,
+          `A new update has been downloaded.\n\nWhat's New:\n• Slide on screen to switch tabs\n• Startup server & charger condition calculation\n• Minimalist revenue & session breakdown\n\nRestart now to apply?`,
           [
             { text: 'Later', style: 'cancel' },
             {
@@ -513,20 +513,20 @@ export default function SettingsScreen() {
           <View style={styles.whatsNewHeader}>
             <Text style={styles.whatsNewTitle}>What's New in v{appVersion}</Text>
             <View style={styles.whatsNewTag}>
-              <Text style={styles.whatsNewTagText}>OTA UPDATE</Text>
+              <Text style={styles.whatsNewTagText}>OTA LATEST</Text>
             </View>
           </View>
           <View style={styles.changeItem}>
+            <Text style={styles.changeBullet}>👆</Text>
+            <Text style={styles.changeText}>Slide on screen to switch tabs</Text>
+          </View>
+          <View style={styles.changeItem}>
             <Text style={styles.changeBullet}>⚡</Text>
-            <Text style={styles.changeText}>Over-The-Air instant updates verified</Text>
+            <Text style={styles.changeText}>Startup server & charger condition identification</Text>
           </View>
           <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>🔌</Text>
-            <Text style={styles.changeText}>Dual 22kW connector sync</Text>
-          </View>
-          <View style={styles.changeItem}>
-            <Text style={styles.changeBullet}>🇵🇰</Text>
-            <Text style={styles.changeText}>PKR electricity tariff precision</Text>
+            <Text style={styles.changeBullet}>📊</Text>
+            <Text style={styles.changeText}>Minimalist revenue & session breakdown</Text>
           </View>
         </View>
 
