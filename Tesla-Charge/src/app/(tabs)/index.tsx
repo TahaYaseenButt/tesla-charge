@@ -904,7 +904,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'ios' ? 56 : 36,
+    paddingTop: Platform.OS === 'ios' ? 64 : 50,
     paddingBottom: 40,
   },
   loadingContainer: {
@@ -917,11 +917,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginTop: 8,
+    marginBottom: 14,
   },
   headerLogo: {
-    width: 26,
-    height: 26,
+    width: 32,
+    height: 32,
   },
   stationId: {
     fontSize: 20,
@@ -951,14 +952,14 @@ const styles = StyleSheet.create({
   /* Hero Charger Image */
   heroChargerContainer: {
     width: '100%',
-    height: 320,
+    height: 380,
     justifyContent: 'center',
     alignItems: 'center',
-    marginVertical: 8,
+    marginVertical: 14,
   },
   heroChargerImage: {
     width: '100%',
-    height: 320,
+    height: 380,
     maxWidth: 500,
   },
 
