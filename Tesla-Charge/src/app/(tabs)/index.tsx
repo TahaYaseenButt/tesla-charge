@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,9 @@ import {
   Image,
   TouchableOpacity,
 } from 'react-native';
-import { ref, onValue } from 'firebase/database';
-import { doc, onSnapshot, collection, query, orderBy, limit } from 'firebase/firestore';
 import { router, Redirect } from 'expo-router';
-import { rtdb, db, livePath, fetchFirestoreDoc } from '@/config/firebase';
+import { subscribeToLiveStatus } from '@/config/api';
+import { scheduleLocalNotification } from '@/services/notifications';
 import { useAuth } from '@/config/auth';
 import {
   getLocalChargerData,
@@ -26,7 +25,7 @@ import {
 } from '@/services/storage';
 import { DashboardSkeleton } from '@/components/skeleton';
 import { useSimulator } from '@/config/simulator';
-import { SimulatorModal, SimulatorButton } from '@/components/SimulatorModal';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
 const STATE_IMAGES = {
   idle: require('@/assets/images/states/state_idle.png'),
@@ -88,6 +87,7 @@ export default function HomeScreen() {
     chargerModel,
     stationLocation,
     isAuthenticated,
+    isConfigured,
     isLoading: authLoading,
     user,
     logout,
@@ -95,7 +95,7 @@ export default function HomeScreen() {
     currency,
   } = useAuth();
 
-  const CHARGER_ID = configuredId || 'charger1';
+  const CHARGER_ID = configuredId || '';
 
   const [chargerData, setChargerData] = useState<any>(null);
   const [connector1Data, setConnector1Data] = useState<any>(null);
@@ -105,61 +105,70 @@ export default function HomeScreen() {
   const [activeTx2Data, setActiveTx2Data] = useState<any>(null);
   const [lastCompletedTx, setLastCompletedTx] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isIdentifying, setIsIdentifying] = useState(true);
+  const [isServerReachable, setIsServerReachable] = useState<boolean | null>(null);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
   const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
 
   // In-app UI Simulator hook for desk testing without physical cars
   const { scenario, isSimulating, gunA: simGunA, gunB: simGunB } = useSimulator();
-  const [simModalVisible, setSimModalVisible] = useState(false);
 
-  // Fix Issue 4: Track true Firebase server time offset so clock drifts never wrongly show station offline
-  useEffect(() => {
-    const offsetRef = ref(rtdb, '.info/serverTimeOffset');
-    const unsubOffset = onValue(offsetRef, (snap) => {
-      setServerTimeOffset(snap.val() || 0);
-    });
-    return () => unsubOffset();
+  const prevStatus1Ref = useRef<string | null>(null);
+  const prevStatus2Ref = useRef<string | null>(null);
+  const prevActiveTxIdRef = useRef<string | null>(null);
+  const mountTimeRef = useRef(Date.now());
+  const initialResolvedRef = useRef(false);
+
+  // Initial identification resolver: ensures skeleton stays visible for minimum 1.2s
+  // so server reachability, charger connectivity, and live conditions are all calculated.
+  const resolveIdentification = useCallback(() => {
+    if (initialResolvedRef.current) return;
+    initialResolvedRef.current = true;
+
+    const MIN_IDENTIFY_MS = 1200;
+    const elapsed = Date.now() - mountTimeRef.current;
+    const remaining = Math.max(0, MIN_IDENTIFY_MS - elapsed);
+
+    setTimeout(() => {
+      setLoading(false);
+      setIsIdentifying(false);
+    }, remaining);
   }, []);
 
-  // Safety fallback: Ensure skeleton loader never hangs indefinitely if offline
+  // Safety fallback: Ensure skeleton loader never hangs indefinitely if network is completely down
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
-      setLoading(false);
-    }, 1200);
+      if (!initialResolvedRef.current) {
+        setIsServerReachable((prev) => (prev === null ? false : prev));
+        resolveIdentification();
+      }
+    }, 2500);
     return () => clearTimeout(safetyTimer);
-  }, []);
+  }, [resolveIdentification]);
 
   useEffect(() => {
     if (!CHARGER_ID || !isAuthenticated) return;
 
-    // Static setup info (model, vendor, location) from Firestore; live fields come from RTDB
-    let staticInfo: Record<string, any> = {};
-    let liveInfo: Record<string, any> = {};
-    const publishCharger = () => {
-      const merged = { ...staticInfo, ...liveInfo };
-      setChargerData(merged);
-      saveLocalChargerData(CHARGER_ID, merged);
-    };
+    let isMounted = true;
 
-    // 1. Immediately read from user local storage so UI displays in 0ms without waiting for network
+    // 1. Read from local storage in background for fallback without dismissing the skeleton
     getLocalChargerData(CHARGER_ID).then((local) => {
-      if (local) {
+      if (isMounted && local) {
         setChargerData((prev: any) => prev || local);
-        setLoading(false);
       }
     });
     getLocalConnectorData(CHARGER_ID, '1').then((d) => {
-      if (d) setConnector1Data((prev: any) => prev || d);
+      if (isMounted && d) setConnector1Data((prev: any) => prev || d);
     });
     getLocalConnectorData(CHARGER_ID, '2').then((d) => {
-      if (d) setConnector2Data((prev: any) => prev || d);
+      if (isMounted && d) setConnector2Data((prev: any) => prev || d);
     });
     getLocalActiveTx(CHARGER_ID).then((tx) => {
-      if (tx && tx.status === 'Charging') setActiveTxData((prev: any) => prev || tx);
+      if (isMounted && tx && tx.status === 'Charging') setActiveTxData((prev: any) => prev || tx);
     });
     getLocalTransactions(CHARGER_ID, user?.uid).then((list) => {
-      if (list && list.length > 0) {
+      if (isMounted && list && list.length > 0) {
         const valid = list.find((tx: any) => {
           const id = String(tx.transactionId || tx.id || '').trim();
           if (id === '275384' || id === '72089') return false;
@@ -171,244 +180,135 @@ export default function HomeScreen() {
       }
     });
 
-    // 2. Initial fetch via HTTPS REST for charger and connectors (fast startup & fallback)
-    fetchFirestoreDoc('chargers', CHARGER_ID)
-      .then((data) => {
-        if (data) {
-          const { status: st, lastHeartbeat: hb, ...rest } = data;
-          staticInfo = rest;
-          if (!liveInfo.status && st) {
-            liveInfo = { status: st, lastHeartbeat: hb || null };
-          }
-          publishCharger();
-          setLoading(false);
-        }
-      })
-      .catch(() => {});
+    // 2. Direct Server Live Status Stream / Polling
+    const unsubscribe = subscribeToLiveStatus(
+      CHARGER_ID,
+      (data) => {
+        if (!isMounted || !data) return;
+        setIsServerReachable(true);
 
-    fetchFirestoreDoc(`chargers/${CHARGER_ID}/connectors`, '1')
-      .then((c1) => {
+        if (data.serverTime) {
+          const serverMs = new Date(data.serverTime).getTime();
+          if (!isNaN(serverMs)) {
+            setServerTimeOffset(serverMs - Date.now());
+          }
+        }
+
+        if (data.charger) {
+          setChargerData(data.charger);
+          saveLocalChargerData(CHARGER_ID, data.charger);
+        }
+
+        const connectorsList = Array.isArray(data.connectors) ? data.connectors : Object.values(data.connectors || {});
+        const c1 = connectorsList.find((c: any) => Number(c.connectorId) === 1);
+        const c2 = connectorsList.find((c: any) => Number(c.connectorId) === 2);
+
         if (c1) {
-          setConnector1Data((prev: any) => prev || c1);
-          if (c1.activeTx && c1.status === 'Charging') setActiveTx1Data((prev: any) => prev || c1.activeTx);
-          saveLocalConnectorData(CHARGER_ID, '1', c1);
-        }
-      })
-      .catch(() => {});
-
-    fetchFirestoreDoc(`chargers/${CHARGER_ID}/connectors`, '2')
-      .then((c2) => {
-        if (c2) {
-          setConnector2Data((prev: any) => prev || c2);
-          if (c2.activeTx && c2.status === 'Charging') setActiveTx2Data((prev: any) => prev || c2.activeTx);
-          saveLocalConnectorData(CHARGER_ID, '2', c2);
-        }
-      })
-      .catch(() => {});
-
-    // 3. Single Realtime Database listener for ALL live data of this charger
-    let lastActiveTxId: string | null = null;
-    let lastCompletedId: string | null = null;
-
-    const liveRef = ref(rtdb, livePath(CHARGER_ID));
-    const unsubLive = onValue(
-      liveRef,
-      (snap) => {
-        const live = snap.val() || {};
-        setLoading(false);
-
-        // Online status + heartbeat: keep whichever is newer (Firestore vs RTDB)
-        const rtdbHb = live.lastHeartbeat || null;
-        const firestoreHb = staticInfo.lastHeartbeat || liveInfo.lastHeartbeat || null;
-        const isRtdbNewer =
-          rtdbHb && firestoreHb
-            ? new Date(rtdbHb).getTime() >= new Date(firestoreHb).getTime()
-            : !!rtdbHb;
-
-        liveInfo = {
-          status: isRtdbNewer ? live.status || 'Offline' : liveInfo.status || 'Online',
-          lastHeartbeat: isRtdbNewer ? rtdbHb : firestoreHb,
-        };
-        publishCharger();
-
-        // Connectors (Gun A / Gun B) with telemetry (supports both object and 1-indexed array from RTDB)
-        const c1 =
-          live.connectors?.['1'] ||
-          (Array.isArray(live.connectors) && live.connectors[1] ? live.connectors[1] : null);
-        const c2 =
-          live.connectors?.['2'] ||
-          (Array.isArray(live.connectors) && live.connectors[2] ? live.connectors[2] : null);
-        if (c1) {
-          setConnector1Data((prev: any) => ({
-            ...c1,
-            activeTx: c1.status === 'Charging' ? (c1.activeTx || prev?.activeTx || null) : null,
-          }));
-          saveLocalConnectorData(CHARGER_ID, '1', c1);
-        }
-        if (c2) {
-          setConnector2Data((prev: any) => ({
-            ...c2,
-            activeTx: c2.status === 'Charging' ? (c2.activeTx || prev?.activeTx || null) : null,
-          }));
-          saveLocalConnectorData(CHARGER_ID, '2', c2);
-        }
-
-        // Active charging session(s) - strictly null if connector is not actively charging
-        const activeList = Object.values(live.activeTx || {}).filter(Boolean) as any[];
-        const txA = live.activeTx?.['1'] || (Array.isArray(live.activeTx) ? live.activeTx[1] : null);
-        const txB = live.activeTx?.['2'] || (Array.isArray(live.activeTx) ? live.activeTx[2] : null);
-        if (txA && c1?.status === 'Charging') setActiveTx1Data(txA);
-        else setActiveTx1Data(null);
-
-        if (txB && c2?.status === 'Charging') setActiveTx2Data(txB);
-        else setActiveTx2Data(null);
-
-        const primaryTx = (txB && c2?.status === 'Charging') ? txB : (txA && c1?.status === 'Charging') ? txA : null;
-        if (primaryTx) {
-          setActiveTxData(primaryTx);
-          saveLocalActiveTx(CHARGER_ID, primaryTx);
-        } else {
-          setActiveTxData(null);
-        }
-
-        // Add new sessions to local history cache once (not on every meter value)
-        for (const tx of activeList) {
-          if (!tx?.transactionId) continue;
-          const txId = String(tx.transactionId);
-          if (txId !== lastActiveTxId) {
-            lastActiveTxId = txId;
-            mergeLocalTransaction(CHARGER_ID, { id: txId, ...tx });
-          }
-        }
-
-        // Finished session published by server -> update local history with 0 Firestore reads
-        const done = live.lastCompletedTx;
-        if (
-          done &&
-          String(done.transactionId || done.id) !== '275384' &&
-          String(done.transactionId || done.id) !== '72089' &&
-          (Number(done.energyDeliveredKwh) > 0 || Number(done.energyDeliveredWh) > 0)
-        ) {
-          setLastCompletedTx(done);
-          if (done?.transactionId && String(done.transactionId) !== lastCompletedId) {
-            lastCompletedId = String(done.transactionId);
-            mergeLocalTransaction(CHARGER_ID, { id: String(done.transactionId), ...done });
-          }
-        }
-      },
-      (err) => {
-        // Seamless fallback to Firestore real-time snapshots below
-        setLoading(false);
-      }
-    );
-
-    // 4. Firestore Real-Time snapshots (ensures live UI updates even if RTDB rules restrict access)
-    const unsubChargerSnap = onSnapshot(
-      doc(db, 'chargers', CHARGER_ID),
-      (snap) => {
-        if (snap.exists()) {
-          const d = snap.data();
-          const { status: st, lastHeartbeat: hb, ...rest } = d;
-          staticInfo = rest;
-          liveInfo = {
-            status: st || 'Online',
-            lastHeartbeat: hb || new Date().toISOString(),
-          };
-          publishCharger();
-          setLoading(false);
-        }
-      },
-      () => {
-        setLoading(false);
-      }
-    );
-
-    const unsubConn1Snap = onSnapshot(
-      doc(db, 'chargers', CHARGER_ID, 'connectors', '1'),
-      (snap) => {
-        if (snap.exists()) {
-          const c1 = snap.data();
           setConnector1Data(c1);
-          if (c1.activeTx) {
+          saveLocalConnectorData(CHARGER_ID, '1', c1);
+          if (c1.activeTx && c1.status === 'Charging') {
             setActiveTx1Data(c1.activeTx);
           } else {
             setActiveTx1Data(null);
           }
-          saveLocalConnectorData(CHARGER_ID, '1', c1);
-        }
-      },
-      () => {}
-    );
 
-    const unsubConn2Snap = onSnapshot(
-      doc(db, 'chargers', CHARGER_ID, 'connectors', '2'),
-      (snap) => {
-        if (snap.exists()) {
-          const c2 = snap.data();
+          const oldStatus1 = prevStatus1Ref.current;
+          prevStatus1Ref.current = c1.status;
+
+          if (oldStatus1 !== null && oldStatus1 !== c1.status) {
+            if (c1.status === 'Preparing') {
+              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun A.');
+            } else if (c1.status === 'Charging') {
+              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun A.');
+            } else if ((oldStatus1 === 'Charging' || oldStatus1 === 'Preparing') && c1.status === 'Available') {
+              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun A.');
+            }
+          }
+        }
+
+        if (c2) {
           setConnector2Data(c2);
-          if (c2.activeTx) {
+          saveLocalConnectorData(CHARGER_ID, '2', c2);
+          if (c2.activeTx && c2.status === 'Charging') {
             setActiveTx2Data(c2.activeTx);
           } else {
             setActiveTx2Data(null);
           }
-          saveLocalConnectorData(CHARGER_ID, '2', c2);
-        }
-      },
-      () => {}
-    );
 
-    // 5. Real-time query for latest completed transaction on this charger with actual delivered energy
-    const qLatestTx = query(
-      collection(db, 'transactions'),
-      orderBy('startTime', 'desc')
-    );
-    const unsubLatestTx = onSnapshot(
-      qLatestTx,
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const oldStatus2 = prevStatus2Ref.current;
+          prevStatus2Ref.current = c2.status;
 
-          // Actively charging transactions for Gun 1 & Gun 2
-          const act1 = list.find(
-            (tx: any) =>
-              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
-              Number(tx.connectorId || 1) === 1 &&
-              (tx.status === 'Charging' || (!tx.stopTime && Number(tx.meterStart) > 0))
-          );
-          setActiveTx1Data(act1 || null);
-
-          const act2 = list.find(
-            (tx: any) =>
-              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
-              Number(tx.connectorId) === 2 &&
-              (tx.status === 'Charging' || (!tx.stopTime && Number(tx.meterStart) > 0))
-          );
-          setActiveTx2Data(act2 || null);
-
-          const match = list.find(
-            (tx: any) =>
-              (!tx.chargePointId || tx.chargePointId.toLowerCase() === CHARGER_ID.toLowerCase()) &&
-              String(tx.transactionId || tx.id) !== '275384' &&
-              String(tx.transactionId || tx.id) !== '72089' &&
-              (Number(tx.energyDeliveredKwh) > 0 || Number(tx.energyDeliveredWh) > 0)
-          );
-          if (match) {
-            setLastCompletedTx(match);
-            mergeLocalTransaction(CHARGER_ID, match, user?.uid);
+          if (oldStatus2 !== null && oldStatus2 !== c2.status) {
+            if (c2.status === 'Preparing') {
+              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun B.');
+            } else if (c2.status === 'Charging') {
+              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun B.');
+            } else if ((oldStatus2 === 'Charging' || oldStatus2 === 'Preparing') && c2.status === 'Available') {
+              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun B.');
+            }
           }
         }
+
+        const active = data.activeTransaction || c1?.activeTx || c2?.activeTx;
+        if (active && (active.status === 'Charging' || Number(active.currentPowerKw || 0) > 0)) {
+          const primaryTx = (c2?.status === 'Charging' && active.connector_id === 2)
+            ? active
+            : (c1?.status === 'Charging' && active.connector_id === 1)
+            ? active
+            : active;
+          setActiveTxData(primaryTx);
+          saveLocalActiveTx(CHARGER_ID, primaryTx);
+
+          // Notify when a new active transaction ID appears
+          const txIdStr = String(primaryTx.transactionId || primaryTx.transaction_id || primaryTx.id || '');
+          if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
+            prevActiveTxIdRef.current = txIdStr;
+            const gunLabel = Number(primaryTx.connectorId || primaryTx.connector_id) === 2 ? 'Gun B' : 'Gun A';
+            scheduleLocalNotification('⚡ Charging Started', `Vehicle started charging on ${gunLabel} (Session #${txIdStr}).`);
+          }
+        } else {
+          if (prevActiveTxIdRef.current) {
+            prevActiveTxIdRef.current = null;
+            scheduleLocalNotification('✅ Charging Completed', 'Charging session has finished.');
+          }
+          setActiveTxData(null);
+        }
+
+        if (data.lastCompletedTx) {
+          const done = data.lastCompletedTx;
+          const doneId = String(done.transaction_id || done.transactionId || done.id || '');
+          if (doneId !== '275384' && doneId !== '72089') {
+            const formatted = {
+              id: doneId,
+              transactionId: doneId,
+              connectorId: done.connector_id || done.connectorId || 1,
+              energyDeliveredKwh: done.energy_kwh ?? done.energyDeliveredKwh ?? 0,
+              cost: done.cost ?? 0,
+              startTime: done.start_time || done.startTime,
+              stopTime: done.stop_time || done.stopTime,
+              status: done.status || 'Completed',
+              idTag: done.id_tag || done.idTag || '',
+            };
+            setLastCompletedTx(formatted);
+            mergeLocalTransaction(CHARGER_ID, formatted, user?.uid);
+          }
+        }
+
+        // Live calculation finished -> resolve identification on the skeleton
+        resolveIdentification();
       },
-      () => {}
+      (err) => {
+        if (!isMounted) return;
+        setIsServerReachable(false);
+        resolveIdentification();
+      }
     );
 
     return () => {
-      unsubLive();
-      unsubChargerSnap();
-      unsubConn1Snap();
-      unsubConn2Snap();
-      unsubLatestTx();
+      isMounted = false;
+      unsubscribe();
     };
-  }, [CHARGER_ID, isAuthenticated, user?.uid]);
+  }, [CHARGER_ID, isAuthenticated, user?.uid, resolveIdentification]);
 
   // 30kW single-gun detection
   const is30kW =
@@ -425,11 +325,14 @@ export default function HomeScreen() {
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
-  // Track true Firebase server time with 300s tolerance (or always active if plugged in or simulating)
+  // Track true server connectivity and charger online status
   const nowServer = Date.now() + serverTimeOffset;
   const lastHbTime = chargerData?.lastHeartbeat ? new Date(chargerData.lastHeartbeat).getTime() : 0;
-  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : true;
-  const isOnline = isSimulating || ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged));
+  const hasRecentHeartbeat = lastHbTime > 0 ? nowServer - lastHbTime < 300000 : (chargerData?.status === 'Online');
+  const isOnline = isSimulating || (
+    isServerReachable !== false &&
+    ((chargerData?.status === 'Online' || isActivelyEngaged) && (hasRecentHeartbeat || isActivelyEngaged))
+  );
 
   const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
   const status2 = (isOnline || isGunBPlugged) && !is30kW ? rawStatus2 : 'Unavailable';
@@ -650,13 +553,18 @@ export default function HomeScreen() {
     return <Redirect href="/login" />;
   }
 
-  if (loading && !chargerData) {
+  if (!isConfigured || !CHARGER_ID) {
+    return <Redirect href="/setup" />;
+  }
+
+  if (isIdentifying) {
     return <DashboardSkeleton isSingleGun={is30kW} />;
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID, Simulator Test Trigger & Unified Minimal Status Badge */}
+    <SwipeableTabScreen currentTab="index">
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Header: Station ID */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Image
@@ -665,13 +573,6 @@ export default function HomeScreen() {
             resizeMode="contain"
           />
           <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
-          <SimulatorButton onOpen={() => setSimModalVisible(true)} />
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: activeTheme.bg, borderColor: activeTheme.border || 'transparent', borderWidth: 1 }]}>
-          <View style={[styles.statusDot, { backgroundColor: activeTheme.color }]} />
-          <Text style={[styles.statusText, { color: activeTheme.color }]}>
-            {activeTheme.label}
-          </Text>
         </View>
       </View>
 
@@ -821,6 +722,13 @@ export default function HomeScreen() {
                   {Number(totalCost.replace(/,/g, '')) > 0 ? `${curr} (session)` : 'PLUGGED IN • READY TO CHARGE'}
                 </Text>
               </View>
+            ) : !isOnline ? (
+              <View style={styles.priceHeroColumn}>
+                <Text style={styles.priceHeroVal}>OFFLINE</Text>
+                <Text style={styles.priceHeroCurr}>
+                  {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
+                </Text>
+              </View>
             ) : lastSessionCost > 0 ? (
               <View style={styles.priceHeroColumn}>
                 <Text style={styles.priceHeroVal}>{lastSessionCost.toLocaleString()}</Text>
@@ -843,9 +751,11 @@ export default function HomeScreen() {
           <View style={styles.singleGunHeader}>
             <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
             <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
-            <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
-              <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-            </View>
+            {isOnline && (
+              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
+                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+              </View>
+            )}
             {tel1?.soc != null && tel1?.soc !== '' ? (
               <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
                 <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
@@ -885,9 +795,11 @@ export default function HomeScreen() {
                 <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
                 <Text style={styles.gunTitle}>GUN A</Text>
               </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+                </View>
+              )}
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
@@ -920,9 +832,11 @@ export default function HomeScreen() {
                 <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
                 <Text style={styles.gunTitle}>GUN B</Text>
               </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
+                </View>
+              )}
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
@@ -950,9 +864,8 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* UI Test Simulator Modal for Testing without physical cars */}
-      <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

@@ -751,9 +751,11 @@ export default function HomeScreen() {
           <View style={styles.singleGunHeader}>
             <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
             <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
-            <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
-              <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-            </View>
+            {isOnline && (
+              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
+                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+              </View>
+            )}
             {tel1?.soc != null && tel1?.soc !== '' ? (
               <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
                 <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
@@ -793,9 +795,11 @@ export default function HomeScreen() {
                 <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
                 <Text style={styles.gunTitle}>GUN A</Text>
               </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+                </View>
+              )}
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
@@ -828,9 +832,11 @@ export default function HomeScreen() {
                 <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
                 <Text style={styles.gunTitle}>GUN B</Text>
               </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
+                </View>
+              )}
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
