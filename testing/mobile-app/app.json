@@ -7,7 +7,7 @@
     "updates": {
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0,
+      "fallbackToCacheTimeout": 5000,
       "url": "https://u.expo.dev/f87c91ae-f185-4d81-a797-ad303bf0d8b9"
     },
     "orientation": "portrait",

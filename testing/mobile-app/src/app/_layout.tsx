@@ -8,6 +8,8 @@ import { AuthProvider, useAuth } from '@/config/auth';
 import { SimulatorProvider } from '@/config/simulator';
 import { registerForPushNotificationsAsync } from '@/services/notifications';
 
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
 export const unstable_settings = {
   anchor: '(tabs)',
 };
@@ -46,18 +48,20 @@ function NotificationRegistration() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <SimulatorProvider>
-        <NotificationRegistration />
-        <ThemeProvider value={DefaultTheme}>
-          <AnimatedSplashOverlay />
-          <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="login" options={{ headerShown: false }} />
-            <Stack.Screen name="setup" options={{ headerShown: false }} />
-          </Stack>
-        </ThemeProvider>
-      </SimulatorProvider>
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <SimulatorProvider>
+          <NotificationRegistration />
+          <ThemeProvider value={DefaultTheme}>
+            <AnimatedSplashOverlay />
+            <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="login" options={{ headerShown: false }} />
+              <Stack.Screen name="setup" options={{ headerShown: false }} />
+            </Stack>
+          </ThemeProvider>
+        </SimulatorProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }

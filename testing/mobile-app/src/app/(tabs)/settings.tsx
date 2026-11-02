@@ -265,7 +265,7 @@ export default function SettingsScreen() {
         setUpdateReady(true);
         setUpdateStatusText('Update ready to install');
         Alert.alert(
-          'Update Ready',
+          'Update Downloaded ✓',
           `A new update has been downloaded.\n\nWhat's New:\n• Slide on screen to switch tabs\n• Startup server & charger condition calculation\n• Minimalist revenue & session breakdown\n\nRestart now to apply?`,
           [
             { text: 'Later', style: 'cancel' },
@@ -280,7 +280,20 @@ export default function SettingsScreen() {
         );
       } else {
         setUpdateStatusText('App is up to date ✓');
-        Alert.alert('Up to Date', `Tesla Charge is running the latest version (v${appVersion}).`);
+        Alert.alert(
+          'App is Up to Date',
+          `Tesla Charge is on v${appVersion}.\n\nIf you pushed a new update and want to reload the latest bundle into memory immediately, tap 'Restart App'.`,
+          [
+            { text: 'Close', style: 'cancel' },
+            {
+              text: 'Restart App',
+              style: 'default',
+              onPress: async () => {
+                await Updates.reloadAsync();
+              },
+            },
+          ]
+        );
       }
     } catch (err: any) {
       console.warn('Update check failed:', err);
@@ -539,18 +552,30 @@ export default function SettingsScreen() {
             <Text style={styles.restartBtnText}>Restart to Apply Update</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
-            style={[styles.updateBtn, checkingUpdate && styles.disabledBtn]}
-            onPress={handleCheckForUpdates}
-            disabled={checkingUpdate}
-            activeOpacity={0.85}
-          >
-            {checkingUpdate ? (
-              <ActivityIndicator color="#0F172A" size="small" />
-            ) : (
-              <Text style={styles.updateBtnText}>Search for Updates</Text>
+          <View style={{ gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.updateBtn, checkingUpdate && styles.disabledBtn]}
+              onPress={handleCheckForUpdates}
+              disabled={checkingUpdate}
+              activeOpacity={0.85}
+            >
+              {checkingUpdate ? (
+                <ActivityIndicator color="#0F172A" size="small" />
+              ) : (
+                <Text style={styles.updateBtnText}>Search for Updates</Text>
+              )}
+            </TouchableOpacity>
+
+            {Updates.isEnabled && (
+              <TouchableOpacity
+                style={[styles.updateBtn, { backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#CBD5E1' }]}
+                onPress={() => Updates.reloadAsync()}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.updateBtnText, { color: '#0F172A' }]}>Restart App / Reload Bundle</Text>
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          </View>
         )}
       </View>
 

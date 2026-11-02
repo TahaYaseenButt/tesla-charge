@@ -39,50 +39,80 @@ export function SwipeableTabScreen({ currentTab, children, style }: SwipeableTab
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
 
-        // Only capture horizontal movements that are significantly larger than vertical movements
+        // Intercept horizontal movements that are significantly larger than vertical movements
         onMoveShouldSetPanResponder: (_, gestureState) => {
           const dx = Math.abs(gestureState.dx);
           const dy = Math.abs(gestureState.dy);
-          return dx > 25 && dx > dy * 1.8;
+          return dx > 20 && dx > dy * 1.4;
         },
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
           const dx = Math.abs(gestureState.dx);
           const dy = Math.abs(gestureState.dy);
-          return dx > 25 && dx > dy * 1.8;
+          return dx > 25 && dx > dy * 1.5;
         },
 
         onPanResponderTerminationRequest: () => false,
 
         onPanResponderRelease: (_, gestureState) => {
-          const now = Date.now();
-          if (now - lastSwipeTimeRef.current < 400) return;
-
           const dx = gestureState.dx;
           const vx = gestureState.vx;
-          const SWIPE_THRESHOLD = 45;
-          const VELOCITY_THRESHOLD = 0.25;
+          const SWIPE_THRESHOLD = 40;
+          const VELOCITY_THRESHOLD = 0.2;
 
-          // Slide Left (finger drag towards left) -> Move to Next Tab
-          if (dx < -SWIPE_THRESHOLD || (dx < -20 && vx < -VELOCITY_THRESHOLD)) {
-            if (currentIndex >= 0 && currentIndex < tabs.length - 1) {
-              lastSwipeTimeRef.current = now;
-              navigateToTab(tabs[currentIndex + 1]);
-            }
-          }
-          // Slide Right (finger drag towards right) -> Move to Previous Tab
-          else if (dx > SWIPE_THRESHOLD || (dx > 20 && vx > VELOCITY_THRESHOLD)) {
-            if (currentIndex > 0) {
-              lastSwipeTimeRef.current = now;
-              navigateToTab(tabs[currentIndex - 1]);
-            }
+          if (dx < -SWIPE_THRESHOLD || (dx < -15 && vx < -VELOCITY_THRESHOLD)) {
+            triggerSwipe('next');
+          } else if (dx > SWIPE_THRESHOLD || (dx > 15 && vx > VELOCITY_THRESHOLD)) {
+            triggerSwipe('prev');
           }
         },
       }),
     [currentIndex, tabs]
   );
 
+  const touchStartRef = useRef({ x: 0, y: 0, time: 0 });
+
+  const handleTouchStart = (e: any) => {
+    touchStartRef.current = {
+      x: e.nativeEvent.pageX,
+      y: e.nativeEvent.pageY,
+      time: Date.now(),
+    };
+  };
+
+  const handleTouchEnd = (e: any) => {
+    const dx = e.nativeEvent.pageX - touchStartRef.current.x;
+    const dy = e.nativeEvent.pageY - touchStartRef.current.y;
+    const dt = Date.now() - touchStartRef.current.time;
+
+    // Detect fast horizontal swipes that might bypass PanResponder inside ScrollViews
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.3 && dt < 700) {
+      if (dx < 0) {
+        triggerSwipe('next');
+      } else {
+        triggerSwipe('prev');
+      }
+    }
+  };
+
+  const triggerSwipe = (direction: 'next' | 'prev') => {
+    const now = Date.now();
+    if (now - lastSwipeTimeRef.current < 400) return;
+    lastSwipeTimeRef.current = now;
+
+    if (direction === 'next' && currentIndex >= 0 && currentIndex < tabs.length - 1) {
+      navigateToTab(tabs[currentIndex + 1]);
+    } else if (direction === 'prev' && currentIndex > 0) {
+      navigateToTab(tabs[currentIndex - 1]);
+    }
+  };
+
   return (
-    <View style={[styles.container, style]} {...panResponder.panHandlers}>
+    <View
+      style={[styles.container, style]}
+      {...panResponder.panHandlers}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       {children}
     </View>
   );
