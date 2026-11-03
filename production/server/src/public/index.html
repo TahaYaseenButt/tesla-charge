@@ -516,14 +516,7 @@
           fetch('/api/network-summary').catch(() => null),
         ]);
 
-        if (chargersRes.ok) {
-          const data = await chargersRes.json();
-          if (data.success && Array.isArray(data.chargers)) {
-            chargers = data.chargers;
-            renderChargersGrid();
-            updateCounts();
-          }
-        }
+        let connectedSet = null;
 
         if (networkRes && networkRes.ok) {
           const net = await networkRes.json();
@@ -531,18 +524,41 @@
             const energy = net.totalEnergyDeliveredKwh || 0;
             const revenue = net.totalRevenuePkr || 0;
             const sessions = net.completedSessionsCount || 0;
-            const activeCount = net.activeConnectionsCount || 0;
+
+            if (Array.isArray(net.connectedChargers)) {
+              connectedSet = new Set(net.connectedChargers.map(ch => (ch.chargePointId || '').toLowerCase()));
+            }
 
             document.getElementById('stat-total-energy').textContent = `${energy.toFixed(1)} kWh`;
             document.getElementById('stat-total-revenue').textContent = `${Math.round(revenue).toLocaleString()} PKR`;
             document.getElementById('stat-sessions-sub').textContent = `${sessions} Lifetime Sessions`;
 
-            // Active stations count from physical connections
-            const onlineCount = chargers.filter(c => c.isOnline).length;
-            document.getElementById('stat-active-stations').textContent = `${onlineCount} / ${chargers.length}`;
-            
             const connectedStation = net.connectedChargers?.[0]?.chargePointId || 'charger1';
             document.getElementById('stat-active-sub').textContent = `${connectedStation} Connected`;
+          }
+        }
+
+        if (chargersRes.ok) {
+          const data = await chargersRes.json();
+          if (data.success && Array.isArray(data.chargers)) {
+            // Strictly enforce ground-truth physical connection status:
+            // Only stations actively connected in connectedChargers are marked Online.
+            chargers = data.chargers.map(c => {
+              if (connectedSet !== null) {
+                const isConn = connectedSet.has(c.id.toLowerCase());
+                return {
+                  ...c,
+                  isOnline: isConn,
+                  status: isConn ? 'Online' : 'Offline'
+                };
+              }
+              return c;
+            });
+            renderChargersGrid();
+            updateCounts();
+
+            const onlineCount = chargers.filter(c => c.isOnline).length;
+            document.getElementById('stat-active-stations').textContent = `${onlineCount} / ${chargers.length}`;
           }
         }
 
