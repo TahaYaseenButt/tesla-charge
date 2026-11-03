@@ -2,6 +2,7 @@ import React from 'react';
 import { LogBox } from 'react-native';
 import { Stack, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Updates from 'expo-updates';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/config/auth';
@@ -42,6 +43,20 @@ function NotificationRegistration() {
   React.useEffect(() => {
     registerForPushNotificationsAsync(user?.uid, chargerId || 'charger1');
   }, [user?.uid, chargerId]);
+
+  React.useEffect(() => {
+    async function checkForUpdates() {
+      if (__DEV__) return;
+      try {
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        }
+      } catch (_e) {}
+    }
+    checkForUpdates();
+  }, []);
 
   return null;
 }

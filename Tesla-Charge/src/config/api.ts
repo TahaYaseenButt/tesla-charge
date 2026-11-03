@@ -117,29 +117,47 @@ export function subscribeToLiveStatus(
 
   async function poll() {
     if (!isSubscribed) return;
-    try {
-      const res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 10000 });
-      if (res && isSubscribed && onData) {
-        const live = res.live || {};
-        const isOnline =
-          res.isConnected === true ||
-          String(res.status || '').toLowerCase() === 'online' ||
-          String(live.charger?.status || '').toLowerCase() === 'online' ||
-          Boolean(live.charger?.isOnline) ||
-          Boolean(res.isOnline);
+    let res: any = null;
+    let pollError: any = null;
 
-        const normalized = {
-          ...res,
-          charger: res.charger || live.charger,
-          connectors: res.connectors || live.connectors,
-          activeTransaction: res.activeTransaction || live.activeTransaction,
-          lastCompletedTx: res.lastCompletedTx || live.lastCompletedTx,
-          isConnected: isOnline,
-        };
-        onData(normalized);
+    // Multi-tier resilient polling: ensures connectivity even if query parameter or route varies
+    try {
+      res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 10000 });
+    } catch (e1) {
+      pollError = e1;
+      try {
+        res = await apiRequest('/api/status', { timeoutMs: 8000 });
+      } catch (e2) {
+        pollError = e2;
+        try {
+          res = await apiRequest(`/api/chargers/${encodeURIComponent(cleanId)}`, { timeoutMs: 8000 });
+        } catch (e3) {
+          pollError = e3;
+        }
       }
-    } catch (err) {
-      if (errCb && isSubscribed) errCb(err);
+    }
+
+    if (res && isSubscribed && onData) {
+      const live = res.live || {};
+      const chargerObj = res.charger || live.charger || {};
+      const isOnline =
+        res.isConnected === true ||
+        String(res.status || '').toLowerCase() === 'online' ||
+        String(chargerObj.status || '').toLowerCase() === 'online' ||
+        Boolean(chargerObj.isOnline) ||
+        Boolean(res.isOnline);
+
+      const normalized = {
+        ...res,
+        charger: chargerObj,
+        connectors: res.connectors || live.connectors || [],
+        activeTransaction: res.activeTransaction || live.activeTransaction,
+        lastCompletedTx: res.lastCompletedTx || live.lastCompletedTx,
+        isConnected: isOnline,
+      };
+      onData(normalized);
+    } else if (pollError) {
+      if (errCb && isSubscribed) errCb(pollError);
     }
   }
 

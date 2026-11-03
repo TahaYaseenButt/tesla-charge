@@ -119,6 +119,7 @@ export default function HomeScreen() {
   const [isIdentifying, setIsIdentifying] = useState(true);
   const [isServerReachable, setIsServerReachable] = useState<boolean | null>(null);
   const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(true);
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [liveAccumulatedA, setLiveAccumulatedA] = useState<number>(0);
   const [liveAccumulatedB, setLiveAccumulatedB] = useState<number>(0);
@@ -329,7 +330,7 @@ export default function HomeScreen() {
       (err) => {
         if (!isMounted) return;
         consecutiveFailuresRef.current += 1;
-        if (consecutiveFailuresRef.current >= 3) {
+        if (consecutiveFailuresRef.current >= 6) {
           setIsServerReachable(false);
         }
         resolveIdentification();
@@ -340,7 +341,7 @@ export default function HomeScreen() {
       isMounted = false;
       unsubscribe();
     };
-  }, [CHARGER_ID, isAuthenticated, user?.uid, resolveIdentification]);
+  }, [CHARGER_ID, isAuthenticated, user?.uid, resolveIdentification, refreshTrigger]);
 
   // 30kW single-gun detection
   const is30kW =
@@ -374,14 +375,19 @@ export default function HomeScreen() {
     (connector1Data && connector1Data.status && connector1Data.status !== 'Unavailable') ||
     (connector2Data && connector2Data.status && connector2Data.status !== 'Unavailable');
 
+  const isAnyGunActivelyCharging =
+    (connector1Data?.status === 'Charging') ||
+    (connector2Data?.status === 'Charging');
+
   // Track true server connectivity and charger online status
   const isOnline = isSimulating || (
-    isServerReachable !== false &&
-    (isWebSocketConnected === true ||
-      isChargerStatusAlive() ||
-      Boolean(chargerData?.isOnline) ||
-      hasLiveConnectorActivity ||
-      isChargerHeartbeatFresh())
+    isAnyGunActivelyCharging ||
+    (isServerReachable !== false &&
+      (isWebSocketConnected === true ||
+        isChargerStatusAlive() ||
+        Boolean(chargerData?.isOnline) ||
+        hasLiveConnectorActivity ||
+        isChargerHeartbeatFresh()))
   );
 
   const status1 = isOnline ? rawStatus1 : 'Unavailable';
@@ -715,9 +721,22 @@ export default function HomeScreen() {
 
               <Text style={styles.unifiedSpeedSub}>
                 {isServerReachable === false
-                  ? 'Connecting to OCPP server...'
-                  : 'Charger is disconnected from network'}
+                  ? `Connecting to server (${CHARGER_ID.toUpperCase()})...`
+                  : `Station [${CHARGER_ID.toUpperCase()}] is disconnected from network`}
               </Text>
+
+              <TouchableOpacity
+                onPress={() => {
+                  consecutiveFailuresRef.current = 0;
+                  setIsServerReachable(null);
+                  setIsWebSocketConnected(true);
+                  setRefreshTrigger((prev) => prev + 1);
+                }}
+                style={styles.retryBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.retryBtnText}>🔄 Retry Connection</Text>
+              </TouchableOpacity>
             </View>
           ) : bothCarsAttached ? (
             /* BOTH Cars Attached: Symmetrical Dual Telemetry View (Non-wrapping & Perfectly Aligned) */
@@ -1269,6 +1288,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#059669',
     letterSpacing: 0.5,
+  },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  retryBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   gunDot: {
     width: 6.5,
