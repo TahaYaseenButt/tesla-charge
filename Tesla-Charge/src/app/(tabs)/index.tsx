@@ -650,13 +650,44 @@ export default function HomeScreen() {
         {/* Primary Live Status / Price Hero Section */}
         <View style={styles.powerSection}>
           {isGunACharging && isGunBCharging ? (
-            <View style={styles.priceHeroColumn}>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                <AnimatedMetricValue style={styles.priceHeroVal} value={totalCost} />
-                <Text style={styles.priceHeroCurr}>{curr}</Text>
+            <View style={styles.dualPriceHeroContainer}>
+              <View style={styles.dualPriceHeroRow}>
+                {/* Gun A Car Price */}
+                <View style={styles.dualPriceColumn}>
+                  <View style={styles.dualPriceLabelRow}>
+                    <View style={[styles.gunDot, { backgroundColor: themeA.color, width: 6, height: 6 }]} />
+                    <Text style={styles.dualPriceGunTitle}>GUN A (CAR 1)</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
+                    <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costA).toLocaleString()} />
+                    <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
+                  </View>
+                  <Text style={styles.dualPriceHeroSub}>
+                    {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
+                  </Text>
+                </View>
+
+                {/* Vertical Divider */}
+                <View style={styles.dualPriceDivider} />
+
+                {/* Gun B Car Price */}
+                <View style={styles.dualPriceColumn}>
+                  <View style={styles.dualPriceLabelRow}>
+                    <View style={[styles.gunDot, { backgroundColor: themeB.color, width: 6, height: 6 }]} />
+                    <Text style={styles.dualPriceGunTitle}>GUN B (CAR 2)</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
+                    <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costB).toLocaleString()} />
+                    <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
+                  </View>
+                  <Text style={styles.dualPriceHeroSub}>
+                    {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.powerSubtext}>
-                Total Speed: {totalPower} kW • Both Guns Charging
+
+              <Text style={styles.dualTotalSpeedSubtext}>
+                Combined Speed: {totalPower} kW • Total: {totalCost} PKR
               </Text>
             </View>
           ) : isGunACharging ? (
@@ -776,16 +807,20 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Session Cost</Text>
+                <Text style={[styles.gunMetricVal, { color: '#0284C7', fontWeight: '900' }]}>{Number(costA).toLocaleString()} PKR</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Energy</Text>
+                <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Voltage</Text>
                 <Text style={styles.gunMetricVal}>{voltageA} V</Text>
               </View>
               <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Current</Text>
                 <Text style={styles.gunMetricVal}>{currentA} A</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Session Energy</Text>
-                <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
               </View>
             </View>
 
@@ -811,16 +846,20 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Session Cost</Text>
+                <Text style={[styles.gunMetricVal, { color: '#0284C7', fontWeight: '900' }]}>{Number(costB).toLocaleString()} PKR</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Energy</Text>
+                <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Voltage</Text>
                 <Text style={styles.gunMetricVal}>{voltageB} V</Text>
               </View>
               <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Current</Text>
                 <Text style={styles.gunMetricVal}>{currentB} A</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Session Energy</Text>
-                <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
               </View>
             </View>
           </View>
@@ -958,6 +997,68 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#64748B',
     marginLeft: 6,
+  },
+
+  /* Dual Price Hero for Both Guns Charging */
+  dualPriceHeroContainer: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dualPriceHeroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    paddingHorizontal: 6,
+  },
+  dualPriceColumn: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  dualPriceLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  dualPriceGunTitle: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  dualPriceHeroVal: {
+    fontSize: 27,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.8,
+    fontVariant: ['tabular-nums'],
+  },
+  dualPriceHeroCurr: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284C7',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  dualPriceHeroSub: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    marginTop: 2,
+  },
+  dualPriceDivider: {
+    width: 1.5,
+    height: 44,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 8,
+  },
+  dualTotalSpeedSubtext: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginTop: 5,
   },
 
   /* Dual Gun Layout */
