@@ -10,17 +10,16 @@ import {
   Platform,
 } from 'react-native';
 import { useAuth } from '@/config/auth';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { ref, onValue } from 'firebase/database';
-import { db, rtdb, livePath } from '@/config/firebase';
+
 import {
   fetchTransactionsWithCacheStrategy,
   getLocalTransactions,
   saveLocalTransactions,
 } from '@/services/storage';
 import { HistorySkeleton } from '@/components/skeleton';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
-type FilterMode = 'today' | 'day' | 'range' | 'month';
+type FilterMode = 'all' | 'today' | 'day' | 'range' | 'month';
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -34,7 +33,7 @@ function formatDateKey(date: Date): string {
 
 export default function HistoryScreen() {
   const { chargerId, user } = useAuth();
-  const CHARGER_ID = chargerId || 'charger1';
+  const CHARGER_ID = (chargerId || user?.stationId || user?.defaultChargerId || 'charger1').trim().toLowerCase();
 
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,9 +41,6 @@ export default function HistoryScreen() {
   const [dataSource, setDataSource] = useState<'local' | 'cloud'>('local');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
-  // Account scope filter: 'all' (all station sessions) vs 'mine' (personal user sessions)
-  // Default to 'all' so every device immediately sees all transactions on this charger
-  const [accountScope, setAccountScope] = useState<'mine' | 'all'>('all');
 
   // Today key
   const todayKey = useMemo(() => formatDateKey(new Date()), []);
@@ -80,7 +76,7 @@ export default function HistoryScreen() {
     [CHARGER_ID, user?.uid]
   );
 
-  // 2. Real-time cross-device sync via Firestore onSnapshot & RTDB onValue
+  // 2. Direct Server Periodic Sync & Initial Cache Load
   useEffect(() => {
     let isMounted = true;
     const cleanId = CHARGER_ID.trim().toLowerCase();
@@ -94,120 +90,25 @@ export default function HistoryScreen() {
       }
     });
 
-    // Real-time Firestore sync across all devices
-    const q = query(
-      collection(db, 'transactions'),
-      orderBy('startTime', 'desc')
-    );
+    // Immediate direct server fetch
+    loadHistory(false);
 
-    const unsubscribeFs = onSnapshot(
-      q,
-      (snapshot) => {
-        if (!isMounted) return;
-        const cloudDocs: any[] = [];
-        snapshot.forEach((doc) => {
-          cloudDocs.push({ id: doc.id, ...doc.data() });
-        });
-
-        // Filter for this charger and exclude dummy or 0 kWh sessions
-        const filtered = cloudDocs.filter((tx) => {
-          const id = String(tx.transactionId || tx.id || '').trim();
-          if (id === '275384' || id === '72089') return false;
-          if (tx.chargePointId && String(tx.chargePointId).toLowerCase() !== cleanId) return false;
-          const kwh = Number(tx.energyDeliveredKwh) || (tx.energyDeliveredWh ? Number(tx.energyDeliveredWh) / 1000 : 0);
-          return kwh > 0;
-        });
-
-        // Deduplicate twin records (e.g. in-progress vs completed duplicate, or cellular retry)
-        const dedupMap = new Map<string, any>();
-        for (const tx of filtered) {
-          const txId = tx.transactionId ? String(tx.transactionId).trim() : null;
-          const timeKey = tx.startTime ? tx.startTime.substring(0, 16) : String(tx.createdAt || '').substring(0, 16);
-          const dedupKey = txId ? `id_${txId}` : `conn_${tx.connectorId || 1}_${timeKey}`;
-
-          if (!dedupMap.has(dedupKey)) {
-            dedupMap.set(dedupKey, tx);
-          } else {
-            const existing = dedupMap.get(dedupKey);
-            // Always prefer Completed session over in-progress/charging session
-            if (tx.status === 'Completed' || (existing.status !== 'Completed' && (Number(tx.cost) || 0) >= (Number(existing.cost) || 0))) {
-              dedupMap.set(dedupKey, { ...existing, ...tx });
-            }
-          }
-        }
-
-        const sorted = Array.from(dedupMap.values()).sort((a, b) => {
-          const timeA = new Date(a.startTime || a.createdAt || a.stopTime || 0).getTime();
-          const timeB = new Date(b.startTime || b.createdAt || b.stopTime || 0).getTime();
-          return timeB - timeA;
-        });
-
-        setTransactions(sorted);
-        saveLocalTransactions(cleanId, sorted, user?.uid);
-
-        setDataSource('cloud');
-        setLastSyncTime(new Date().toISOString());
-        setLoading(false);
-        setRefreshing(false);
-      },
-      (err) => {
-        console.warn('[History Realtime] Firestore onSnapshot note:', err.message);
+    // Periodic direct server poll (every 10s)
+    const interval = setInterval(() => {
+      if (isMounted) {
         loadHistory(false);
       }
-    );
-
-    // Instant RTDB push sync for recently completed session
-    let unsubscribeRtdb: (() => void) | undefined;
-    try {
-      const lastTxRef = ref(rtdb, livePath(cleanId, 'lastCompletedTx'));
-      unsubscribeRtdb = onValue(lastTxRef, (snapshot) => {
-        if (!isMounted) return;
-        const completed = snapshot.val();
-        if (completed && (completed.transactionId || completed.id)) {
-          setTransactions((prev) => {
-            const map = new Map<string, any>();
-            for (const item of prev) {
-              const key = String(item.transactionId || item.id || '').trim();
-              if (key) map.set(key, item);
-            }
-            const compKey = String(completed.transactionId || completed.id || '').trim();
-            const existing = map.get(compKey) || {};
-            map.set(compKey, {
-              ...existing,
-              ...completed,
-              id: compKey,
-              transactionId: completed.transactionId || existing.transactionId || compKey,
-            });
-            const merged = Array.from(map.values()).sort((a, b) => {
-              const timeA = new Date(a.startTime || a.createdAt || a.stopTime || 0).getTime();
-              const timeB = new Date(b.startTime || b.createdAt || b.stopTime || 0).getTime();
-              return timeB - timeA;
-            });
-            saveLocalTransactions(cleanId, merged, user?.uid);
-            return merged;
-          });
-          setDataSource('cloud');
-          setLastSyncTime(new Date().toISOString());
-        }
-      });
-    } catch (_e) {}
+    }, 10000);
 
     return () => {
       isMounted = false;
-      unsubscribeFs();
-      if (unsubscribeRtdb) unsubscribeRtdb();
+      clearInterval(interval);
     };
   }, [CHARGER_ID, user?.uid, loadHistory]);
 
-  // Isolate transactions per user account and deduplicate by transactionId
+  // Deduplicate by transactionId
   const scopedTransactions = useMemo(() => {
-    const list = accountScope === 'all'
-      ? transactions
-      : transactions.filter((tx) => {
-          if (tx.userId) return tx.userId === user?.uid;
-          if (tx.userEmail) return tx.userEmail.toLowerCase() === (user?.email || '').toLowerCase();
-          return true;
-        });
+    const list = transactions;
 
     // Deduplicate by transactionId or start minute so duplicate records never display twice
     const map = new Map<string, any>();
@@ -243,11 +144,16 @@ export default function HistoryScreen() {
       }
     }
     return Array.from(map.values()).sort((a, b) => {
+      const idA = Number(a.transactionId || a.id) || 0;
+      const idB = Number(b.transactionId || b.id) || 0;
+      if (idA > 0 && idB > 0 && idA !== idB) {
+        return idB - idA;
+      }
       const timeA = new Date(a.startTime || a.createdAt || a.stopTime || 0).getTime();
       const timeB = new Date(b.startTime || b.createdAt || b.stopTime || 0).getTime();
       return timeB - timeA;
     });
-  }, [transactions, accountScope, user]);
+  }, [transactions]);
 
   // 2. Map transactions to date keys (YYYY-MM-DD)
   const getTxDateKey = (tx: any): string => {
@@ -314,14 +220,42 @@ export default function HistoryScreen() {
     }
   };
 
+  // Automatically adjust calendar view month to the latest available records if none exist in the current calendar month
+  useEffect(() => {
+    if (scopedTransactions.length > 0) {
+      const currentMonthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const hasThisMonth = scopedTransactions.some((tx) => getTxDateKey(tx).startsWith(currentMonthPrefix));
+      if (!hasThisMonth) {
+        const first = scopedTransactions[0];
+        const ts = first.startTime || first.createdAt || first.stopTime;
+        if (ts) {
+          const d = new Date(ts);
+          if (!isNaN(d.getTime())) {
+            setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
+          }
+        }
+      }
+    }
+  }, [scopedTransactions, year, month]);
+
   // 5. Filter Transactions Based on Active Filter
   const filteredTransactions = useMemo(() => {
+    if (filterMode === 'all') {
+      return scopedTransactions;
+    }
+
+    const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
+
     return scopedTransactions.filter((tx) => {
       const txKey = getTxDateKey(tx);
       if (!txKey) return false;
 
       if (filterMode === 'today') {
-        return txKey === todayKey;
+        if (hasTodayTx) {
+          return txKey === todayKey;
+        }
+        // If today has no records (e.g. server clock offset or new day), show the latest active sessions
+        return true;
       }
       if (filterMode === 'day') {
         return txKey === selectedDate;
@@ -348,7 +282,16 @@ export default function HistoryScreen() {
   }, 0);
 
   const activeFilterTitle = useMemo(() => {
-    if (filterMode === 'today') return 'Today';
+    if (filterMode === 'all') {
+      return 'All Sessions';
+    }
+    if (filterMode === 'today') {
+      const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
+      if (!hasTodayTx && scopedTransactions.length > 0) {
+        return 'Latest Sessions';
+      }
+      return 'Today';
+    }
     if (filterMode === 'day') {
       const d = new Date(selectedDate + 'T00:00:00');
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -363,7 +306,7 @@ export default function HistoryScreen() {
     }
     if (filterMode === 'month') return monthName;
     return 'All Records';
-  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName]);
+  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName, scopedTransactions, todayKey]);
 
   const formattedSyncTime = useMemo(() => {
     if (!lastSyncTime) return null;
@@ -380,9 +323,10 @@ export default function HistoryScreen() {
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
+    <SwipeableTabScreen currentTab="history">
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -394,14 +338,6 @@ export default function HistoryScreen() {
       {/* Screen Title */}
       <View style={styles.topHeader}>
         <Text style={styles.pageTitle}>CHARGING HISTORY</Text>
-        <TouchableOpacity
-          style={styles.collapseToggle}
-          onPress={() => setCalendarCollapsed((prev) => !prev)}
-        >
-          <Text style={styles.collapseToggleText}>
-            {calendarCollapsed ? '📅 Show Calendar' : '📅 Hide Calendar'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
       {/* Storage Source & Sync Bar */}
@@ -432,30 +368,17 @@ export default function HistoryScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Account Scope Switcher: All Station Activity vs My Sessions */}
-      <View style={styles.scopeSelector}>
-        <TouchableOpacity
-          style={[styles.scopeBtn, accountScope === 'all' && styles.scopeBtnActive]}
-          onPress={() => setAccountScope('all')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.scopeBtnText, accountScope === 'all' && styles.scopeBtnTextActive]}>
-            ⚡ All Station Activity
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.scopeBtn, accountScope === 'mine' && styles.scopeBtnActive]}
-          onPress={() => setAccountScope('mine')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.scopeBtnText, accountScope === 'mine' && styles.scopeBtnTextActive]}>
-            👤 My Sessions
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       {/* Filter Mode Tabs */}
       <View style={styles.filterTabsRow}>
+        <TouchableOpacity
+          style={[styles.filterTab, filterMode === 'all' && styles.filterTabActive]}
+          onPress={() => setFilterMode('all')}
+        >
+          <Text style={[styles.filterTabText, filterMode === 'all' && styles.filterTabTextActive]}>
+            All
+          </Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.filterTab, filterMode === 'today' && styles.filterTabActive]}
           onPress={() => {
@@ -775,6 +698,7 @@ export default function HistoryScreen() {
 
       <View style={{ height: 60 }} />
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

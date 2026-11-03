@@ -19,6 +19,16 @@ Notifications.setNotificationHandler({
   }),
 });
 
+if (Platform.OS === 'android') {
+  Notifications.setNotificationChannelAsync('charging-status', {
+    name: 'Charging Status & Alerts',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#0284C7',
+    sound: 'default',
+  }).catch(() => {});
+}
+
 /**
  * Request notification permissions and register push token directly with server and Firestore
  */
@@ -133,6 +143,16 @@ export async function scheduleLocalNotification(title: string, body: string, dat
       if (req.status !== 'granted') return;
     }
 
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('charging-status', {
+        name: 'Charging Status & Alerts',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#0284C7',
+        sound: 'default',
+      }).catch(() => {});
+    }
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -140,6 +160,7 @@ export async function scheduleLocalNotification(title: string, body: string, dat
         data,
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.HIGH,
+        ...(Platform.OS === 'android' ? { channelId: 'charging-status' } : {}),
       },
       trigger: null, // Send immediately
     });

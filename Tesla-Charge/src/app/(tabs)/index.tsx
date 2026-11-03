@@ -356,7 +356,11 @@ export default function HomeScreen() {
   // Track true server connectivity and charger online status
   const isOnline = isSimulating || (
     isServerReachable !== false &&
-    (isWebSocketConnected || chargerData?.status === 'Online' || isActivelyEngaged)
+    (isWebSocketConnected ||
+      chargerData?.status === 'Online' ||
+      isActivelyEngaged ||
+      (connector1Data && connector1Data.status !== 'Unavailable') ||
+      (connector2Data && connector2Data.status !== 'Unavailable'))
   );
 
   const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
@@ -425,16 +429,22 @@ export default function HomeScreen() {
   const currentA = isSimulating ? simGunA.current : Number(tel1?.currentL1 || 0);
   const socA = isSimulating ? (simGunA.soc > 0 ? simGunA.soc : null) : (typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null);
 
-  // Session energy delivered for Gun A
-  const txA = activeTx1Data || connector1Data?.activeTx;
-  const deliveredA = Number(txA?.energyDeliveredKwh) || (txA?.energyDeliveredWh ? Number((txA.energyDeliveredWh / 1000).toFixed(2)) : 0);
+  // Helpers to safely resolve Gun A / Gun B active transactions
+  const isTxForGunA = (tx: any) => tx && (Number(tx.connectorId || tx.connector_id) === 1 || (!tx.connectorId && !tx.connector_id));
+  const isTxForGunB = (tx: any) => tx && Number(tx.connectorId || tx.connector_id) === 2;
+
+  // Session energy delivered for Gun A - anchored to authoritative server values
+  const txA = activeTx1Data || connector1Data?.activeTx || (isTxForGunA(activeTxData) ? activeTxData : null);
+  const serverCostA = Number(txA?.cost) || (isTxForGunA(activeTxData) ? Number(activeTxData?.cost) : 0) || 0;
+  const serverEnergyA = Number(txA?.energyDeliveredKwh) || (txA?.energyDeliveredWh ? Number((txA.energyDeliveredWh / 1000).toFixed(2)) : 0) || (isTxForGunA(activeTxData) ? (Number(activeTxData?.energyDeliveredKwh) || (Number(activeTxData?.energyDeliveredWh) / 1000) || 0) : 0);
+  const deliveredA = serverEnergyA > 0 ? serverEnergyA : (txA?.energyDeliveredWh ? Number((txA.energyDeliveredWh / 1000).toFixed(2)) : 0);
   const mStartA = txA?.meterStart !== undefined && txA?.meterStart !== null && Number(txA.meterStart) > 0 ? Number(txA.meterStart) : null;
   const currentEnergyWhA = tel1?.energyWh || (tel1?.energyKwh ? Math.round(Number(tel1.energyKwh) * 1000) : null);
   const computedA =
     mStartA !== null && currentEnergyWhA !== null && currentEnergyWhA >= mStartA
       ? Math.max(0, (currentEnergyWhA - mStartA) / 1000)
       : 0;
-  const baseEnergyA = computedA > 0 ? computedA : deliveredA > 0 ? deliveredA : 0;
+  const baseEnergyA = Math.max(serverEnergyA, computedA, deliveredA);
   const sessionEnergyA = isSimulating ? simGunA.energyKwh : baseEnergyA + liveAccumulatedA;
   const lifetimeMeterA = tel1?.energyKwh || (tel1?.energyWh ? (tel1.energyWh / 1000).toFixed(2) : '0.00');
   const energyA = isSimulating ? simGunA.energyKwh.toFixed(2) : sessionEnergyA.toFixed(2);
@@ -446,16 +456,18 @@ export default function HomeScreen() {
   const currentB = isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0);
   const socB = isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null);
 
-  // Session energy delivered for Gun B
-  const txB = activeTx2Data || connector2Data?.activeTx;
-  const deliveredB = Number(txB?.energyDeliveredKwh) || (txB?.energyDeliveredWh ? Number((txB.energyDeliveredWh / 1000).toFixed(2)) : 0);
+  // Session energy delivered for Gun B - anchored to authoritative server values
+  const txB = activeTx2Data || connector2Data?.activeTx || (isTxForGunB(activeTxData) ? activeTxData : null);
+  const serverCostB = Number(txB?.cost) || (isTxForGunB(activeTxData) ? Number(activeTxData?.cost) : 0) || 0;
+  const serverEnergyB = Number(txB?.energyDeliveredKwh) || (txB?.energyDeliveredWh ? Number((txB.energyDeliveredWh / 1000).toFixed(2)) : 0) || (isTxForGunB(activeTxData) ? (Number(activeTxData?.energyDeliveredKwh) || (Number(activeTxData?.energyDeliveredWh) / 1000) || 0) : 0);
+  const deliveredB = serverEnergyB > 0 ? serverEnergyB : (txB?.energyDeliveredWh ? Number((txB.energyDeliveredWh / 1000).toFixed(2)) : 0);
   const mStartB = txB?.meterStart !== undefined && txB?.meterStart !== null && Number(txB.meterStart) > 0 ? Number(txB.meterStart) : null;
   const currentEnergyWhB = tel2?.energyWh || (tel2?.energyKwh ? Math.round(Number(tel2.energyKwh) * 1000) : null);
   const computedB =
     mStartB !== null && currentEnergyWhB !== null && currentEnergyWhB >= mStartB
       ? Math.max(0, (currentEnergyWhB - mStartB) / 1000)
       : 0;
-  const baseEnergyB = computedB > 0 ? computedB : deliveredB > 0 ? deliveredB : 0;
+  const baseEnergyB = Math.max(serverEnergyB, computedB, deliveredB);
   const sessionEnergyB = isSimulating ? simGunB.energyKwh : baseEnergyB + liveAccumulatedB;
   const lifetimeMeterB = tel2?.energyKwh || (tel2?.energyWh ? (tel2.energyWh / 1000).toFixed(2) : '0.00');
   const energyB = isSimulating ? simGunB.energyKwh.toFixed(2) : sessionEnergyB.toFixed(2);
@@ -463,15 +475,29 @@ export default function HomeScreen() {
   // Total Power
   const totalPower = is30kW ? Number(powerA).toFixed(1) : (powerA + powerB).toFixed(1);
 
-  // Real-time Cost Calculation using Tariff Rate (no decimals, clean rounded integer)
+  // Real-time Cost Calculation using Tariff Rate (anchored to server-provided session cost)
   const rate = chargerData?.tariffRate && Number(chargerData.tariffRate) > 0
     ? Number(chargerData.tariffRate)
     : tariffRate && tariffRate > 0
     ? tariffRate
     : 125;
   const curr = 'PKR';
-  const costA = isSimulating ? Math.round(simGunA.cost).toString() : Math.round(sessionEnergyA * rate).toString();
-  const costB = isSimulating ? Math.round(simGunB.cost).toString() : Math.round(sessionEnergyB * rate).toString();
+  const calcCostA = Math.round(sessionEnergyA * rate);
+  const baseCostA = Math.max(serverCostA, calcCostA);
+  const costA = isSimulating
+    ? Math.round(simGunA.cost).toString()
+    : (baseCostA > 0
+        ? Math.round(baseCostA + (liveAccumulatedA * rate)).toString()
+        : calcCostA.toString());
+
+  const calcCostB = Math.round(sessionEnergyB * rate);
+  const baseCostB = Math.max(serverCostB, calcCostB);
+  const costB = isSimulating
+    ? Math.round(simGunB.cost).toString()
+    : (baseCostB > 0
+        ? Math.round(baseCostB + (liveAccumulatedB * rate)).toString()
+        : calcCostB.toString());
+
   const totalEnergy = is30kW
     ? energyA
     : (sessionEnergyA + sessionEnergyB).toFixed(2);
@@ -531,26 +557,36 @@ export default function HomeScreen() {
     setLiveAccumulatedB(0);
   }, [tel2?.energyWh, tel2?.energyKwh]);
 
-  // Active Battery State of Charge (SoC %)
-  const activeSocA = isSimulating
-    ? (simGunA.soc > 0 ? simGunA.soc : null)
-    : typeof tel1?.soc === 'number' && tel1.soc > 0
-    ? tel1.soc
-    : typeof activeTx1Data?.soc === 'number' && activeTx1Data.soc > 0
-    ? activeTx1Data.soc
-    : typeof activeTx1Data?.socCurrent === 'number' && activeTx1Data.socCurrent > 0
-    ? activeTx1Data.socCurrent
-    : null;
+  // Active Battery State of Charge (SoC %) - safely converted to number from hardware/server
+  const rawSocA = isSimulating
+    ? simGunA.soc
+    : (Number(tel1?.soc) > 0
+        ? Number(tel1.soc)
+        : Number(txA?.socCurrent) > 0
+        ? Number(txA.socCurrent)
+        : Number(txA?.soc) > 0
+        ? Number(txA.soc)
+        : (isTxForGunA(activeTxData) && Number(activeTxData?.socCurrent) > 0)
+        ? Number(activeTxData.socCurrent)
+        : (isTxForGunA(activeTxData) && Number(activeTxData?.soc) > 0)
+        ? Number(activeTxData.soc)
+        : null);
+  const activeSocA = (typeof rawSocA === 'number' && rawSocA > 0 && rawSocA <= 100) ? Math.round(rawSocA) : null;
 
-  const activeSocB = isSimulating
-    ? (simGunB.soc > 0 ? simGunB.soc : null)
-    : typeof tel2?.soc === 'number' && tel2.soc > 0
-    ? tel2.soc
-    : typeof activeTx2Data?.soc === 'number' && activeTx2Data.soc > 0
-    ? activeTx2Data.soc
-    : typeof activeTx2Data?.socCurrent === 'number' && activeTx2Data.socCurrent > 0
-    ? activeTx2Data.socCurrent
-    : null;
+  const rawSocB = isSimulating
+    ? simGunB.soc
+    : (Number(tel2?.soc) > 0
+        ? Number(tel2.soc)
+        : Number(txB?.socCurrent) > 0
+        ? Number(txB.socCurrent)
+        : Number(txB?.soc) > 0
+        ? Number(txB.soc)
+        : (isTxForGunB(activeTxData) && Number(activeTxData?.socCurrent) > 0)
+        ? Number(activeTxData.socCurrent)
+        : (isTxForGunB(activeTxData) && Number(activeTxData?.soc) > 0)
+        ? Number(activeTxData.soc)
+        : null);
+  const activeSocB = (typeof rawSocB === 'number' && rawSocB > 0 && rawSocB <= 100) ? Math.round(rawSocB) : null;
 
   // Gun charging detection
   const isGunACharging = isOnline && status1 === 'Charging';

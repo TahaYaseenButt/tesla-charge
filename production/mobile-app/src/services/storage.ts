@@ -260,6 +260,11 @@ export async function fetchTransactionsWithCacheStrategy(
   const cleanFinalData = Array.from(dedupMap.values());
 
   cleanFinalData.sort((a, b) => {
+    const idA = Number(a.transactionId || a.id) || 0;
+    const idB = Number(b.transactionId || b.id) || 0;
+    if (idA > 0 && idB > 0 && idA !== idB) {
+      return idB - idA;
+    }
     const timeA = new Date(a.startTime || a.createdAt || 0).getTime();
     const timeB = new Date(b.startTime || b.createdAt || 0).getTime();
     return timeB - timeA;

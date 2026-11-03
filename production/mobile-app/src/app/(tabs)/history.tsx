@@ -19,7 +19,7 @@ import {
 import { HistorySkeleton } from '@/components/skeleton';
 import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
-type FilterMode = 'today' | 'day' | 'range' | 'month';
+type FilterMode = 'all' | 'today' | 'day' | 'range' | 'month';
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -144,6 +144,11 @@ export default function HistoryScreen() {
       }
     }
     return Array.from(map.values()).sort((a, b) => {
+      const idA = Number(a.transactionId || a.id) || 0;
+      const idB = Number(b.transactionId || b.id) || 0;
+      if (idA > 0 && idB > 0 && idA !== idB) {
+        return idB - idA;
+      }
       const timeA = new Date(a.startTime || a.createdAt || a.stopTime || 0).getTime();
       const timeB = new Date(b.startTime || b.createdAt || b.stopTime || 0).getTime();
       return timeB - timeA;
@@ -215,14 +220,42 @@ export default function HistoryScreen() {
     }
   };
 
+  // Automatically adjust calendar view month to the latest available records if none exist in the current calendar month
+  useEffect(() => {
+    if (scopedTransactions.length > 0) {
+      const currentMonthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const hasThisMonth = scopedTransactions.some((tx) => getTxDateKey(tx).startsWith(currentMonthPrefix));
+      if (!hasThisMonth) {
+        const first = scopedTransactions[0];
+        const ts = first.startTime || first.createdAt || first.stopTime;
+        if (ts) {
+          const d = new Date(ts);
+          if (!isNaN(d.getTime())) {
+            setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
+          }
+        }
+      }
+    }
+  }, [scopedTransactions, year, month]);
+
   // 5. Filter Transactions Based on Active Filter
   const filteredTransactions = useMemo(() => {
+    if (filterMode === 'all') {
+      return scopedTransactions;
+    }
+
+    const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
+
     return scopedTransactions.filter((tx) => {
       const txKey = getTxDateKey(tx);
       if (!txKey) return false;
 
       if (filterMode === 'today') {
-        return txKey === todayKey;
+        if (hasTodayTx) {
+          return txKey === todayKey;
+        }
+        // If today has no records (e.g. server clock offset or new day), show the latest active sessions
+        return true;
       }
       if (filterMode === 'day') {
         return txKey === selectedDate;
@@ -249,7 +282,16 @@ export default function HistoryScreen() {
   }, 0);
 
   const activeFilterTitle = useMemo(() => {
-    if (filterMode === 'today') return 'Today';
+    if (filterMode === 'all') {
+      return 'All Sessions';
+    }
+    if (filterMode === 'today') {
+      const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
+      if (!hasTodayTx && scopedTransactions.length > 0) {
+        return 'Latest Sessions';
+      }
+      return 'Today';
+    }
     if (filterMode === 'day') {
       const d = new Date(selectedDate + 'T00:00:00');
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -264,7 +306,7 @@ export default function HistoryScreen() {
     }
     if (filterMode === 'month') return monthName;
     return 'All Records';
-  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName]);
+  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName, scopedTransactions, todayKey]);
 
   const formattedSyncTime = useMemo(() => {
     if (!lastSyncTime) return null;
@@ -328,6 +370,15 @@ export default function HistoryScreen() {
 
       {/* Filter Mode Tabs */}
       <View style={styles.filterTabsRow}>
+        <TouchableOpacity
+          style={[styles.filterTab, filterMode === 'all' && styles.filterTabActive]}
+          onPress={() => setFilterMode('all')}
+        >
+          <Text style={[styles.filterTabText, filterMode === 'all' && styles.filterTabTextActive]}>
+            All
+          </Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.filterTab, filterMode === 'today' && styles.filterTabActive]}
           onPress={() => {

@@ -2,9 +2,10 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { doc, setDoc } from 'firebase/firestore';
-import { ref, set } from 'firebase/database';
-import { db, rtdb } from '@/config/firebase';
+import { apiRequest } from '@/config/api';
+import { firebaseConfig } from '@/config/firebase';
+
+const DEFAULT_EAS_PROJECT_ID = 'f87c91ae-f185-4d81-a797-ad303bf0d8b9';
 
 // Configure notification behavior when app is in foreground
 Notifications.setNotificationHandler({
@@ -18,11 +19,22 @@ Notifications.setNotificationHandler({
   }),
 });
 
+if (Platform.OS === 'android') {
+  Notifications.setNotificationChannelAsync('charging-status', {
+    name: 'Charging Status & Alerts',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#0284C7',
+    sound: 'default',
+  }).catch(() => {});
+}
+
 /**
- * Request notification permissions and register push token in Firebase
+ * Request notification permissions and register push token directly with server and Firestore
  */
 export async function registerForPushNotificationsAsync(userId?: string, chargerId: string = 'charger1') {
   let token: string | null = null;
+  const cleanId = (chargerId || 'charger1').trim().toLowerCase();
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('charging-status', {
@@ -34,7 +46,7 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
     });
   }
 
-  if (Device.isDevice) {
+  try {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
@@ -48,41 +60,73 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
       return null;
     }
 
-    try {
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-      const pushTokenData = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-      token = pushTokenData.data;
-      console.log('[Notifications] Expo Push Token obtained:', token);
-    } catch (err: any) {
-      console.warn('[Notifications] Error getting push token:', err.message);
+    if (Device.isDevice) {
+      try {
+        const projectId =
+          Constants.expoConfig?.extra?.eas?.projectId ??
+          Constants.easConfig?.projectId ??
+          DEFAULT_EAS_PROJECT_ID;
+
+        const pushTokenData = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+        token = pushTokenData.data;
+        console.log('[Notifications] Expo Push Token obtained:', token);
+      } catch (err: any) {
+        console.warn('[Notifications] Error getting push token:', err.message);
+      }
+    } else {
+      console.log('[Notifications] Must use physical device for remote push notifications.');
     }
-  } else {
-    console.log('[Notifications] Must use physical device for remote push notifications.');
+  } catch (permErr: any) {
+    console.warn('[Notifications] Permission check error:', permErr.message);
   }
 
   if (token) {
-    const safeToken = token.replace(/[^a-zA-Z0-9_-]/g, '_');
-    
-    // Save to RTDB live push tokens list for this charger
+    // 1. Send to server backend
     try {
-      await set(ref(rtdb, `notifications/subscribers/${chargerId}/${safeToken}`), {
-        token,
-        userId: userId || 'anonymous',
-        platform: Platform.OS,
-        updatedAt: new Date().toISOString(),
+      await apiRequest('/api/notifications/register-token', {
+        method: 'POST',
+        body: {
+          token,
+          chargerId: cleanId,
+          userId: userId || 'anonymous',
+          platform: Platform.OS,
+        },
       });
-    } catch (e: any) {
-      console.warn('[Notifications] Could not save token to RTDB:', e.message);
-    }
+    } catch (_e) {}
 
-    // Save to Firestore user doc if logged in
-    if (userId && userId !== 'admin_local') {
-      try {
-        await setDoc(doc(db, 'users', userId), { pushToken: token, updatedAt: new Date().toISOString() }, { merge: true });
-      } catch (e: any) {
-        console.warn('[Notifications] Could not save token to Firestore:', e.message);
+    // 2. Direct Firestore fallback persistence so server can always reach this device
+    try {
+      if (userId && userId !== 'admin_local' && userId !== 'anonymous') {
+        const userUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${encodeURIComponent(
+          userId
+        )}?updateMask.fieldPaths=pushToken&updateMask.fieldPaths=pushTokenUpdatedAt&updateMask.fieldPaths=defaultChargerId`;
+        fetch(userUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              pushToken: { stringValue: token },
+              pushTokenUpdatedAt: { stringValue: new Date().toISOString() },
+              defaultChargerId: { stringValue: cleanId },
+            },
+          }),
+        }).catch(() => {});
       }
-    }
+
+      const chargerUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/chargers/${encodeURIComponent(
+        cleanId
+      )}?updateMask.fieldPaths=lastPushToken&updateMask.fieldPaths=lastPushTokenUpdatedAt`;
+      fetch(chargerUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            lastPushToken: { stringValue: token },
+            lastPushTokenUpdatedAt: { stringValue: new Date().toISOString() },
+          },
+        }),
+      }).catch(() => {});
+    } catch (_err) {}
   }
 
   return token;
@@ -93,6 +137,22 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
  */
 export async function scheduleLocalNotification(title: string, body: string, data: any = {}) {
   try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      const req = await Notifications.requestPermissionsAsync();
+      if (req.status !== 'granted') return;
+    }
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('charging-status', {
+        name: 'Charging Status & Alerts',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#0284C7',
+        sound: 'default',
+      }).catch(() => {});
+    }
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -100,10 +160,13 @@ export async function scheduleLocalNotification(title: string, body: string, dat
         data,
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.HIGH,
+        ...(Platform.OS === 'android' ? { channelId: 'charging-status' } : {}),
       },
       trigger: null, // Send immediately
     });
+    console.log(`[Notification] Fired: "${title}" - "${body}"`);
   } catch (err: any) {
     console.warn('[Notifications] Error scheduling local notification:', err.message);
   }
 }
+
