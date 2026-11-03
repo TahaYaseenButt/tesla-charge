@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 
 const STORAGE_SERVER_KEY = '@tesla_charge_server_url';
 const STORAGE_TOKEN_KEY = '@tesla_charge_jwt_token';
@@ -117,16 +118,23 @@ export function subscribeToLiveStatus(
   async function poll() {
     if (!isSubscribed) return;
     try {
-      const res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 5000 });
+      const res = await apiRequest(`/api/status?chargerId=${encodeURIComponent(cleanId)}`, { timeoutMs: 10000 });
       if (res && isSubscribed && onData) {
         const live = res.live || {};
+        const isOnline =
+          res.isConnected === true ||
+          String(res.status || '').toLowerCase() === 'online' ||
+          String(live.charger?.status || '').toLowerCase() === 'online' ||
+          Boolean(live.charger?.isOnline) ||
+          Boolean(res.isOnline);
+
         const normalized = {
           ...res,
           charger: res.charger || live.charger,
           connectors: res.connectors || live.connectors,
           activeTransaction: res.activeTransaction || live.activeTransaction,
           lastCompletedTx: res.lastCompletedTx || live.lastCompletedTx,
-          isConnected: res.isConnected ?? (res.status === 'Online' || live.charger?.status === 'Online'),
+          isConnected: isOnline,
         };
         onData(normalized);
       }
@@ -140,8 +148,16 @@ export function subscribeToLiveStatus(
   // Fast high-frequency polling (every 2.5 seconds, direct to server with minimal bandwidth)
   intervalId = setInterval(poll, 2500);
 
+  // Auto-refresh when app transitions from background to foreground
+  const appStateSub = AppState.addEventListener('change', (nextState) => {
+    if (nextState === 'active' && isSubscribed) {
+      poll();
+    }
+  });
+
   return () => {
     isSubscribed = false;
     if (intervalId) clearInterval(intervalId);
+    appStateSub.remove();
   };
 }

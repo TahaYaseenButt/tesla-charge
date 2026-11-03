@@ -357,10 +357,31 @@ export default function HomeScreen() {
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
+  // Helper to determine if charger is actively alive and connected
+  const isChargerStatusAlive = () => {
+    const s = String(chargerData?.status || '').toLowerCase();
+    return s === 'online' || s === 'available' || s === 'charging' || s === 'preparing' || s === 'suspendedev' || s === 'suspendedevse';
+  };
+
+  const isChargerHeartbeatFresh = () => {
+    const hb = chargerData?.lastHeartbeat || chargerData?.last_heartbeat;
+    if (!hb) return false;
+    const diffMs = Math.abs(Date.now() - new Date(hb).getTime());
+    return diffMs < 180000; // within 3 minutes
+  };
+
+  const hasLiveConnectorActivity =
+    (connector1Data && connector1Data.status && connector1Data.status !== 'Unavailable') ||
+    (connector2Data && connector2Data.status && connector2Data.status !== 'Unavailable');
+
   // Track true server connectivity and charger online status
   const isOnline = isSimulating || (
     isServerReachable !== false &&
-    (isWebSocketConnected === true || chargerData?.status === 'Online')
+    (isWebSocketConnected === true ||
+      isChargerStatusAlive() ||
+      Boolean(chargerData?.isOnline) ||
+      hasLiveConnectorActivity ||
+      isChargerHeartbeatFresh())
   );
 
   const status1 = isOnline ? rawStatus1 : 'Unavailable';
