@@ -23,8 +23,8 @@ type FilterMode = 'all' | 'today' | 'day' | 'range' | 'month';
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Helper to format Date into YYYY-MM-DD in Asia/Karachi (PKT) time
-function formatDateKey(date: Date): string {
+// Helper to get exact YYYY-MM-DD and date parts in Asia/Karachi (PKT) time
+function getKarachiDateParts(date: Date = new Date()): { year: number; month: number; day: number; dateStr: string } {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Karachi',
@@ -36,13 +36,31 @@ function formatDateKey(date: Date): string {
     for (const p of parts) {
       map[p.type] = p.value;
     }
-    return `${map.year}-${map.month}-${map.day}`;
+    const year = Number(map.year);
+    const month = Number(map.month) - 1; // 0-indexed month
+    const day = Number(map.day);
+    return {
+      year,
+      month,
+      day,
+      dateStr: `${map.year}-${map.month}-${map.day}`,
+    };
   } catch (_e) {
     const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    const m = date.getMonth();
+    const d = date.getDate();
+    return {
+      year: y,
+      month: m,
+      day: d,
+      dateStr: `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+    };
   }
+}
+
+// Helper to format Date into YYYY-MM-DD in Asia/Karachi (PKT) time
+function formatDateKey(date: Date): string {
+  return getKarachiDateParts(date).dateStr;
 }
 
 export default function HistoryScreen() {
@@ -55,9 +73,9 @@ export default function HistoryScreen() {
   const [dataSource, setDataSource] = useState<'local' | 'cloud'>('local');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
-
-  // Today key
-  const todayKey = useMemo(() => formatDateKey(new Date()), []);
+  // Today parts in Asia/Karachi
+  const todayParts = useMemo(() => getKarachiDateParts(), []);
+  const todayKey = todayParts.dateStr;
 
   // Filter state
   const [filterMode, setFilterMode] = useState<FilterMode>('today');
@@ -65,8 +83,8 @@ export default function HistoryScreen() {
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
 
-  // Calendar month view
-  const [viewDate, setViewDate] = useState<Date>(new Date());
+  // Calendar month view initialized to Karachi current year and month
+  const [viewDate, setViewDate] = useState<Date>(() => new Date(todayParts.year, todayParts.month, 1));
   const [calendarCollapsed, setCalendarCollapsed] = useState<boolean>(false);
 
   // 1. Fetch transactions with local-first cache strategy (fallback & pull-to-refresh)
@@ -213,8 +231,7 @@ export default function HistoryScreen() {
 
   // Handle Calendar Day Tap
   const handleDayPress = (dayNum: number) => {
-    const d = new Date(year, month, dayNum);
-    const dateStr = formatDateKey(d);
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
 
     if (filterMode === 'range') {
       if (!rangeStart || (rangeStart && rangeEnd)) {
@@ -229,28 +246,10 @@ export default function HistoryScreen() {
         }
       }
     } else {
-      setFilterMode('day');
       setSelectedDate(dateStr);
+      setFilterMode(dateStr === todayKey ? 'today' : 'day');
     }
   };
-
-  // Automatically adjust calendar view month to the latest available records if none exist in the current calendar month
-  useEffect(() => {
-    if (scopedTransactions.length > 0) {
-      const currentMonthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
-      const hasThisMonth = scopedTransactions.some((tx) => getTxDateKey(tx).startsWith(currentMonthPrefix));
-      if (!hasThisMonth) {
-        const first = scopedTransactions[0];
-        const ts = first.startTime || first.createdAt || first.stopTime;
-        if (ts) {
-          const d = new Date(ts);
-          if (!isNaN(d.getTime())) {
-            setViewDate(new Date(d.getFullYear(), d.getMonth(), 1));
-          }
-        }
-      }
-    }
-  }, [scopedTransactions, year, month]);
 
   // 5. Filter Transactions Based on Active Filter
   const filteredTransactions = useMemo(() => {
@@ -258,18 +257,12 @@ export default function HistoryScreen() {
       return scopedTransactions;
     }
 
-    const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
-
     return scopedTransactions.filter((tx) => {
       const txKey = getTxDateKey(tx);
       if (!txKey) return false;
 
       if (filterMode === 'today') {
-        if (hasTodayTx) {
-          return txKey === todayKey;
-        }
-        // If today has no records (e.g. server clock offset or new day), show the latest active sessions
-        return true;
+        return txKey === todayKey;
       }
       if (filterMode === 'day') {
         return txKey === selectedDate;
@@ -299,16 +292,13 @@ export default function HistoryScreen() {
     if (filterMode === 'all') {
       return 'All Sessions';
     }
-    if (filterMode === 'today') {
-      const hasTodayTx = scopedTransactions.some((tx) => getTxDateKey(tx) === todayKey);
-      if (!hasTodayTx && scopedTransactions.length > 0) {
-        return 'Latest Sessions';
-      }
+    if (filterMode === 'today' || selectedDate === todayKey) {
       return 'Today';
     }
     if (filterMode === 'day') {
-      const d = new Date(selectedDate + 'T00:00:00');
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const [y, m, d] = selectedDate.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     }
     if (filterMode === 'range') {
       if (rangeStart && rangeEnd) {
@@ -320,7 +310,7 @@ export default function HistoryScreen() {
     }
     if (filterMode === 'month') return monthName;
     return 'All Records';
-  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName, scopedTransactions, todayKey]);
+  }, [filterMode, selectedDate, rangeStart, rangeEnd, monthName, todayKey]);
 
   const formattedSyncTime = useMemo(() => {
     if (!lastSyncTime) return null;
@@ -472,7 +462,7 @@ export default function HistoryScreen() {
             {/* Month Day Cells */}
             {Array.from({ length: daysInMonth }).map((_, i) => {
               const dayNum = i + 1;
-              const dateStr = formatDateKey(new Date(year, month, dayNum));
+              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
               const isToday = dateStr === todayKey;
 
               const isSingleSelected =
