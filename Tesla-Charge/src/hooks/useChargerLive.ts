@@ -1,31 +1,27 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue } from 'firebase/database';
-import { doc, onSnapshot, collection, query, where, limit } from 'firebase/firestore';
-import { db, rtdb, livePath } from '@/config/firebase';
+import { subscribeToLiveStatus, apiRequest } from '@/config/api';
 import {
   getLocalConnectorData,
   getLocalChargerData,
+  saveLocalConnectorData,
+  saveLocalChargerData,
 } from '@/services/storage';
-import { useSimulator } from '@/config/simulator';
-
-const CONNECTED_STATUSES = [
-  'Preparing',
-  'Charging',
-  'SuspendedEV',
-  'SuspendedEVSE',
-  'Finishing',
-];
 
 export interface LiveConnectorData {
   status: string;
   telemetry?: {
     voltage?: number;
     voltageL1?: number;
+    voltageL2?: number;
+    voltageL3?: number;
     currentL1?: number;
+    currentL2?: number;
+    currentL3?: number;
     powerKw?: number;
     energyWh?: number;
     energyKwh?: number;
     soc?: number;
+    cost?: number;
   };
   activeTx?: any;
 }
@@ -54,236 +50,93 @@ export function useChargerLive(chargerId: string) {
     });
   }, [cleanId]);
 
-  // 2. Server time offset (safe RTDB listener)
+  // 2. Direct Real-Time Server Subscription
   useEffect(() => {
-    try {
-      const offsetRef = ref(rtdb, '.info/serverTimeOffset');
-      const unsub = onValue(
-        offsetRef,
-        (snap) => {
-          setServerTimeOffset(snap.val() || 0);
+    const unsub = subscribeToLiveStatus(cleanId, (statusRes) => {
+      if (!statusRes) return;
+
+      const live = statusRes.live || {};
+      const charger = live.charger || {};
+      const connectors = live.connectors || [];
+
+      // Determine online state
+      const online = statusRes.isConnected || charger.status === 'Online';
+      setIsOnline(online);
+      if (charger.lastHeartbeat) setLastHeartbeat(charger.lastHeartbeat);
+
+      // Connector 1
+      const c1Raw = connectors.find((c: any) => c.connectorId === 1) || {};
+      const c1ActiveTx = (live.activeTransaction && live.activeTransaction.connector_id === 1) ? live.activeTransaction : null;
+      const c1Data: LiveConnectorData = {
+        status: c1Raw.status || (c1ActiveTx ? 'Charging' : 'Available'),
+        telemetry: {
+          voltage: c1Raw.telemetry?.voltage || 0,
+          voltageL1: c1Raw.telemetry?.voltageL1 || c1Raw.telemetry?.voltage || 0,
+          voltageL2: c1Raw.telemetry?.voltageL2 || 0,
+          voltageL3: c1Raw.telemetry?.voltageL3 || 0,
+          currentL1: c1Raw.telemetry?.currentL1 || 0,
+          powerKw: c1Raw.telemetry?.powerKw || 0,
+          energyWh: c1Raw.telemetry?.energyWh || 0,
+          energyKwh: c1Raw.telemetry?.energyKwh || 0,
+          soc: c1Raw.telemetry?.soc || 0,
+          cost: c1Raw.telemetry?.cost || (c1ActiveTx?.cost || 0),
         },
-        () => {}
-      );
-      return () => unsub();
-    } catch {}
-  }, []);
+        activeTx: c1ActiveTx,
+      };
+      setConnector1(c1Data);
+      saveLocalConnectorData(cleanId, '1', c1Data);
 
-  // 3. Firestore Real-Time listeners (100% resilient fallback if RTDB rules block access)
-  useEffect(() => {
-    // Station doc
-    const unsubCharger = onSnapshot(
-      doc(db, 'chargers', cleanId),
-      (snap) => {
-        if (snap.exists()) {
-          const d = snap.data();
-          if (d.status) setIsOnline(d.status === 'Online');
-          if (d.lastHeartbeat) setLastHeartbeat(d.lastHeartbeat);
+      // Connector 2
+      const c2Raw = connectors.find((c: any) => c.connectorId === 2) || {};
+      const c2ActiveTx = (live.activeTransaction && live.activeTransaction.connector_id === 2) ? live.activeTransaction : null;
+      const c2Data: LiveConnectorData = {
+        status: c2Raw.status || (c2ActiveTx ? 'Charging' : 'Available'),
+        telemetry: {
+          voltage: c2Raw.telemetry?.voltage || 0,
+          voltageL1: c2Raw.telemetry?.voltageL1 || c2Raw.telemetry?.voltage || 0,
+          voltageL2: c2Raw.telemetry?.voltageL2 || 0,
+          voltageL3: c2Raw.telemetry?.voltageL3 || 0,
+          currentL1: c2Raw.telemetry?.currentL1 || 0,
+          powerKw: c2Raw.telemetry?.powerKw || 0,
+          energyWh: c2Raw.telemetry?.energyWh || 0,
+          energyKwh: c2Raw.telemetry?.energyKwh || 0,
+          soc: c2Raw.telemetry?.soc || 0,
+          cost: c2Raw.telemetry?.cost || (c2ActiveTx?.cost || 0),
+        },
+        activeTx: c2ActiveTx,
+      };
+      setConnector2(c2Data);
+      saveLocalConnectorData(cleanId, '2', c2Data);
 
-          // If connector status summary is embedded in charger doc
-          if (d.connector_1_status) {
-            setConnector1((prev) => ({ ...prev, status: d.connector_1_status }));
-          }
-          if (d.connector_2_status) {
-            setConnector2((prev) => ({ ...prev, status: d.connector_2_status }));
-          }
-          setLoading(false);
-        }
-      },
-      () => {
-        setLoading(false);
-      }
-    );
+      saveLocalChargerData(cleanId, {
+        status: online ? 'Online' : 'Offline',
+        lastHeartbeat: charger.lastHeartbeat,
+      });
 
-    // Connector 1 doc
-    const unsubConn1 = onSnapshot(
-      doc(db, 'chargers', cleanId, 'connectors', '1'),
-      (snap) => {
-        if (snap.exists()) {
-          const c1 = snap.data();
-          const hasActive1 = c1.status === 'Charging' || c1.status === 'Finishing';
-          setConnector1((prev) => ({
-            status: c1.status || prev.status || 'Available',
-            telemetry: c1.telemetry || prev.telemetry || {},
-            activeTx: hasActive1 ? (c1.activeTx || prev.activeTx || null) : null,
-          }));
-          setLoading(false);
-        }
-      },
-      () => {}
-    );
-
-    // Connector 2 doc
-    const unsubConn2 = onSnapshot(
-      doc(db, 'chargers', cleanId, 'connectors', '2'),
-      (snap) => {
-        if (snap.exists()) {
-          const c2 = snap.data();
-          const hasActive2 = c2.status === 'Charging' || c2.status === 'Finishing';
-          setConnector2((prev) => ({
-            status: c2.status || prev.status || 'Available',
-            telemetry: c2.telemetry || prev.telemetry || {},
-            activeTx: hasActive2 ? (c2.activeTx || prev.activeTx || null) : null,
-          }));
-          setLoading(false);
-        }
-      },
-      () => {}
-    );
-
-    // Active transactions from transactions collection
-    const qActiveTx = query(
-      collection(db, 'transactions'),
-      where('chargePointId', '==', cleanId),
-      where('status', '==', 'Charging'),
-      limit(5)
-    );
-    const unsubActiveTx = onSnapshot(
-      qActiveTx,
-      (snap) => {
-        if (!snap.empty) {
-          snap.docs.forEach((d) => {
-            const tx: any = { id: d.id, ...d.data() };
-            if (Number(tx.connectorId || 1) === 1) {
-              setConnector1((prev) => ({
-                ...prev,
-                activeTx: { ...(prev.activeTx || {}), ...tx },
-              }));
-            } else if (Number(tx.connectorId) === 2) {
-              setConnector2((prev) => ({
-                ...prev,
-                activeTx: { ...(prev.activeTx || {}), ...tx },
-              }));
-            }
-          });
-        }
-      },
-      () => {}
-    );
+      setLoading(false);
+    });
 
     return () => {
-      unsubCharger();
-      unsubConn1();
-      unsubConn2();
-      unsubActiveTx();
+      unsub();
     };
   }, [cleanId]);
 
-  // 4. Live RTDB listener (for instant WebSocket reactivity when RTDB permissions allow)
-  useEffect(() => {
-    try {
-      const liveRef = ref(rtdb, livePath(cleanId));
-      const unsub = onValue(
-        liveRef,
-        (snap) => {
-          setLoading(false);
-          const live = snap.val();
-          if (!live) return;
-
-          const hb = live.lastHeartbeat || null;
-          if (hb) setLastHeartbeat(hb);
-
-          // Heartbeat check
-          const nowServer = Date.now() + serverTimeOffset;
-          const lastHbTime = hb ? new Date(hb).getTime() : 0;
-          const hasRecentHb = lastHbTime > 0 ? nowServer - lastHbTime < 180000 : true;
-          const online = (live.status === 'Online' || !live.status) && hasRecentHb;
-          setIsOnline(online);
-
-          const c1 = live.connectors?.['1'] || (Array.isArray(live.connectors) ? live.connectors[1] : null);
-          const c2 = live.connectors?.['2'] || (Array.isArray(live.connectors) ? live.connectors[2] : null);
-          const active1 = live.activeTx?.['1'] || (Array.isArray(live.activeTx) ? live.activeTx[1] : null);
-          const active2 = live.activeTx?.['2'] || (Array.isArray(live.activeTx) ? live.activeTx[2] : null);
-
-          if (c1) {
-            const hasTx1 = (active1 && (active1.status === 'Charging' || active1.status === 'Finishing')) ||
-              (c1.activeTx && (c1.activeTx.status === 'Charging' || c1.activeTx.status === 'Finishing'));
-            setConnector1((prev) => ({
-              status: c1.status || 'Available',
-              telemetry: c1.telemetry || prev.telemetry || {},
-              activeTx: hasTx1 ? (active1 || c1.activeTx || prev.activeTx || null) : null,
-            }));
-          }
-
-          if (c2) {
-            const hasTx2 = (active2 && (active2.status === 'Charging' || active2.status === 'Finishing')) ||
-              (c2.activeTx && (c2.activeTx.status === 'Charging' || c2.activeTx.status === 'Finishing'));
-            setConnector2((prev) => ({
-              status: c2.status || 'Available',
-              telemetry: c2.telemetry || prev.telemetry || {},
-              activeTx: hasTx2 ? (active2 || c2.activeTx || prev.activeTx || null) : null,
-            }));
-          }
-        },
-        () => {
-          // RTDB permission denied or unavailable -> gracefully fallback to Firestore snapshot
-          setLoading(false);
-        }
-      );
-
-      return () => unsub();
-    } catch {
-      setLoading(false);
-    }
-  }, [cleanId, serverTimeOffset]);
-
-  // Simulator integration for testing UI without plugging into a physical car
-  const { isSimulating, gunA: simA, gunB: simB } = useSimulator();
-
-  const effectiveConn1: LiveConnectorData = isSimulating
-    ? {
-        status: simA.status,
-        telemetry: {
-          voltage: simA.voltage,
-          currentL1: simA.current,
-          powerKw: simA.powerKw,
-          energyKwh: simA.energyKwh,
-          soc: simA.soc,
-        },
-        activeTx: simA.status === 'Charging' ? {
-          energyDeliveredKwh: simA.energyKwh,
-          cost: simA.cost,
-          socStart: simA.soc > 5 ? simA.soc - 5 : simA.soc,
-          socCurrent: simA.soc,
-        } : null,
-      }
-    : connector1;
-
-  const effectiveConn2: LiveConnectorData = isSimulating
-    ? {
-        status: simB.status,
-        telemetry: {
-          voltage: simB.voltage,
-          currentL1: simB.current,
-          powerKw: simB.powerKw,
-          energyKwh: simB.energyKwh,
-          soc: simB.soc,
-        },
-        activeTx: simB.status === 'Charging' ? {
-          energyDeliveredKwh: simB.energyKwh,
-          cost: simB.cost,
-          socStart: simB.soc > 5 ? simB.soc - 5 : simB.soc,
-          socCurrent: simB.soc,
-        } : null,
-      }
-    : connector2;
-
-  // A gun is connected if its status is in CONNECTED_STATUSES
-  const isGunAConnected = CONNECTED_STATUSES.includes(effectiveConn1.status);
-  const isGunBConnected = CONNECTED_STATUSES.includes(effectiveConn2.status);
+  const CONNECTED_STATUSES = ['Preparing', 'Charging', 'SuspendedEV', 'SuspendedEVSE', 'Finishing'];
+  const isGunAConnected = CONNECTED_STATUSES.includes(connector1.status);
+  const isGunBConnected = CONNECTED_STATUSES.includes(connector2.status);
   const hasAnyGunConnected = isGunAConnected || isGunBConnected;
   const bothConnected = isGunAConnected && isGunBConnected;
 
   return {
-    isOnline: isSimulating ? true : isOnline,
+    isOnline,
     lastHeartbeat,
-    connector1: effectiveConn1,
-    connector2: effectiveConn2,
+    connector1,
+    connector2,
     isGunAConnected,
     isGunBConnected,
     hasAnyGunConnected,
     bothConnected,
-    loading: isSimulating ? false : loading,
     serverTimeOffset,
+    loading,
   };
 }

@@ -1,13 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from 'firebase/auth';
-import { db, auth, fetchFirestoreDoc } from './firebase';
+import { apiRequest, setAuthToken, getAuthToken } from './api';
+import { firebaseConfig, parseFirestoreFields } from './firebase';
 
 export interface StationLocation {
   latitude: number;
@@ -21,6 +15,10 @@ export interface UserProfile {
   uid: string;
   email: string;
   displayName?: string | null;
+  stationId?: string;
+  defaultChargerId?: string;
+  defaultChargerModel?: string;
+  role?: string;
 }
 
 export interface LoginResult {
@@ -77,136 +75,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [chargerId, setChargerId] = useState<string>('charger1');
-  const [chargerModel, setChargerModel] = useState<string>('');
+  const [chargerId, setChargerId] = useState<string>('');
+  const [chargerModel, setChargerModel] = useState<string>('240kW');
   const [stationLocation, setStationLocation] = useState<StationLocation | null>(null);
   const [isConfigured, setIsConfigured] = useState<boolean>(false);
   const [tariffRate, setTariffRate] = useState<number>(125.0);
   const [currency, setCurrency] = useState<string>('PKR');
 
-  // Fetch remote config from Firestore for a given chargerId
   const fetchRemoteConfig = async (id: string) => {
-    const cleanId = id.trim().toLowerCase() || 'charger1';
+    const cleanId = (id || '').trim().toLowerCase();
+    if (!cleanId) {
+      return { isConfigured: false, tariffRate: 125, currency: 'PKR', model: '240kW' };
+    }
+
+    // 1. Try local/remote /api/chargers/:id
     try {
-      // 1. Try fast HTTPS REST fetch which never hangs on WebChannel socket negotiation
-      let data: Record<string, any> | null = await fetchFirestoreDoc('chargers', cleanId);
+      const data = await apiRequest(`/api/chargers/${cleanId}`);
+      if (data && data.charger) {
+        const rate = Number(data.charger.tariffRate || 125);
+        setTariffRate(rate);
+        if (data.charger.currency) setCurrency(data.charger.currency);
+        if (data.charger.model) setChargerModel(data.charger.model);
 
-      // 2. If REST didn't return, fallback to SDK getDoc
-      if (!data) {
-        try {
-          const snap = await getDoc(doc(db, 'chargers', cleanId));
-          if (snap.exists()) {
-            data = snap.data();
-          }
-        } catch {
-          // SDK is offline or still negotiating transport
-        }
-      }
-
-      if (data) {
-        let configuredModel = data.displayModel || data.model;
-        if (
-          configuredModel === 'DC_EVSE' ||
-          configuredModel === '220kW' ||
-          configuredModel?.toLowerCase().includes('220') ||
-          configuredModel?.toLowerCase().includes('240')
-        ) {
-          configuredModel = '240kW';
-        }
-        const configuredLocation = data.location || null;
-        const configured = !!(data.model || data.displayModel || data.setupCompletedAt);
-        const configuredTariff = data.tariffRate !== undefined ? Number(data.tariffRate) : undefined;
-        const configuredCurrency = data.currency || undefined;
-
-        if (configuredModel) {
-          setChargerModel(configuredModel);
-          await AsyncStorage.setItem(CHARGER_MODEL_KEY, configuredModel);
-        }
-        if (configuredLocation) {
-          setStationLocation(configuredLocation);
-          await AsyncStorage.setItem(LOCATION_KEY, JSON.stringify(configuredLocation));
-        }
-        if (configuredTariff !== undefined) {
-          setTariffRate(configuredTariff);
-          await AsyncStorage.setItem(TARIFF_KEY, String(configuredTariff));
-        }
-        if (configuredCurrency) {
-          setCurrency(configuredCurrency);
-          await AsyncStorage.setItem(CURRENCY_KEY, configuredCurrency);
-        }
-        if (configured) {
-          setIsConfigured(true);
-        }
         return {
-          model: configuredModel,
-          location: configuredLocation,
-          isConfigured: configured,
-          tariffRate: configuredTariff,
-          currency: configuredCurrency,
+          model: data.charger.model || '240kW',
+          location: data.charger.location || null,
+          isConfigured: true,
+          tariffRate: rate,
+          currency: data.charger.currency || 'PKR',
         };
       }
-    } catch {
-      // Ignore network errors and continue with locally stored config
-    }
-    return { isConfigured: false };
-  };
+    } catch (_err) {}
 
-  const saveTariffRate = async (rate: number, curr?: string) => {
-    const activeCurrency = curr || currency || 'PKR';
-    setTariffRate(rate);
-    setCurrency(activeCurrency);
-    await AsyncStorage.setItem(TARIFF_KEY, String(rate));
-    await AsyncStorage.setItem(CURRENCY_KEY, activeCurrency);
-
-    const cleanId = chargerId?.trim().toLowerCase() || 'charger1';
-
-    // Tenant Isolation Guard: Verify user is authorized for this charger before writing to Firestore
-    if (user?.uid) {
-      try {
-        const uSnap = await getDoc(doc(db, 'users', user.uid));
-        if (uSnap.exists()) {
-          const uData = uSnap.data();
-          const assignedStation = (uData.defaultChargerId || uData.stationId || '').trim().toLowerCase();
-          if (assignedStation && assignedStation !== cleanId && uData.role !== 'admin') {
-            console.warn(`[Tenant Isolation Alert] Blocked attempt by ${user.email} to modify station [${cleanId}]. User belongs to [${assignedStation}].`);
-            return;
-          }
-        }
-      } catch (_authCheckErr) {}
-    }
-
+    // 2. Try /api/chargers/:id/live (which remote server serves)
     try {
-      await setDoc(
-        doc(db, 'chargers', cleanId),
-        {
-          chargePointId: cleanId,
+      const data = await apiRequest(`/api/chargers/${cleanId}/live`);
+      if (data && data.charger) {
+        const rate = Number(data.charger.tariffRate || 125);
+        setTariffRate(rate);
+        if (data.charger.currency) setCurrency(data.charger.currency);
+        if (data.charger.model) setChargerModel(data.charger.model);
+
+        return {
+          model: data.charger.model || '240kW',
+          location: data.charger.location || null,
+          isConfigured: true,
           tariffRate: rate,
-          currency: activeCurrency,
-          tariffUpdatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    } catch (err: any) {
-      console.warn('[Auth] Could not sync tariff rate to Firestore:', err.message);
-    }
-  };
+          currency: data.charger.currency || 'PKR',
+        };
+      }
+    } catch (_err) {}
 
-  // Sync user profile to Firestore `users/{uid}` so each user has their own data record
-  const syncUserProfileToFirestore = async (profile: UserProfile, stationId: string) => {
+    // 3. Fallback to direct Firestore REST API
     try {
-      await setDoc(
-        doc(db, 'users', profile.uid),
-        {
-          uid: profile.uid,
-          email: profile.email,
-          lastLoginAt: new Date().toISOString(),
-          lastUsedChargerId: stationId,
-        },
-        { merge: true }
+      const res = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/chargers/${encodeURIComponent(cleanId)}`
       );
-    } catch (err: any) {
-      console.warn('[Auth] Could not sync user to Firestore:', err.message);
-    }
+      if (res.ok) {
+        const docJson = await res.json();
+        const d = parseFirestoreFields(docJson.fields || {});
+        const rate = Number(d.tariffRate || 125);
+        setTariffRate(rate);
+        if (d.currency) setCurrency(d.currency);
+        if (d.model) setChargerModel(d.model);
+
+        return {
+          model: d.model || '240kW',
+          location: d.location || null,
+          isConfigured: true,
+          tariffRate: rate,
+          currency: d.currency || 'PKR',
+        };
+      }
+    } catch (_err) {}
+
+    return { isConfigured: true, tariffRate: 125, currency: 'PKR', model: '240kW' };
   };
 
   useEffect(() => {
@@ -214,52 +157,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     (async () => {
       try {
-        const storedAuth = await AsyncStorage.getItem(AUTH_KEY);
-        const storedUser = await AsyncStorage.getItem(USER_KEY);
-        const storedId = await AsyncStorage.getItem(CHARGER_ID_KEY);
-        const storedModel = await AsyncStorage.getItem(CHARGER_MODEL_KEY);
-        const storedLoc = await AsyncStorage.getItem(LOCATION_KEY);
-        const storedTariff = await AsyncStorage.getItem(TARIFF_KEY);
-        const storedCurrency = await AsyncStorage.getItem(CURRENCY_KEY);
+        const [storedAuth, storedUser, storedId, storedModel, storedLoc, storedTariff, storedCurr] =
+          await Promise.all([
+            AsyncStorage.getItem(AUTH_KEY),
+            AsyncStorage.getItem(USER_KEY),
+            AsyncStorage.getItem(CHARGER_ID_KEY),
+            AsyncStorage.getItem(CHARGER_MODEL_KEY),
+            AsyncStorage.getItem(LOCATION_KEY),
+            AsyncStorage.getItem(TARIFF_KEY),
+            AsyncStorage.getItem(CURRENCY_KEY),
+          ]);
 
-        const activeId = storedId || 'charger1';
-        if (isMounted) setChargerId(activeId);
-
-        if (storedTariff && isMounted) setTariffRate(Number(storedTariff) || 125.0);
-        if (storedCurrency && isMounted) setCurrency(storedCurrency);
-
+        let parsedUser: UserProfile | null = null;
         if (storedUser) {
           try {
-            const parsed = JSON.parse(storedUser);
-            if (isMounted) {
-              setUser(parsed);
-              setIsAuthenticated(true);
-            }
-          } catch (_) {}
-        } else if (storedAuth === 'true') {
+            parsedUser = JSON.parse(storedUser);
+          } catch {}
+        }
+
+        // Determine active charger: prioritize user's bound stationId, then storedId
+        const boundStation = (parsedUser?.stationId || parsedUser?.defaultChargerId || '').trim().toLowerCase();
+        const activeId = boundStation || (storedId ? storedId.trim().toLowerCase() : '');
+        const configured = Boolean(activeId);
+
+        if (isMounted) {
+          setChargerId(activeId);
+          if (storedModel) setChargerModel(storedModel);
+          if (storedLoc) {
+            try { setStationLocation(JSON.parse(storedLoc)); } catch {}
+          }
+          if (storedTariff) setTariffRate(parseFloat(storedTariff) || 125.0);
+          if (storedCurr) setCurrency(storedCurr);
+        }
+
+        const token = await getAuthToken();
+        if (token && storedAuth === 'true' && parsedUser) {
           if (isMounted) {
-            setUser({ uid: 'admin_local', email: 'admin@local' });
+            setUser(parsedUser);
             setIsAuthenticated(true);
           }
         }
 
-        if (storedModel) {
-          if (isMounted) {
-            setChargerModel(storedModel);
-            setIsConfigured(true);
-          }
+        if (activeId) {
+          await fetchRemoteConfig(activeId);
         }
-        if (storedLoc) {
-          try {
-            if (isMounted) setStationLocation(JSON.parse(storedLoc));
-          } catch (_) {}
-        }
-
-        // Query Firestore to get shared config saved by any user for this station
-        const remote = await fetchRemoteConfig(activeId);
-        if (remote.isConfigured || storedModel) {
-          if (isMounted) setIsConfigured(true);
-        }
+        if (isMounted) setIsConfigured(configured);
       } catch (err) {
         console.error('Error restoring auth:', err);
       } finally {
@@ -267,225 +209,369 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     })();
 
-    // Listen to Firebase Auth state changes
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const profile: UserProfile = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email || '',
-          displayName: firebaseUser.displayName,
-        };
-        if (isMounted) {
-          setUser(profile);
-          setIsAuthenticated(true);
-        }
-        await AsyncStorage.setItem(AUTH_KEY, 'true');
-        await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
-
-        // CRITICAL TENANT ISOLATION: Fetch this user's assigned defaultChargerId from Firestore
-        try {
-          const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userSnap.exists()) {
-            const uData = userSnap.data();
-            const userCharger = (uData.defaultChargerId || uData.stationId || '').trim().toLowerCase();
-            if (userCharger && isMounted) {
-              setChargerId(userCharger);
-              await AsyncStorage.setItem(CHARGER_ID_KEY, userCharger);
-              if (uData.defaultChargerModel) {
-                setChargerModel(uData.defaultChargerModel);
-                await AsyncStorage.setItem(CHARGER_MODEL_KEY, uData.defaultChargerModel);
-              }
-              setIsConfigured(true);
-              fetchRemoteConfig(userCharger);
-            }
-          }
-        } catch (_fetchErr) {}
-      }
-    });
-
-    // Real-time synchronization of charger config (tariffRate, currency, model)
-    let unsubCharger: (() => void) | undefined;
-    const cleanId = (chargerId || 'charger1').trim().toLowerCase();
-    try {
-      unsubCharger = onSnapshot(
-        doc(db, 'chargers', cleanId),
-        (snap) => {
-          if (snap.exists() && isMounted) {
-            const d = snap.data();
-            if (d.tariffRate !== undefined && d.tariffRate !== null) {
-              const rate = Number(d.tariffRate);
-              setTariffRate(rate);
-              AsyncStorage.setItem(TARIFF_KEY, String(rate));
-            }
-            if (d.currency) {
-              setCurrency(d.currency);
-              AsyncStorage.setItem(CURRENCY_KEY, d.currency);
-            }
-            if (d.model) {
-              setChargerModel(d.model);
-            }
-          }
-        },
-        () => {}
-      );
-    } catch {}
-
     return () => {
       isMounted = false;
-      unsubscribe();
-      if (unsubCharger) unsubCharger();
     };
-  }, [chargerId]);
+  }, []);
 
   const login = async (emailInput: string, passInput: string, targetId?: string): Promise<LoginResult> => {
     const email = emailInput.trim();
     const password = passInput;
-    const activeId = targetId?.trim().toLowerCase() || chargerId || 'charger1';
 
-    // 1. Admin shortcut fallback for offline / emergency access
+    // 1. Offline admin emergency fallback
     if (email.toLowerCase() === 'admin' && password === 'admin') {
+      const activeId = targetId?.trim().toLowerCase() || 'charger1';
       const adminProfile: UserProfile = {
-        uid: 'admin_uid',
+        uid: 'admin_local',
         email: 'admin@tesla-charge.local',
         displayName: 'Station Admin',
+        stationId: activeId,
       };
       setIsAuthenticated(true);
       setUser(adminProfile);
       setChargerId(activeId);
+      setIsConfigured(true);
       await AsyncStorage.setItem(AUTH_KEY, 'true');
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(adminProfile));
       await AsyncStorage.setItem(CHARGER_ID_KEY, activeId);
+      return { success: true, isConfigured: true };
+    }
 
-      const remote = await fetchRemoteConfig(activeId);
-      const configured = remote.isConfigured || isConfigured || !!chargerModel;
+    let loginSuccess = false;
+    let userProfile: UserProfile | null = null;
+    let tokenToStore: string | null = null;
+    let lastError: string = 'Unable to connect to server.';
+
+    // 2. Try Direct Server Login (Local JWT or server /api/auth/login)
+    try {
+      const res = await apiRequest('/api/auth/login', {
+        method: 'POST',
+        body: { email, password },
+        timeoutMs: 4000,
+      });
+
+      if (res && res.success && res.token && res.user) {
+        loginSuccess = true;
+        tokenToStore = res.token;
+        const userStation = (res.user.stationId || res.user.defaultChargerId || targetId || '').trim().toLowerCase();
+        userProfile = {
+          uid: res.user.uid || res.user.id,
+          email: res.user.email,
+          displayName: res.user.displayName || email.split('@')[0],
+          stationId: userStation,
+          defaultChargerId: userStation,
+          defaultChargerModel: res.user.defaultChargerModel,
+          role: res.user.role,
+        };
+      } else if (res?.error) {
+        lastError = res.error;
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('401')) {
+        lastError = 'Invalid email or password. Please check your credentials.';
+      } else {
+        lastError = err.message || 'Server unavailable.';
+      }
+    }
+
+    // 3. Fallback to Firebase Auth REST if server auth did not succeed (e.g. 404 on tesla-charge.online)
+    if (!loginSuccess) {
+      try {
+        const fbRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, returnSecureToken: true }),
+          }
+        );
+
+        const fbData = await fbRes.json().catch(() => ({}));
+
+        if (fbRes.ok && fbData.idToken && fbData.localId) {
+          loginSuccess = true;
+          tokenToStore = fbData.idToken;
+          const uid = fbData.localId;
+          const userEmail = fbData.email || email;
+
+          // Fetch user document from Firestore REST to get assigned stationId & model
+          let assignedStation = (targetId || '').trim().toLowerCase();
+          let assignedModel = '';
+
+          try {
+            const userDocRes = await fetch(
+              `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${uid}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${fbData.idToken}`,
+                  Accept: 'application/json',
+                },
+              }
+            );
+
+            if (userDocRes.ok) {
+              const docData = await userDocRes.json();
+              const fields = parseFirestoreFields(docData.fields || {});
+              if (fields.defaultChargerId || fields.stationId) {
+                assignedStation = (fields.defaultChargerId || fields.stationId).trim().toLowerCase();
+              }
+              if (fields.defaultChargerModel) {
+                assignedModel = fields.defaultChargerModel;
+              }
+            }
+          } catch (_e) {}
+
+          // Fallback defaults ONLY for legacy hardcoded accounts if Firestore record was missing
+          if (!assignedStation) {
+            const em = email.toLowerCase();
+            if (em.includes('hafeez')) {
+              assignedStation = 'aziz light and solar';
+              assignedModel = assignedModel || '60kW';
+            } else if (em === 'telsa@teksa.cok' || em === 'tahayaseen942@gmail.com') {
+              assignedStation = 'charger1';
+              assignedModel = assignedModel || '240kW';
+            }
+          }
+
+          userProfile = {
+            uid,
+            email: userEmail,
+            displayName: fbData.displayName || userEmail.split('@')[0],
+            stationId: assignedStation,
+            defaultChargerId: assignedStation,
+            defaultChargerModel: assignedModel,
+            role: 'driver',
+          };
+        } else {
+          const errMsg = fbData?.error?.message || '';
+          if (
+            errMsg === 'EMAIL_NOT_FOUND' ||
+            errMsg === 'INVALID_PASSWORD' ||
+            errMsg === 'INVALID_LOGIN_CREDENTIALS'
+          ) {
+            return {
+              success: false,
+              isConfigured: false,
+              error: 'Invalid email or password. Please check your credentials.',
+            };
+          } else if (errMsg === 'USER_DISABLED') {
+            return {
+              success: false,
+              isConfigured: false,
+              error: 'This user account has been disabled.',
+            };
+          } else if (errMsg === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
+            return {
+              success: false,
+              isConfigured: false,
+              error: 'Too many attempts. Please try again later.',
+            };
+          } else if (errMsg) {
+            return {
+              success: false,
+              isConfigured: false,
+              error: errMsg,
+            };
+          }
+        }
+      } catch (fbErr: any) {
+        lastError = fbErr.message || lastError;
+      }
+    }
+
+    if (loginSuccess && userProfile) {
+      if (tokenToStore) {
+        await setAuthToken(tokenToStore);
+      }
+
+      const configured = Boolean(userProfile.stationId);
+
+      setIsAuthenticated(true);
+      setUser(userProfile);
+      setChargerId(userProfile.stationId || '');
+      if (userProfile.defaultChargerModel) {
+        setChargerModel(userProfile.defaultChargerModel);
+      }
+      setIsConfigured(configured);
+
+      await AsyncStorage.setItem(AUTH_KEY, 'true');
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(userProfile));
+      if (userProfile.stationId) {
+        await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId);
+        await fetchRemoteConfig(userProfile.stationId);
+      } else {
+        await AsyncStorage.removeItem(CHARGER_ID_KEY);
+      }
+      if (userProfile.defaultChargerModel) {
+        await AsyncStorage.setItem(CHARGER_MODEL_KEY, userProfile.defaultChargerModel);
+      }
+
       return { success: true, isConfigured: configured };
     }
 
-    // 2. Real Firebase Email & Password Authentication
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const profile: UserProfile = {
-        uid: cred.user.uid,
-        email: cred.user.email || email,
-        displayName: cred.user.displayName,
-      };
-
-      setIsAuthenticated(true);
-      setUser(profile);
-      setChargerId(activeId);
-
-      await AsyncStorage.setItem(AUTH_KEY, 'true');
-      await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
-      await AsyncStorage.setItem(CHARGER_ID_KEY, activeId);
-
-      // Record user profile in Firestore
-      syncUserProfileToFirestore(profile, activeId);
-
-      // Check if this specific user has completed charger setup
-      let userConfigured = false;
-      try {
-        const userSnap = await getDoc(doc(db, 'users', profile.uid));
-        if (userSnap.exists()) {
-          const uData = userSnap.data();
-          if (uData.setupCompleted && uData.defaultChargerId) {
-            userConfigured = true;
-            setChargerId(uData.defaultChargerId);
-            if (uData.defaultChargerModel) {
-              setChargerModel(uData.defaultChargerModel);
-              await AsyncStorage.setItem(CHARGER_MODEL_KEY, uData.defaultChargerModel);
-            }
-            setIsConfigured(true);
-            await AsyncStorage.setItem(CHARGER_ID_KEY, uData.defaultChargerId);
-          }
-        }
-      } catch (_) {}
-
-      if (!userConfigured) {
-        setIsConfigured(false);
-      }
-
-      return { success: true, isConfigured: userConfigured };
-    } catch (err: any) {
-      let message = 'Unable to sign in. Please verify your credentials.';
-      const code = err.code || '';
-      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
-        message = 'Invalid email or password. Please check and try again.';
-      } else if (code === 'auth/invalid-email') {
-        message = 'Please enter a valid email address.';
-      } else if (code === 'auth/user-disabled') {
-        message = 'This user account has been disabled.';
-      } else if (code === 'auth/too-many-requests') {
-        message = 'Too many failed login attempts. Please wait a moment and try again.';
-      } else if (err.message) {
-        message = err.message;
-      }
-      return { success: false, isConfigured: false, error: message };
-    }
+    return {
+      success: false,
+      isConfigured: false,
+      error: lastError || 'Invalid credentials or unable to reach auth server.',
+    };
   };
 
   const register = async (emailInput: string, passInput: string, targetId?: string): Promise<LoginResult> => {
     const email = emailInput.trim();
     const password = passInput;
-    const activeId = targetId?.trim().toLowerCase() || chargerId || 'charger1';
+    const requestedStation = targetId ? targetId.trim().toLowerCase() : '';
+    const hasInitialStation = Boolean(requestedStation);
 
+    let registerSuccess = false;
+    let userProfile: UserProfile | null = null;
+    let tokenToStore: string | null = null;
+    let lastError: string = 'Unable to register account.';
+
+    // 1. Try local/remote backend server /api/auth/register
     try {
-      // Firebase createUserWithEmailAndPassword creates user and automatically signs them in
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      const profile: UserProfile = {
-        uid: cred.user.uid,
-        email: cred.user.email || email,
-        displayName: cred.user.displayName,
-      };
+      const res = await apiRequest('/api/auth/register', {
+        method: 'POST',
+        body: { email, password, displayName: email.split('@')[0], stationId: requestedStation },
+        timeoutMs: 4000,
+      });
+
+      if (res && res.success && res.token && res.user) {
+        registerSuccess = true;
+        tokenToStore = res.token;
+        const assignedStation = (res.user.stationId || requestedStation).trim().toLowerCase();
+        userProfile = {
+          uid: res.user.uid || res.user.id,
+          email: res.user.email,
+          displayName: res.user.displayName,
+          stationId: assignedStation,
+          defaultChargerId: assignedStation,
+        };
+      } else if (res?.error) {
+        lastError = res.error;
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('409')) {
+        return { success: false, isConfigured: false, error: 'User with this email already exists.' };
+      }
+    }
+
+    // 2. Fallback to Firebase Auth REST if server register not supported (e.g. 404 on tesla-charge.online)
+    if (!registerSuccess) {
+      try {
+        const fbRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, returnSecureToken: true }),
+          }
+        );
+
+        const fbData = await fbRes.json().catch(() => ({}));
+
+        if (fbRes.ok && fbData.idToken && fbData.localId) {
+          registerSuccess = true;
+          tokenToStore = fbData.idToken;
+          const uid = fbData.localId;
+          const userEmail = fbData.email || email;
+
+          // Record new user in Firestore REST
+          try {
+            await fetch(
+              `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${uid}`,
+              {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${tokenToStore}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  fields: {
+                    uid: { stringValue: uid },
+                    email: { stringValue: userEmail },
+                    stationId: { stringValue: requestedStation },
+                    defaultChargerId: { stringValue: requestedStation },
+                    role: { stringValue: 'driver' },
+                    setupCompleted: { booleanValue: hasInitialStation },
+                    createdAt: { stringValue: new Date().toISOString() },
+                    lastLoginAt: { stringValue: new Date().toISOString() },
+                  },
+                }),
+              }
+            );
+          } catch (_e) {}
+
+          userProfile = {
+            uid,
+            email: userEmail,
+            displayName: userEmail.split('@')[0],
+            stationId: requestedStation,
+            defaultChargerId: requestedStation,
+          };
+        } else {
+          const errMsg = fbData?.error?.message || '';
+          if (errMsg === 'EMAIL_EXISTS') {
+            return {
+              success: false,
+              isConfigured: false,
+              error: 'An account with this email address already exists. Please log in.',
+            };
+          } else if (errMsg.includes('WEAK_PASSWORD')) {
+            return {
+              success: false,
+              isConfigured: false,
+              error: 'Password should be at least 6 characters.',
+            };
+          } else if (errMsg) {
+            return {
+              success: false,
+              isConfigured: false,
+              error: errMsg,
+            };
+          }
+        }
+      } catch (fbErr: any) {
+        lastError = fbErr.message || lastError;
+      }
+    }
+
+    if (registerSuccess && userProfile) {
+      if (tokenToStore) {
+        await setAuthToken(tokenToStore);
+      }
+
+      const configured = Boolean(userProfile.stationId);
 
       setIsAuthenticated(true);
-      setUser(profile);
-      setChargerId(activeId);
+      setUser(userProfile);
+      setChargerId(userProfile.stationId || '');
+      setIsConfigured(configured);
 
       await AsyncStorage.setItem(AUTH_KEY, 'true');
-      await AsyncStorage.setItem(USER_KEY, JSON.stringify(profile));
-      await AsyncStorage.setItem(CHARGER_ID_KEY, activeId);
-
-      // Sync new user record to Firestore `users/{uid}`
-      await setDoc(
-        doc(db, 'users', profile.uid),
-        {
-          uid: profile.uid,
-          email: profile.email,
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
-          role: 'driver',
-          defaultChargerId: activeId,
-          setupCompleted: false,
-        },
-        { merge: true }
-      );
-
-      // New accounts must always configure their station model and identifier
-      setIsConfigured(false);
-      return { success: true, isConfigured: false };
-    } catch (err: any) {
-      let message = 'Could not create account. Please try again.';
-      const code = err.code || '';
-      if (code === 'auth/email-already-in-use') {
-        message = 'An account with this email already exists. Please Sign In instead.';
-      } else if (code === 'auth/weak-password') {
-        message = 'Password should be at least 6 characters.';
-      } else if (code === 'auth/invalid-email') {
-        message = 'Please enter a valid email address.';
-      } else if (err.message) {
-        message = err.message;
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(userProfile));
+      if (userProfile.stationId) {
+        await AsyncStorage.setItem(CHARGER_ID_KEY, userProfile.stationId);
+        await fetchRemoteConfig(userProfile.stationId);
+      } else {
+        await AsyncStorage.removeItem(CHARGER_ID_KEY);
       }
-      return { success: false, isConfigured: false, error: message };
+
+      return { success: true, isConfigured: configured };
     }
+
+    return {
+      success: false,
+      isConfigured: false,
+      error: lastError || 'Unable to register account. Please check your credentials.',
+    };
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (_) {}
     setIsAuthenticated(false);
     setUser(null);
-    setChargerId('charger1');
+    setChargerId('');
+    setIsConfigured(false);
+    await setAuthToken(null);
     await AsyncStorage.multiRemove([
       AUTH_KEY,
       USER_KEY,
@@ -498,54 +584,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const saveSetup = async (model: string, id: string, loc: StationLocation | null) => {
-    const cleanId = id.trim().toLowerCase() || 'charger1';
-    const cleanModel = model.trim() || 'AC_ThreePhase21KW';
+    const cleanId = (id || '').trim().toLowerCase();
+    if (!cleanId) return;
 
+    setChargerModel(model);
     setChargerId(cleanId);
-    setChargerModel(cleanModel);
     setStationLocation(loc);
     setIsConfigured(true);
 
-    await AsyncStorage.setItem(CHARGER_ID_KEY, cleanId);
-    await AsyncStorage.setItem(CHARGER_MODEL_KEY, cleanModel);
-    if (loc) {
-      await AsyncStorage.setItem(LOCATION_KEY, JSON.stringify(loc));
+    if (user) {
+      const updatedUser: UserProfile = {
+        ...user,
+        stationId: cleanId,
+        defaultChargerId: cleanId,
+        defaultChargerModel: model,
+      };
+      setUser(updatedUser);
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
     }
 
-    // Save to Firestore so this user's profile remembers their configured station
+    await Promise.all([
+      AsyncStorage.setItem(CHARGER_MODEL_KEY, model),
+      AsyncStorage.setItem(CHARGER_ID_KEY, cleanId),
+      loc ? AsyncStorage.setItem(LOCATION_KEY, JSON.stringify(loc)) : AsyncStorage.removeItem(LOCATION_KEY),
+    ]);
+
+    // 1. Sync station ID with local backend server if active
     try {
-      if (user?.uid) {
-        await setDoc(
-          doc(db, 'users', user.uid),
+      await apiRequest('/api/auth/station', {
+        method: 'POST',
+        body: { stationId: cleanId, model },
+      });
+    } catch (_e) {}
+
+    // 2. Persist stationId & defaultChargerModel into Firestore REST
+    try {
+      const token = await getAuthToken();
+      if (token && user?.uid) {
+        await fetch(
+          `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${user.uid}?updateMask.fieldPaths=stationId&updateMask.fieldPaths=defaultChargerId&updateMask.fieldPaths=defaultChargerModel&updateMask.fieldPaths=setupCompleted`,
           {
-            defaultChargerId: cleanId,
-            defaultChargerModel: cleanModel,
-            setupCompleted: true,
-            setupCompletedAt: new Date().toISOString(),
-          },
-          { merge: true }
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fields: {
+                stationId: { stringValue: cleanId },
+                defaultChargerId: { stringValue: cleanId },
+                defaultChargerModel: { stringValue: model },
+                setupCompleted: { booleanValue: true },
+              },
+            }),
+          }
         );
       }
-      await setDoc(
-        doc(db, 'chargers', cleanId),
-        {
-          chargePointId: cleanId,
-          model: cleanModel,
-          location: loc
-            ? {
-                ...loc,
-                updatedAt: new Date().toISOString(),
-              }
-            : null,
-          setupCompletedAt: new Date().toISOString(),
-          configuredByUserId: user?.uid || 'anonymous',
-          configuredByUserEmail: user?.email || 'anonymous',
-        },
-        { merge: true }
-      );
-    } catch (err: any) {
-      console.warn('Could not sync setup to Firestore:', err.message);
+    } catch (e) {
+      console.warn('Failed to update Firestore user document on setup:', e);
     }
+
+    await fetchRemoteConfig(cleanId);
+  };
+
+  const saveTariffRate = async (rate: number, curr: string = 'PKR') => {
+    const r = Math.max(0, rate);
+    const activeTarget = (chargerId || user?.stationId || 'charger1').trim().toLowerCase();
+    setTariffRate(r);
+    setCurrency(curr);
+    await AsyncStorage.setItem(TARIFF_KEY, String(r));
+    await AsyncStorage.setItem(CURRENCY_KEY, curr);
+
+    try {
+      await apiRequest(`/api/chargers/${encodeURIComponent(activeTarget)}/tariff`, {
+        method: 'POST',
+        body: { tariffRate: r },
+      });
+    } catch (_e) {}
   };
 
   return (

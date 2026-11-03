@@ -20,6 +20,7 @@ import {
   LimitMode,
   ChargingLimit,
 } from '@/services/control';
+import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 
 const STATUS_THEMES: Record<string, { color: string; label: string; bg: string; border: string }> = {
   Charging: { color: '#059669', label: 'CHARGING', bg: 'rgba(16, 185, 129, 0.08)', border: 'rgba(16, 185, 129, 0.25)' },
@@ -318,7 +319,8 @@ export default function ControlScreen() {
   const statusTheme = STATUS_THEMES[currentConnector.status] || STATUS_THEMES.Available;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <SwipeableTabScreen currentTab="control">
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Top Header */}
       <View style={styles.header}>
         <View>
@@ -692,6 +694,7 @@ export default function ControlScreen() {
 
       <View style={{ height: 40 }} />
     </ScrollView>
+    </SwipeableTabScreen>
   );
 }
 

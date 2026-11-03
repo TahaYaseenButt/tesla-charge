@@ -621,321 +621,206 @@ export default function HomeScreen() {
 
   return (
     <SwipeableTabScreen currentTab="index">
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header: Station ID & Test UI */}
-      <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Image
-            source={require('@/assets/images/brand-logo.png')}
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
-          <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
-        </View>
-
-        <TouchableOpacity
-          style={styles.testUiBtn}
-          onPress={() => setSimModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.testUiBtnText}>🧪 Test UI</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Prominent Hero Image */}
-      <View style={styles.heroChargerContainer}>
-        <Image source={safeHeroImage} style={styles.heroChargerImage} resizeMode="contain" />
-      </View>
-
-      {/* Battery State of Charge Hero Card (Main Screen - Minimalist & Professional) */}
-      {/* Main Hero Section: Dual Gun Individual Showcase when both connected, or Single Gun Hero */}
-      {bothConnected ? (
-        /* Dual Gun Live Showcase: Both cars displayed side-by-side with individual SoC, Price, and Power */
-        <View style={styles.dualHeroContainer}>
-          {/* Gun A Hero Card */}
-          <View style={[styles.dualHeroCard, { flex: 1 }]}>
-            <View style={styles.dualHeroHeader}>
-              <View style={styles.dualHeroTitleRow}>
-                <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-                <Text style={styles.dualHeroTitle}>GUN A</Text>
-              </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-              </View>
-            </View>
-
-            {/* Battery SoC */}
-            <View style={styles.dualHeroSocRow}>
-              <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocA ? `${activeSocA}%` : '--'} />
-              <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
-            </View>
-            <View style={styles.batteryTrackMinimal}>
-              <View
-                style={[
-                  styles.batteryFillMinimal,
-                  {
-                    width: `${hasSocA ? Math.min(100, Math.max(4, activeSocA!)) : 0}%`,
-                    backgroundColor: '#0F172A',
-                  },
-                ]}
-              />
-            </View>
-
-            {/* Individual Gun A Price */}
-            <View style={styles.dualHeroPriceSection}>
-              <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costA} />
-              <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
-            </View>
-
-            {/* Speed & Energy */}
-            <Text style={styles.dualHeroMetaText}>
-              {Number(powerA).toFixed(1)} kW • {energyA} kWh
-            </Text>
+      <View style={styles.container}>
+        {/* Header: Station ID & Test UI */}
+        <View style={styles.header}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Image
+              source={require('@/assets/images/brand-logo.png')}
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+            <Text style={styles.stationId}>{CHARGER_ID.toUpperCase()}</Text>
           </View>
 
-          {/* Gun B Hero Card */}
-          <View style={[styles.dualHeroCard, { flex: 1 }]}>
-            <View style={styles.dualHeroHeader}>
-              <View style={styles.dualHeroTitleRow}>
-                <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
-                <Text style={styles.dualHeroTitle}>GUN B</Text>
-              </View>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
-                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-              </View>
-            </View>
-
-            {/* Battery SoC */}
-            <View style={styles.dualHeroSocRow}>
-              <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocB ? `${activeSocB}%` : '--'} />
-              <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
-            </View>
-            <View style={styles.batteryTrackMinimal}>
-              <View
-                style={[
-                  styles.batteryFillMinimal,
-                  {
-                    width: `${hasSocB ? Math.min(100, Math.max(4, activeSocB!)) : 0}%`,
-                    backgroundColor: '#0F172A',
-                  },
-                ]}
-              />
-            </View>
-
-            {/* Individual Gun B Price */}
-            <View style={styles.dualHeroPriceSection}>
-              <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costB} />
-              <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
-            </View>
-
-            {/* Speed & Energy */}
-            <Text style={styles.dualHeroMetaText}>
-              {Number(powerB).toFixed(1)} kW • {energyB} kWh
-            </Text>
-          </View>
+          <TouchableOpacity
+            style={styles.testUiBtn}
+            onPress={() => setSimModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.testUiBtnText}>🧪 Test UI</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        /* Single Gun or Standby Hero Layout */
-        <>
-          {displaySoc !== null && (
-            <View style={styles.batteryHeroCard}>
-              <View style={styles.batteryHeroTopRow}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <View style={[styles.statusDot, { backgroundColor: isActivelyChargingNow ? '#0F172A' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
-                      <Text style={styles.batteryHeroTitle}>
-                        {displaySocGunLabel} {isActivelyChargingNow ? '• CHARGING' : '• BATTERY'}
-                      </Text>
-                    </View>
-                    <AnimatedMetricValue style={styles.batteryHeroPercent} value={`${displaySoc}%`} />
-                  </View>
-                  <View style={styles.batteryTrackMinimal}>
-                    <View
-                      style={[
-                        styles.batteryFillMinimal,
-                        {
-                          width: `${Math.min(100, Math.max(4, displaySoc))}%`,
-                          backgroundColor: '#0F172A',
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.batteryHeroSubtitle}>
-                    {isActivelyChargingNow ? 'Charging session in progress' : 'Plugged in & Ready'}
-                  </Text>
-                </View>
+
+        {/* Hero Charger Graphic (Auto-scaled to fit screen) */}
+        <View style={styles.heroChargerContainer}>
+          <Image source={safeHeroImage} style={styles.heroChargerImage} resizeMode="contain" />
+        </View>
+
+        {/* Primary Live Status / Price Hero Section */}
+        <View style={styles.powerSection}>
+          {isGunACharging && isGunBCharging ? (
+            <View style={styles.priceHeroColumn}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AnimatedMetricValue style={styles.priceHeroVal} value={totalCost} />
+                <Text style={styles.priceHeroCurr}>{curr}</Text>
               </View>
+              <Text style={styles.powerSubtext}>
+                Total Speed: {totalPower} kW • Both Guns Charging
+              </Text>
+            </View>
+          ) : isGunACharging ? (
+            <View style={styles.priceHeroColumn}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AnimatedMetricValue style={styles.priceHeroVal} value={costA} />
+                <Text style={styles.priceHeroCurr}>{curr}</Text>
+              </View>
+              <Text style={styles.powerSubtext}>
+                Gun A • Speed: {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
+              </Text>
+            </View>
+          ) : isGunBCharging ? (
+            <View style={styles.priceHeroColumn}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AnimatedMetricValue style={styles.priceHeroVal} value={costB} />
+                <Text style={styles.priceHeroCurr}>{curr}</Text>
+              </View>
+              <Text style={styles.powerSubtext}>
+                Gun B • Speed: {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
+              </Text>
+            </View>
+          ) : hasAnyGunConnected ? (
+            <View style={styles.priceHeroColumn}>
+              <AnimatedMetricValue
+                style={styles.priceHeroVal}
+                value={Number(totalCost.replace(/,/g, '')) > 0 ? totalCost : 'READY'}
+              />
+              <Text style={styles.priceHeroCurr}>
+                {Number(totalCost.replace(/,/g, '')) > 0 ? `${curr} (session)` : 'PLUGGED IN • READY TO CHARGE'}
+              </Text>
+            </View>
+          ) : !isOnline ? (
+            <View style={styles.priceHeroColumn}>
+              <Text style={styles.priceHeroVal}>OFFLINE</Text>
+              <Text style={styles.priceHeroCurr}>
+                {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
+              </Text>
+            </View>
+          ) : lastSessionCost > 0 ? (
+            <View style={styles.priceHeroColumn}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AnimatedMetricValue style={styles.priceHeroVal} value={lastSessionCost.toLocaleString()} />
+                <Text style={styles.priceHeroCurr}>{curr}</Text>
+              </View>
+              <Text style={styles.powerSubtext}>
+                Last Session • {lastSessionKwh.toFixed(1)} kWh {lastDurationText ? `• ${lastDurationText}` : ''}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.priceHeroColumn}>
+              <Text style={styles.priceHeroVal}>STANDBY</Text>
+              <Text style={styles.priceHeroCurr}>READY TO CONNECT</Text>
             </View>
           )}
+        </View>
 
-          {/* Power & Live Cost (PKR Below Amount) */}
-          <View style={styles.powerSection}>
-            {isGunACharging ? (
-              <View style={styles.priceHeroColumn}>
-                <AnimatedMetricValue style={styles.priceHeroVal} value={costA} />
-                <Text style={styles.priceHeroCurr}>{curr} (Gun A) • Speed: {Number(powerA).toFixed(1)} kW</Text>
-              </View>
-            ) : isGunBCharging ? (
-              <View style={styles.priceHeroColumn}>
-                <AnimatedMetricValue style={styles.priceHeroVal} value={costB} />
-                <Text style={styles.priceHeroCurr}>{curr} (Gun B) • Speed: {Number(powerB).toFixed(1)} kW</Text>
-              </View>
-            ) : hasAnyGunConnected ? (
-              <View style={styles.priceHeroColumn}>
-                <AnimatedMetricValue
-                  style={styles.priceHeroVal}
-                  value={Number(totalCost.replace(/,/g, '')) > 0 ? totalCost : 'READY'}
-                />
-                <Text style={styles.priceHeroCurr}>
-                  {Number(totalCost.replace(/,/g, '')) > 0 ? `${curr} (session)` : 'PLUGGED IN • READY TO CHARGE'}
-                </Text>
-              </View>
-            ) : !isOnline ? (
-              <View style={styles.priceHeroColumn}>
-                <Text style={styles.priceHeroVal}>OFFLINE</Text>
-                <Text style={styles.priceHeroCurr}>
-                  {isServerReachable === false ? 'SERVER UNREACHABLE' : 'CHARGER DISCONNECTED'}
-                </Text>
-              </View>
-            ) : lastSessionCost > 0 ? (
-              <View style={styles.priceHeroColumn}>
-                <AnimatedMetricValue style={styles.priceHeroVal} value={lastSessionCost.toLocaleString()} />
-                <Text style={styles.priceHeroCurr}>{`${curr} (last session)`}</Text>
-              </View>
-            ) : (
-              <View style={styles.powerRow}>
-                <Text style={styles.powerValue}>0.0</Text>
-                <Text style={styles.powerUnit}>kW</Text>
-              </View>
-            )}
-          </View>
-        </>
-      )}
-
-      {/* Dynamic Data Layout */}
-      {is30kW ? (
-        /* 30kW Single Gun Model */
-        <View style={styles.singleContainer}>
-          <View style={styles.singleGunHeader}>
-            <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-            <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
-            {isOnline && (
+        {/* Gun Status Section: Gun A & Gun B Cards (or Single Gun for 30kW) */}
+        {is30kW ? (
+          <View style={styles.singleContainer}>
+            <View style={styles.singleGunHeader}>
+              <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+              <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
               <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
                 <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
               </View>
-            )}
-            {tel1?.soc != null && tel1?.soc !== '' ? (
-              <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
-              </View>
-            ) : null}
-          </View>
+              {tel1?.soc != null && tel1?.soc !== '' ? (
+                <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
+                </View>
+              ) : null}
+            </View>
 
-          <View style={styles.metricsGrid}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>ENERGY</Text>
-              <Text style={styles.metricValue}>{energyA} kWh</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>POWER</Text>
-              <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>CURRENT</Text>
-              <Text style={styles.metricValue}>{currentA} A</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>VOLTAGE</Text>
-              <Text style={styles.metricValue}>{voltageA} V</Text>
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>POWER</Text>
+                <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>ENERGY</Text>
+                <Text style={styles.metricValue}>{energyA} kWh</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>CURRENT</Text>
+                <Text style={styles.metricValue}>{currentA} A</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>VOLTAGE</Text>
+                <Text style={styles.metricValue}>{voltageA} V</Text>
+              </View>
             </View>
           </View>
-        </View>
-      ) : (
-        /* Dual Gun View: Both Gun A and Gun B Cards Always Visible Side by Side */
-        <View style={styles.dualContainer}>
-          {/* Gun A Column */}
-          <View style={[styles.gunCard, { flex: 1 }]}>
-            <View style={styles.gunHeader}>
-              <View style={styles.gunTitleRow}>
-                <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-                <Text style={styles.gunTitle}>GUN A</Text>
-              </View>
-              {isOnline && (
+        ) : (
+          <View style={styles.dualContainer}>
+            {/* Gun A Card */}
+            <View style={styles.gunCard}>
+              <View style={styles.gunHeader}>
+                <View style={styles.gunTitleRow}>
+                  <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+                  <Text style={styles.gunTitle}>GUN A</Text>
+                </View>
                 <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
                   <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
                 </View>
-              )}
-            </View>
-
-            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
-              <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerA).toFixed(1)} kW`} />
-              {hasSocA ? (
-                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocA}%</Text>
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Voltage</Text>
-              <Text style={styles.gunMetricVal}>{voltageA} V</Text>
-            </View>
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Current</Text>
-              <Text style={styles.gunMetricVal}>{currentA} A</Text>
-            </View>
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Energy</Text>
-              <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
-            </View>
-          </View>
-
-          {/* Gun B Column */}
-          <View style={[styles.gunCard, { flex: 1 }]}>
-            <View style={styles.gunHeader}>
-              <View style={styles.gunTitleRow}>
-                <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
-                <Text style={styles.gunTitle}>GUN B</Text>
               </View>
-              {isOnline && (
+
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, marginTop: 2 }}>
+                <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerA).toFixed(1)} kW`} />
+                {hasSocA ? (
+                  <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#0F172A' }}>{activeSocA}% SoC</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Voltage / Current</Text>
+                <Text style={styles.gunMetricVal}>{voltageA}V • {currentA}A</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Session Energy</Text>
+                <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
+              </View>
+            </View>
+
+            {/* Gun B Card */}
+            <View style={styles.gunCard}>
+              <View style={styles.gunHeader}>
+                <View style={styles.gunTitleRow}>
+                  <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
+                  <Text style={styles.gunTitle}>GUN B</Text>
+                </View>
                 <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
                   <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
                 </View>
-              )}
-            </View>
+              </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
-              <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerB).toFixed(1)} kW`} />
-              {hasSocB ? (
-                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocB}%</Text>
-                </View>
-              ) : null}
-            </View>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, marginTop: 2 }}>
+                <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerB).toFixed(1)} kW`} />
+                {hasSocB ? (
+                  <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#0F172A' }}>{activeSocB}% SoC</Text>
+                  </View>
+                ) : null}
+              </View>
 
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Voltage</Text>
-              <Text style={styles.gunMetricVal}>{voltageB} V</Text>
-            </View>
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Current</Text>
-              <Text style={styles.gunMetricVal}>{currentB} A</Text>
-            </View>
-            <View style={styles.gunMetricRow}>
-              <Text style={styles.gunMetricLabel}>Energy</Text>
-              <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Voltage / Current</Text>
+                <Text style={styles.gunMetricVal}>{voltageB}V • {currentB}A</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Session Energy</Text>
+                <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
+              </View>
             </View>
           </View>
-        </View>
-      )}
+        )}
 
-      {/* UI Test Simulator Modal for Testing without physical cars */}
-      <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
-    </ScrollView>
+        {/* UI Test Simulator Modal for Testing without physical cars */}
+        <SimulatorModal visible={simModalVisible} onClose={() => setSimModalVisible(false)} />
+      </View>
     </SwipeableTabScreen>
   );
 }
@@ -944,11 +829,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-  },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'ios' ? 64 : 50,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 48 : 32,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 12,
+    justifyContent: 'space-between',
   },
   loadingContainer: {
     flex: 1,
@@ -960,38 +844,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 14,
+    marginBottom: 4,
   },
   testUiBtn: {
     backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    marginRight: 40,
   },
   testUiBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#0F172A',
   },
   headerLogo: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
   },
   stationId: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 20,
   },
   statusDot: {
@@ -1006,187 +888,51 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  /* Hero Charger Image */
+  /* Hero Charger Image - dynamically scales within available space */
   heroChargerContainer: {
     width: '100%',
-    height: 420,
+    flex: 1,
+    maxHeight: 230,
+    minHeight: 140,
     justifyContent: 'center',
     alignItems: 'center',
-    marginVertical: 16,
+    marginVertical: 4,
   },
   heroChargerImage: {
     width: '100%',
     height: '100%',
-    maxWidth: 550,
+    maxWidth: 420,
   },
 
-  /* Battery Hero Card on Main Screen */
-  batteryHeroCard: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginHorizontal: 4,
-    marginBottom: 20,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  batteryHeroTopRow: {
-    flexDirection: 'row',
+  /* Power Section & Hero Price */
+  powerSection: {
     alignItems: 'center',
-  },
-  batteryTrackMinimal: {
-    height: 4,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginVertical: 8,
-  },
-  batteryFillMinimal: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  batteryHeroTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  batteryHeroPercent: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  batteryHeroSubtitle: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  dualHeroContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginHorizontal: 4,
-    marginBottom: 20,
-  },
-  dualHeroCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 16,
-    padding: 14,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  dualHeroCardActive: {
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-  },
-  dualHeroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  dualHeroTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  dualHeroTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 0.5,
-  },
-  dualHeroSocRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-  },
-  dualHeroSocPercent: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.5,
-  },
-  dualHeroSocLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 1,
-  },
-  dualHeroPriceSection: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 4,
-    marginTop: 8,
-    marginBottom: 2,
-  },
-  dualHeroPriceVal: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.5,
-  },
-  dualHeroPriceCurr: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0284C7',
-    letterSpacing: 0.8,
-  },
-  dualHeroMetaText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  dualBatterySub: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 2,
+    justifyContent: 'center',
+    marginVertical: 6,
   },
   priceHeroColumn: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   priceHeroVal: {
-    fontSize: 54,
+    fontSize: 38,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: -1.5,
+    letterSpacing: -1,
     fontVariant: ['tabular-nums'],
   },
   priceHeroCurr: {
     fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-    letterSpacing: 2,
+    fontWeight: '800',
+    color: '#0284C7',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-    marginTop: 2,
   },
   powerSubtext: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
-    marginTop: 4,
-  },
-
-  /* Power Section */
-  powerSection: {
-    alignItems: 'center',
-    marginBottom: 28,
+    marginTop: 2,
   },
   powerRow: {
     flexDirection: 'row',
@@ -1194,43 +940,43 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   powerValue: {
-    fontSize: 56,
+    fontSize: 44,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: -2,
+    letterSpacing: -1.5,
   },
   powerUnit: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '800',
     color: '#64748B',
     marginLeft: 6,
-  },
-  costSubtext: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 6,
-    letterSpacing: 0.3,
   },
 
   /* Dual Gun Layout */
   dualContainer: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     marginTop: 4,
   },
   gunCard: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   gunHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   gunTitleRow: {
     flexDirection: 'row',
@@ -1258,23 +1004,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   gunPower: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
     color: '#0F172A',
-    marginBottom: 10,
   },
   gunMetricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 3,
+    paddingVertical: 2,
   },
   gunMetricLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#94A3B8',
     fontWeight: '600',
   },
   gunMetricVal: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#0F172A',
   },
@@ -1282,19 +1027,25 @@ const styles = StyleSheet.create({
   /* Single Gun Connected */
   singleContainer: {
     width: '100%',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
   },
   singleGunHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
 
   /* Standard Metrics Grid */
   metricsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingTop: 14,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
   },
@@ -1308,14 +1059,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
   metricLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: '#94A3B8',
     letterSpacing: 0.5,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   metricValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
   },
