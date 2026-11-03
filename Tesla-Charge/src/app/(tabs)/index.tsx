@@ -353,19 +353,15 @@ export default function HomeScreen() {
   // Track true server connectivity and charger online status
   const isOnline = isSimulating || (
     isServerReachable !== false &&
-    (isWebSocketConnected ||
-      chargerData?.status === 'Online' ||
-      isActivelyEngaged ||
-      (connector1Data && connector1Data.status !== 'Unavailable') ||
-      (connector2Data && connector2Data.status !== 'Unavailable'))
+    (isWebSocketConnected === true || chargerData?.status === 'Online')
   );
 
-  const status1 = isOnline || isGunAPlugged ? rawStatus1 : 'Unavailable';
-  const status2 = (isOnline || isGunBPlugged) && !is30kW ? rawStatus2 : 'Unavailable';
+  const status1 = isOnline ? rawStatus1 : 'Unavailable';
+  const status2 = isOnline && !is30kW ? rawStatus2 : 'Unavailable';
 
-  const isGunAConnected = isGunAPlugged;
-  const isGunBConnected = isGunBPlugged;
-  const bothConnected = !is30kW && isGunAConnected && isGunBConnected;
+  const isGunAConnected = isOnline && isGunAPlugged;
+  const isGunBConnected = isOnline && isGunBPlugged;
+  const bothConnected = isOnline && !is30kW && isGunAConnected && isGunBConnected;
 
   // 240kW / 220kW model detection
   const is240kW =
@@ -378,7 +374,9 @@ export default function HomeScreen() {
 
   // Dynamically select the correct hero image based on active gun connection states
   let heroImageSource: any;
-  if (is30kW) {
+  if (!isOnline) {
+    heroImageSource = is30kW ? STATE_IMAGES_30KW.idle : (is240kW ? STATE_IMAGES_240KW.idle : STATE_IMAGES.idle);
+  } else if (is30kW) {
     // 30kW has only one gun: connected when in use/plugged, idle when standby
     heroImageSource = isGunAConnected ? STATE_IMAGES_30KW.connected : STATE_IMAGES_30KW.idle;
   } else {
@@ -444,14 +442,16 @@ export default function HomeScreen() {
   const baseEnergyA = Math.max(serverEnergyA, computedA, deliveredA);
   const sessionEnergyA = isSimulating ? simGunA.energyKwh : baseEnergyA + liveAccumulatedA;
   const lifetimeMeterA = tel1?.energyKwh || (tel1?.energyWh ? (tel1.energyWh / 1000).toFixed(2) : '0.00');
-  const energyA = isSimulating ? simGunA.energyKwh.toFixed(2) : sessionEnergyA.toFixed(2);
+  const energyA = isOnline
+    ? (isSimulating ? simGunA.energyKwh.toFixed(2) : sessionEnergyA.toFixed(2))
+    : '0.00';
 
   // Telemetry for Gun B (Connector 2) - directly from live OCPP server or simulator
-  const tel2 = connector2Data?.telemetry;
-  const powerB = isSimulating ? simGunB.powerKw : Number(tel2?.powerKw || 0);
-  const voltageB = isSimulating ? simGunB.voltage : tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0);
-  const currentB = isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0);
-  const socB = isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null);
+  const tel2 = isOnline ? connector2Data?.telemetry : null;
+  const powerB = isOnline && !is30kW ? (isSimulating ? simGunB.powerKw : Number(tel2?.powerKw || 0)) : 0;
+  const voltageB = isOnline && !is30kW ? (isSimulating ? simGunB.voltage : tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0)) : 0;
+  const currentB = isOnline && !is30kW ? (isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0)) : 0;
+  const socB = isOnline && !is30kW ? (isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null)) : null;
 
   // Session energy delivered for Gun B - anchored to authoritative server values
   const txB = activeTx2Data || connector2Data?.activeTx || (isTxForGunB(activeTxData) ? activeTxData : null);
@@ -467,7 +467,9 @@ export default function HomeScreen() {
   const baseEnergyB = Math.max(serverEnergyB, computedB, deliveredB);
   const sessionEnergyB = isSimulating ? simGunB.energyKwh : baseEnergyB + liveAccumulatedB;
   const lifetimeMeterB = tel2?.energyKwh || (tel2?.energyWh ? (tel2.energyWh / 1000).toFixed(2) : '0.00');
-  const energyB = isSimulating ? simGunB.energyKwh.toFixed(2) : sessionEnergyB.toFixed(2);
+  const energyB = isOnline
+    ? (isSimulating ? simGunB.energyKwh.toFixed(2) : sessionEnergyB.toFixed(2))
+    : '0.00';
 
   // Total Power
   const totalPower = is30kW ? Number(powerA).toFixed(1) : (powerA + powerB).toFixed(1);
@@ -591,15 +593,17 @@ export default function HomeScreen() {
   const bothCharging = isGunACharging && isGunBCharging;
   const isActivelyChargingNow = isGunACharging || isGunBCharging;
 
-  // Attached car detection (Plugged in or Charging or Active Tx)
+  // Attached car detection (Only active when charger is online)
   const isCarAAttached =
-    isGunAConnected ||
-    Number(powerA) > 0 ||
-    status1 === 'Charging' ||
-    status1 === 'Preparing' ||
-    Boolean(txA);
+    isOnline &&
+    (isGunAConnected ||
+      Number(powerA) > 0 ||
+      status1 === 'Charging' ||
+      status1 === 'Preparing' ||
+      Boolean(txA));
 
   const isCarBAttached =
+    isOnline &&
     !is30kW &&
     (isGunBConnected ||
       Number(powerB) > 0 ||
@@ -607,9 +611,9 @@ export default function HomeScreen() {
       status2 === 'Preparing' ||
       Boolean(txB));
 
-  const bothCarsAttached = isCarAAttached && isCarBAttached;
-  const onlyCarAAttached = isCarAAttached && !isCarBAttached;
-  const onlyCarBAttached = isCarBAttached && !isCarAAttached;
+  const bothCarsAttached = isOnline && isCarAAttached && isCarBAttached;
+  const onlyCarAAttached = isOnline && isCarAAttached && !isCarBAttached;
+  const onlyCarBAttached = isOnline && isCarBAttached && !isCarAAttached;
 
   const hasSocA = typeof activeSocA === 'number' && activeSocA > 0;
   const hasSocB = typeof activeSocB === 'number' && activeSocB > 0;
@@ -669,7 +673,25 @@ export default function HomeScreen() {
 
         {/* Unified Bottom Charging Dashboard (Seamless, No Disjointed Divs, No Empty Space) */}
         <View style={styles.bottomDashboard}>
-          {bothCarsAttached ? (
+          {!isOnline ? (
+            /* STATION IS OFFLINE - Explicit Clean Offline Presentation */
+            <View style={styles.unifiedStandbyDashboard}>
+              <View style={[styles.standbyBadge, { backgroundColor: '#FEF2F2' }]}>
+                <View style={[styles.gunDot, { backgroundColor: '#EF4444', width: 6.5, height: 6.5 }]} />
+                <Text style={[styles.standbyBadgeText, { color: '#DC2626' }]}>CHARGER OFFLINE</Text>
+              </View>
+
+              <View style={styles.unifiedPriceRow}>
+                <Text style={[styles.unifiedPriceVal, { color: '#64748B' }]}>OFFLINE</Text>
+              </View>
+
+              <Text style={styles.unifiedSpeedSub}>
+                {isServerReachable === false
+                  ? 'Connecting to OCPP server...'
+                  : 'Charger is disconnected from network'}
+              </Text>
+            </View>
+          ) : bothCarsAttached ? (
             /* BOTH Cars Attached: Clean Dual Telemetry View */
             <View style={styles.unifiedDualDashboard}>
               <View style={styles.dualColumnsRow}>
@@ -757,7 +779,7 @@ export default function HomeScreen() {
                 </View>
               </View>
             </View>
-          ) : onlyCarAAttached || is30kW ? (
+          ) : onlyCarAAttached ? (
             /* ONLY Car A Attached: Unified Single Presentation without standing-out div */
             <View style={styles.unifiedSingleDashboard}>
               <View style={styles.unifiedStatusRow}>
@@ -818,19 +840,15 @@ export default function HomeScreen() {
 
               <View style={styles.unifiedPriceRow}>
                 <Text style={styles.unifiedPriceVal}>
-                  {!isOnline ? 'OFFLINE' : lastSessionCost > 0 ? Number(lastSessionCost).toLocaleString() : 'READY'}
+                  {lastSessionCost > 0 ? Number(lastSessionCost).toLocaleString() : 'READY'}
                 </Text>
                 <Text style={styles.unifiedPriceCurr}>
-                  {!isOnline ? '' : lastSessionCost > 0 ? curr : ''}
+                  {lastSessionCost > 0 ? curr : ''}
                 </Text>
               </View>
 
               <Text style={styles.unifiedSpeedSub}>
-                {!isOnline
-                  ? isServerReachable === false
-                    ? 'Connecting to server...'
-                    : 'Station standby'
-                  : lastSessionCost > 0
+                {lastSessionCost > 0
                   ? `Last Session • ${lastSessionKwh.toFixed(1)} kWh ${lastDurationText ? `• ${lastDurationText}` : ''}`
                   : 'Plug charging cable into vehicle to begin'}
               </Text>
