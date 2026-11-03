@@ -4,7 +4,8 @@ import { ocppServer } from "../ocpp/OCPPServer.js";
 import { updateTransactionPayment, getChargerLiveState, getLocalServerTransactions } from "../services/firebaseSync.js";
 import { db, rtdb } from "../config/firebase.js";
 import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, limit } from "firebase/firestore";
-import { ref, get } from "firebase/database";
+import { ref, get, set } from "firebase/database";
+import { getKarachiIso } from "../utils/time.js";
 
 export const apiRouter = express.Router();
 
@@ -177,7 +178,7 @@ apiRouter.post("/chargers/:chargePointId/tariff", async (req, res) => {
       doc(db, "chargers", cleanId),
       {
         tariffRate: Number(tariffRate),
-        tariffUpdatedAt: new Date().toISOString(),
+        tariffUpdatedAt: getKarachiIso(),
       },
       { merge: true }
     );
@@ -309,7 +310,7 @@ apiRouter.get("/system/metrics", (_req, res) => {
 
   return res.json({
     status: "Healthy",
-    timestamp: new Date().toISOString(),
+    timestamp: getKarachiIso(),
     os: {
       hostname: os.hostname(),
       platform: os.platform(),
@@ -665,8 +666,8 @@ apiRouter.post("/auth/register", async (req, res) => {
           defaultChargerId: assignedStation,
           role: "driver",
           setupCompleted: true,
-          createdAt: new Date().toISOString(),
-          lastLoginAt: new Date().toISOString(),
+          createdAt: getKarachiIso(),
+          lastLoginAt: getKarachiIso(),
         },
         { merge: true }
       );
@@ -731,7 +732,7 @@ apiRouter.post("/notifications/register-token", async (req, res) => {
         {
           pushTokens: existingTokens,
           lastPushToken: token,
-          pushTokenUpdatedAt: new Date().toISOString(),
+          pushTokenUpdatedAt: getKarachiIso(),
         },
         { merge: true }
       );
@@ -746,7 +747,7 @@ apiRouter.post("/notifications/register-token", async (req, res) => {
           doc(db, "users", userId),
           {
             pushToken: token,
-            pushTokenUpdatedAt: new Date().toISOString(),
+            pushTokenUpdatedAt: getKarachiIso(),
             defaultChargerId: cleanId,
           },
           { merge: true }
@@ -762,7 +763,7 @@ apiRouter.post("/notifications/register-token", async (req, res) => {
         token,
         userId: userId || "anonymous",
         platform: platform || "unknown",
-        updatedAt: new Date().toISOString(),
+        updatedAt: getKarachiIso(),
       });
     } catch (_rtdbErr) {}
 

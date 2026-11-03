@@ -23,12 +23,26 @@ type FilterMode = 'all' | 'today' | 'day' | 'range' | 'month';
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Helper to format Date into YYYY-MM-DD
+// Helper to format Date into YYYY-MM-DD in Asia/Karachi (PKT) time
 function formatDateKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Karachi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const map: Record<string, string> = {};
+    for (const p of parts) {
+      map[p.type] = p.value;
+    }
+    return `${map.year}-${map.month}-${map.day}`;
+  } catch (_e) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
 }
 
 export default function HistoryScreen() {

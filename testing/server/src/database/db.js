@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { getKarachiIso } from "../utils/time.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,7 +153,7 @@ export function initDatabase() {
     // Column already exists
   }
 
-  const now = new Date().toISOString();
+  const now = getKarachiIso();
 
   // Ensure 'charger1' exists with owner telsa@teksa.cok and tariff 125
   db.prepare(`

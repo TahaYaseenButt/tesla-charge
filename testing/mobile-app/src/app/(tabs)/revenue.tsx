@@ -122,11 +122,26 @@ export default function RevenueScreen() {
       const dateObj = rawDateStr ? new Date(rawDateStr) : new Date();
       const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
 
-      const y = validDate.getFullYear();
-      const m = String(validDate.getMonth() + 1).padStart(2, '0');
-      const d = String(validDate.getDate()).padStart(2, '0');
-      const dateKey = `${y}-${m}-${d}`;
-      const monthKey = `${y}-${m}`;
+      let dateKey: string;
+      let monthKey: string;
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Karachi',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(validDate);
+        const map: Record<string, string> = {};
+        for (const p of parts) map[p.type] = p.value;
+        dateKey = `${map.year}-${map.month}-${map.day}`;
+        monthKey = `${map.year}-${map.month}`;
+      } catch (_e) {
+        const y = validDate.getFullYear();
+        const m = String(validDate.getMonth() + 1).padStart(2, '0');
+        const d = String(validDate.getDate()).padStart(2, '0');
+        dateKey = `${y}-${m}-${d}`;
+        monthKey = `${y}-${m}`;
+      }
 
       return {
         ...tx,

@@ -1,9 +1,13 @@
+// Enforce Karachi time across all server operations
+process.env.TZ = "Asia/Karachi";
+
 import express from "express";
 import http from "http";
 import path from "path";
 import cors from "cors";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { getKarachiIso } from "./utils/time.js";
 import { ocppServer } from "./ocpp/OCPPServer.js";
 import { apiRouter } from "./routes/api.js";
 import { initDatabase } from "./database/db.js";
@@ -51,6 +55,7 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`🌐 Dashboard:          http://localhost:${PORT}`);
   console.log(`🔌 Internet OCPP URL:  wss://tesla-charge.online/api/ocpp/version/1.6`);
   console.log(`🔌 Local LAN OCPP URL: ws://192.168.0.131:${PORT}/api/ocpp/version/1.6`);
+  console.log(`🕒 Karachi Time (PKT): ${getKarachiIso()}`);
   console.log(`💾 Local Database:     SQLite (WAL Mode) - data/tcharge.db`);
   console.log(`🚀 Mode:               Direct Self-Hosted (Zero Cloud/Firebase)`);
   console.log(`====================================================`);

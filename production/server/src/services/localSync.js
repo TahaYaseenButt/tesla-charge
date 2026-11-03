@@ -1,11 +1,12 @@
 import { db } from "../database/db.js";
 import { EventEmitter } from "events";
 import { notifyChargerSubscribers } from "./notificationService.js";
+import { getKarachiIso } from "../utils/time.js";
 
 export const liveEvents = new EventEmitter();
 liveEvents.setMaxListeners(200);
 
-const nowIso = () => new Date().toISOString();
+const nowIso = () => getKarachiIso();
 
 /**
  * Broadcast an event to all connected SSE clients (mobile apps & web dashboard)
@@ -140,7 +141,7 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
   const cId = (chargePointId || "charger1").toLowerCase();
   const connId = Number(connectorId || 1);
   const txId = String(transactionId);
-  const now = timestamp || nowIso();
+  const now = timestamp ? getKarachiIso(timestamp) : nowIso();
 
   try {
     // Get tariff rate from charger config
@@ -327,7 +328,7 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
 export async function saveStopTransaction(transactionId, chargePointId, meterStop, timestamp, reason, explicitTariff) {
   const cId = (chargePointId || "charger1").toLowerCase();
   const txId = String(transactionId);
-  const now = timestamp || nowIso();
+  const now = timestamp ? getKarachiIso(timestamp) : nowIso();
 
   try {
     const tx = db.prepare("SELECT * FROM transactions WHERE transaction_id = ?").get(txId);

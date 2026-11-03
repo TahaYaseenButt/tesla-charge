@@ -3,8 +3,9 @@ import os from "os";
 import { ocppServer } from "../ocpp/OCPPServer.js";
 import { updateTransactionPayment, getChargerLiveState, getLocalServerTransactions } from "../services/firebaseSync.js";
 import { db, rtdb } from "../config/firebase.js";
-import { collection, getDocs, doc, getDoc, query, orderBy, limit } from "firebase/firestore";
-import { ref, get } from "firebase/database";
+import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, limit } from "firebase/firestore";
+import { ref, get, set } from "firebase/database";
+import { getKarachiIso } from "../utils/time.js";
 
 export const apiRouter = express.Router();
 
@@ -152,6 +153,44 @@ apiRouter.get("/chargers/:chargePointId/config", async (req, res) => {
 });
 
 /**
+ * Direct API to update tariff with tenant ownership check
+ */
+apiRouter.post("/chargers/:chargePointId/tariff", async (req, res) => {
+  const { chargePointId } = req.params;
+  const { tariffRate, userId, userEmail } = req.body;
+  if (!tariffRate || Number(tariffRate) <= 0) {
+    return res.status(400).json({ success: false, error: "Valid tariffRate required" });
+  }
+
+  const cleanId = chargePointId.trim().toLowerCase();
+
+  try {
+    const chargerSnap = await getDoc(doc(db, "chargers", cleanId));
+    if (chargerSnap.exists()) {
+      const cData = chargerSnap.data();
+      if (userId && cData.configuredByUserId && cData.configuredByUserId !== userId) {
+        console.warn(`[Security Alert] User ${userEmail || userId} attempted unauthorized tariff change on [${cleanId}]`);
+        return res.status(403).json({ success: false, error: "Forbidden: You do not own this charger." });
+      }
+    }
+
+    await setDoc(
+      doc(db, "chargers", cleanId),
+      {
+        tariffRate: Number(tariffRate),
+        tariffUpdatedAt: getKarachiIso(),
+      },
+      { merge: true }
+    );
+
+    console.log(`[Tariff Updated] Station [${cleanId}] tariff set to ${tariffRate} PKR/kWh`);
+    return res.json({ success: true, tariffRate: Number(tariffRate), chargePointId: cleanId });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * Direct API to trigger message (MeterValues, StatusNotification, etc.)
  */
 apiRouter.post("/chargers/:chargePointId/trigger", async (req, res) => {
@@ -271,7 +310,7 @@ apiRouter.get("/system/metrics", (_req, res) => {
 
   return res.json({
     status: "Healthy",
-    timestamp: new Date().toISOString(),
+    timestamp: getKarachiIso(),
     os: {
       hostname: os.hostname(),
       platform: os.platform(),
@@ -514,5 +553,228 @@ apiRouter.get("/network-summary", async (_req, res) => {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * Direct API to get charger live configuration and telemetry
+ */
+apiRouter.get("/chargers/:chargePointId", async (req, res) => {
+  const { chargePointId } = req.params;
+  const data = await getChargerLiveState(chargePointId);
+  return res.json({ success: true, ...data });
+});
+
+/**
+ * Direct Auth API: Login with Firebase Identity Toolkit
+ */
+apiRouter.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Email and password are required" });
+  }
+
+  try {
+    const fbRes = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyBkc0CoqaW1Mg5hLl7kpXU3TAURebEWpcg",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, returnSecureToken: true }),
+      }
+    );
+
+    const fbData = await fbRes.json();
+    if (!fbRes.ok) {
+      const msg = fbData?.error?.message;
+      if (msg === "INVALID_LOGIN_CREDENTIALS" || msg === "INVALID_PASSWORD" || msg === "EMAIL_NOT_FOUND") {
+        return res.status(401).json({ success: false, error: "Invalid email or password" });
+      }
+      return res.status(400).json({ success: false, error: msg || "Authentication failed" });
+    }
+
+    const uid = fbData.localId;
+    let stationId = "charger1";
+    let role = "driver";
+    let defaultChargerModel = "240kW";
+
+    try {
+      const userSnap = await getDoc(doc(db, "users", uid));
+      if (userSnap.exists()) {
+        const u = userSnap.data();
+        stationId = (u.defaultChargerId || u.stationId || stationId).trim().toLowerCase();
+        role = u.role || role;
+        defaultChargerModel = u.defaultChargerModel || defaultChargerModel;
+      }
+    } catch (_err) {}
+
+    return res.json({
+      success: true,
+      token: fbData.idToken,
+      user: {
+        uid,
+        id: uid,
+        email: fbData.email || email.trim(),
+        displayName: fbData.displayName || email.trim().split("@")[0],
+        role,
+        stationId,
+        defaultChargerId: stationId,
+        defaultChargerModel,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Direct Auth API: Register with Firebase Identity Toolkit
+ */
+apiRouter.post("/auth/register", async (req, res) => {
+  const { email, password, displayName, stationId } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Email and password are required" });
+  }
+
+  try {
+    const fbRes = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=AIzaSyBkc0CoqaW1Mg5hLl7kpXU3TAURebEWpcg",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, returnSecureToken: true }),
+      }
+    );
+
+    const fbData = await fbRes.json();
+    if (!fbRes.ok) {
+      const msg = fbData?.error?.message;
+      if (msg === "EMAIL_EXISTS") {
+        return res.status(409).json({ success: false, error: "User with this email already exists" });
+      }
+      return res.status(400).json({ success: false, error: msg || "Registration failed" });
+    }
+
+    const uid = fbData.localId;
+    const assignedStation = (stationId || "charger1").trim().toLowerCase();
+
+    try {
+      await setDoc(
+        doc(db, "users", uid),
+        {
+          uid,
+          email: email.trim(),
+          stationId: assignedStation,
+          defaultChargerId: assignedStation,
+          role: "driver",
+          setupCompleted: true,
+          createdAt: getKarachiIso(),
+          lastLoginAt: getKarachiIso(),
+        },
+        { merge: true }
+      );
+    } catch (_err) {}
+
+    return res.json({
+      success: true,
+      token: fbData.idToken,
+      user: {
+        uid,
+        id: uid,
+        email: email.trim(),
+        displayName: displayName || email.trim().split("@")[0],
+        stationId: assignedStation,
+        defaultChargerId: assignedStation,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Current authenticated user profile
+ */
+apiRouter.get("/auth/me", async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+  return res.json({ success: true, message: "Authenticated" });
+});
+
+/**
+ * Register Expo push notification token for charger and user
+ */
+apiRouter.post("/notifications/register-token", async (req, res) => {
+  const { token, chargerId, userId, platform } = req.body;
+  if (!token) {
+    return res.status(400).json({ success: false, error: "Missing token" });
+  }
+
+  const cleanId = (chargerId || "charger1").trim().toLowerCase();
+  const safeToken = String(token).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  try {
+    // 1. Save to Firestore charger document in pushTokens array
+    try {
+      const chargerRef = doc(db, "chargers", cleanId);
+      const cSnap = await getDoc(chargerRef);
+      let existingTokens = [];
+      if (cSnap.exists()) {
+        const cData = cSnap.data();
+        existingTokens = Array.isArray(cData.pushTokens) ? cData.pushTokens : [];
+      }
+      if (!existingTokens.includes(token)) {
+        existingTokens.push(token);
+      }
+      await setDoc(
+        chargerRef,
+        {
+          pushTokens: existingTokens,
+          lastPushToken: token,
+          pushTokenUpdatedAt: getKarachiIso(),
+        },
+        { merge: true }
+      );
+    } catch (fErr) {
+      console.warn("[Push] Error saving token to Firestore charger:", fErr.message);
+    }
+
+    // 2. Save to Firestore user document
+    if (userId && userId !== "anonymous" && userId !== "admin_local") {
+      try {
+        await setDoc(
+          doc(db, "users", userId),
+          {
+            pushToken: token,
+            pushTokenUpdatedAt: getKarachiIso(),
+            defaultChargerId: cleanId,
+          },
+          { merge: true }
+        );
+      } catch (uErr) {
+        console.warn("[Push] Error saving token to Firestore user:", uErr.message);
+      }
+    }
+
+    // 3. Save to RTDB live subscribers if permissions allow
+    try {
+      await set(ref(rtdb, `notifications/subscribers/${cleanId}/${safeToken}`), {
+        token,
+        userId: userId || "anonymous",
+        platform: platform || "unknown",
+        updatedAt: getKarachiIso(),
+      });
+    } catch (_rtdbErr) {}
+
+    console.log(`[Push] Successfully registered token for [${cleanId}]: ${token.substring(0, 30)}...`);
+    return res.json({ success: true, message: "Token registered successfully" });
+  } catch (err) {
+    console.error("[Push Error] Failed to register token:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 
 

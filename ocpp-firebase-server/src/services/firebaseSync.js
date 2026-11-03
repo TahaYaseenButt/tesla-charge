@@ -4,6 +4,7 @@ import { ref, update, set, get, remove } from "firebase/database";
 import fs from "fs";
 import path from "path";
 import { sendPushNotification } from "./notificationService.js";
+import { getKarachiIso } from "../utils/time.js";
 
 /**
  * Fetch push tokens registered for a charger (Firestore + RTDB fallback)
@@ -114,7 +115,7 @@ export function getLocalServerTransactions() {
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-const nowIso = () => new Date().toISOString();
+const nowIso = () => getKarachiIso();
 
 // RTDB keys cannot contain . # $ [ ] /
 const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");

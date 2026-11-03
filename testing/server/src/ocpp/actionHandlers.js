@@ -9,6 +9,7 @@ import {
   broadcastLive,
 } from "../services/localSync.js";
 import { db } from "../database/db.js";
+import { getKarachiIso } from "../utils/time.js";
 
 // Helper to generate transaction IDs
 let nextTxId = Date.now() % 1000000;
@@ -110,7 +111,7 @@ export const actionHandlers = {
 
     return {
       status: "Accepted",
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
       interval: parseInt(process.env.HEARTBEAT_INTERVAL || "30", 10),
     };
   },
@@ -123,7 +124,7 @@ export const actionHandlers = {
       console.warn(`[LocalSync] saveChargerHeartbeat warning: ${err.message}`)
     );
     return {
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
     };
   },
 
@@ -187,7 +188,7 @@ export const actionHandlers = {
       idTagInfo: {
         status: authResult.status || "Accepted",
         parentIdTag: parentId,
-        expiryDate: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
+        expiryDate: getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
       },
     };
   },
@@ -240,7 +241,7 @@ export const actionHandlers = {
       transactionId: txId,
       idTagInfo: {
         status: "Accepted",
-        expiryDate: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
+        expiryDate: getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
       },
     };
   },

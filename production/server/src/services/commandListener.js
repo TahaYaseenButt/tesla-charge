@@ -2,6 +2,7 @@ import { db, rtdb } from "../config/firebase.js";
 import { collection, query, where, onSnapshot, doc, updateDoc, getDocs, limit } from "firebase/firestore";
 import { ref, get } from "firebase/database";
 import { ocppServer } from "../ocpp/OCPPServer.js";
+import { getKarachiIso } from "../utils/time.js";
 
 /**
  * Listen in real time for commands created by the React Mobile App or Web Dashboard
@@ -26,7 +27,7 @@ export function startCommandListener() {
           // 1. Immediate lock: Mark as processing to prevent race conditions or double-firing
           await updateDoc(doc(db, "commands", commandDoc.id), {
             status: "processing",
-            processingStartedAt: new Date().toISOString(),
+            processingStartedAt: getKarachiIso(),
           });
 
           try {
@@ -225,7 +226,7 @@ export function startCommandListener() {
             await updateDoc(doc(db, "commands", commandDoc.id), {
               status: "completed",
               result: result || { status: "Success" },
-              executedAt: new Date().toISOString(),
+              executedAt: getKarachiIso(),
             });
 
             console.log(`[CommandListener] Command [${action}] executed successfully for [${chargePointId}]`);
@@ -235,7 +236,7 @@ export function startCommandListener() {
             await updateDoc(doc(db, "commands", commandDoc.id), {
               status: "failed",
               error: err.message,
-              executedAt: new Date().toISOString(),
+              executedAt: getKarachiIso(),
             });
           }
         }

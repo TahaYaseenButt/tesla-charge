@@ -11,6 +11,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - TZ=Asia/Karachi
       - FIREBASE_PROJECT_ID=fir-85543
       - PRICE_PER_KWH=50.0
       - HEARTBEAT_INTERVAL=30

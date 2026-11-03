@@ -1,6 +1,7 @@
 import { WebSocketServer } from "ws";
 import { actionHandlers } from "./actionHandlers.js";
 import { saveChargerOffline } from "../services/firebaseSync.js";
+import { getKarachiIso, getKarachiTimeString } from "../utils/time.js";
 import crypto from "crypto";
 
 export class OCPPServer {
@@ -11,7 +12,7 @@ export class OCPPServer {
   }
 
   log(msg) {
-    const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    const entry = `[${getKarachiTimeString()}] ${msg}`;
     console.log(entry);
     this.logs.unshift(entry);
     if (this.logs.length > 50) this.logs.pop();
@@ -110,7 +111,7 @@ export class OCPPServer {
       ws,
       lastActivity: now,
       pendingCalls: new Map(),
-      connectedAt: new Date().toISOString(),
+      connectedAt: getKarachiIso(),
     };
 
     ws.on("pong", () => {

@@ -7,6 +7,7 @@ import {
   saveStopTransaction,
   verifyRfidTag,
 } from "../services/firebaseSync.js";
+import { getKarachiIso } from "../utils/time.js";
 
 // Helper to generate transaction IDs
 let nextTxId = Date.now() % 1000000;
@@ -133,7 +134,7 @@ export const actionHandlers = {
 
     return {
       status: "Accepted",
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
       interval: parseInt(process.env.HEARTBEAT_INTERVAL || "30", 10),
     };
   },
@@ -146,7 +147,7 @@ export const actionHandlers = {
       console.warn(`[OCPP] Async saveChargerHeartbeat warning: ${err.message}`)
     );
     return {
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
     };
   },
 
@@ -233,7 +234,7 @@ export const actionHandlers = {
         parentIdTag: parentId,
         expiryDate:
           authResult.expiryDate ||
-          new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString(),
+          getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
       },
     };
   },

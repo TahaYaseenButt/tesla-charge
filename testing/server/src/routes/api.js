@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { ocppServer } from "../ocpp/OCPPServer.js";
 import { db } from "../database/db.js";
 import { getLocalChargerLive, liveEvents } from "../services/localSync.js";
+import { getKarachiIso } from "../utils/time.js";
 
 export const apiRouter = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "tesla-charge-local-secret-key-2026";
@@ -46,7 +47,7 @@ apiRouter.post("/auth/register", async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     const userId = "usr_" + crypto.randomUUID().replace(/-/g, "").substring(0, 16);
-    const now = new Date().toISOString();
+    const now = getKarachiIso();
     const assignedStation = stationId ? stationId.trim().toLowerCase() : "";
 
     db.prepare(`
@@ -170,7 +171,7 @@ apiRouter.get("/status", authenticateToken, (req, res) => {
     connectors: live.connectors,
     activeTransaction: live.activeTransaction,
     lastCompletedTx: live.lastCompletedTx,
-    serverTime: new Date().toISOString(),
+    serverTime: getKarachiIso(),
     live,
     connectedChargers: connectedList,
     recentLogs: typeof ocppServer.getLogs === "function" ? ocppServer.getLogs(30) : (ocppServer.logs || []),
@@ -277,7 +278,7 @@ const handleTariffUpdate = (req, res) => {
 
   try {
     db.prepare("UPDATE chargers SET tariff_rate = ?, updated_at = ? WHERE charge_point_id = ?")
-      .run(Number(tariffRate), new Date().toISOString(), cleanId);
+      .run(Number(tariffRate), getKarachiIso(), cleanId);
     return res.json({ success: true, tariffRate: Number(tariffRate) });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -363,8 +364,8 @@ apiRouter.post("/commands/dispatch", authenticateToken, async (req, res) => {
           connId,
           req.user?.id || "App",
           req.user?.email || effectiveIdTag,
-          new Date().toISOString(),
-          new Date().toISOString()
+          getKarachiIso(),
+          getKarachiIso()
         );
       }
 
@@ -639,7 +640,7 @@ apiRouter.post("/chargers/:chargePointId/rfid-tags", authenticateToken, (req, re
   if (!tagId) return res.status(400).json({ success: false, error: "tagId is required" });
 
   try {
-    const now = new Date().toISOString();
+    const now = getKarachiIso();
     db.prepare(`
       INSERT INTO rfid_tags (tag_id, charge_point_id, user_id, user_email, status, created_at)
       VALUES (?, ?, ?, ?, 'Accepted', ?)
@@ -677,7 +678,7 @@ apiRouter.post("/notifications/register-token", (req, res) => {
   }
 
   const cId = (chargerId || "charger1").toLowerCase();
-  const now = new Date().toISOString();
+  const now = getKarachiIso();
 
   try {
     db.prepare(`

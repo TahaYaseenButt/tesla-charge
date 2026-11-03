@@ -4,6 +4,10 @@ FROM node:20-alpine
 # Set environment
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV TZ=Asia/Karachi
+
+# Install tzdata so Alpine Linux has Asia/Karachi timezone database
+RUN apk add --no-cache tzdata
 
 # Set working directory
 WORKDIR /app
