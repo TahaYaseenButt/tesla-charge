@@ -80,9 +80,16 @@ export const getStatusConfig = (status?: string) => {
       color: '#475569',
       label: String(status).toUpperCase(),
       bg: 'rgba(100, 116, 139, 0.06)',
-      border: 'rgba(100, 116, 139, 0.15)',
     }
   );
+};
+
+// Compact status label for dual-column view to prevent any text wrapping
+export const getDualStatusLabel = (label: string) => {
+  const upper = (label || '').toUpperCase();
+  if (upper === 'PLUGGED IN') return 'PLUGGED';
+  if (upper === 'AVAILABLE') return 'READY';
+  return upper;
 };
 
 export default function HomeScreen() {
@@ -692,24 +699,48 @@ export default function HomeScreen() {
               </Text>
             </View>
           ) : bothCarsAttached ? (
-            /* BOTH Cars Attached: Clean Dual Telemetry View */
+            /* BOTH Cars Attached: Symmetrical Dual Telemetry View (Non-wrapping & Perfectly Aligned) */
             <View style={styles.unifiedDualDashboard}>
               <View style={styles.dualColumnsRow}>
                 {/* Gun A Column */}
                 <View style={styles.dualCol}>
-                  <View style={[styles.unifiedStatusBadge, { backgroundColor: themeA.bg, alignSelf: 'center', marginBottom: 6 }]}>
+                  <View style={[styles.dualStatusBadge, { backgroundColor: themeA.bg }]}>
                     <View style={[styles.gunDot, { backgroundColor: themeA.color, width: 6.5, height: 6.5 }]} />
-                    <Text style={[styles.unifiedStatusText, { color: themeA.color }]}>GUN A • {themeA.label.toUpperCase()}</Text>
+                    <Text
+                      style={[styles.dualStatusText, { color: themeA.color }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      GUN A • {getDualStatusLabel(themeA.label)}
+                    </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', gap: 4 }}>
+                  <View style={styles.dualPriceRow}>
                     <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costA).toLocaleString()} />
                     <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
                   </View>
-                  <Text style={[styles.dualPriceHeroSub, { textAlign: 'center' }]}>
-                    {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
-                  </Text>
-                  <View style={styles.dualMiniMetricsRow}>
-                    <Text style={styles.dualMiniMetricsText}>{energyA} kWh • {currentA} A • {voltageA} V</Text>
+                  <View style={styles.dualSubRow}>
+                    <Text style={styles.dualPriceHeroSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                      {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.dualTelemetryStrip}>
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{energyA}</Text>
+                      <Text style={styles.dualTelemetryUnit}>kWh</Text>
+                    </View>
+                    <View style={styles.dualTelemetryDivider} />
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>
+                        {Number(currentA).toFixed(Number(currentA) >= 100 ? 0 : 1)}
+                      </Text>
+                      <Text style={styles.dualTelemetryUnit}>A</Text>
+                    </View>
+                    <View style={styles.dualTelemetryDivider} />
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{voltageA}</Text>
+                      <Text style={styles.dualTelemetryUnit}>V</Text>
+                    </View>
                   </View>
                 </View>
 
@@ -718,19 +749,43 @@ export default function HomeScreen() {
 
                 {/* Gun B Column */}
                 <View style={styles.dualCol}>
-                  <View style={[styles.unifiedStatusBadge, { backgroundColor: themeB.bg, alignSelf: 'center', marginBottom: 6 }]}>
+                  <View style={[styles.dualStatusBadge, { backgroundColor: themeB.bg }]}>
                     <View style={[styles.gunDot, { backgroundColor: themeB.color, width: 6.5, height: 6.5 }]} />
-                    <Text style={[styles.unifiedStatusText, { color: themeB.color }]}>GUN B • {themeB.label.toUpperCase()}</Text>
+                    <Text
+                      style={[styles.dualStatusText, { color: themeB.color }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
+                    >
+                      GUN B • {getDualStatusLabel(themeB.label)}
+                    </Text>
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', gap: 4 }}>
+                  <View style={styles.dualPriceRow}>
                     <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costB).toLocaleString()} />
                     <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
                   </View>
-                  <Text style={[styles.dualPriceHeroSub, { textAlign: 'center' }]}>
-                    {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
-                  </Text>
-                  <View style={styles.dualMiniMetricsRow}>
-                    <Text style={styles.dualMiniMetricsText}>{energyB} kWh • {currentB} A • {voltageB} V</Text>
+                  <View style={styles.dualSubRow}>
+                    <Text style={styles.dualPriceHeroSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                      {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.dualTelemetryStrip}>
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{energyB}</Text>
+                      <Text style={styles.dualTelemetryUnit}>kWh</Text>
+                    </View>
+                    <View style={styles.dualTelemetryDivider} />
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>
+                        {Number(currentB).toFixed(Number(currentB) >= 100 ? 0 : 1)}
+                      </Text>
+                      <Text style={styles.dualTelemetryUnit}>A</Text>
+                    </View>
+                    <View style={styles.dualTelemetryDivider} />
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{voltageB}</Text>
+                      <Text style={styles.dualTelemetryUnit}>V</Text>
+                    </View>
                   </View>
                 </View>
               </View>
@@ -1058,27 +1113,50 @@ const styles = StyleSheet.create({
   },
   dualColumnsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-around',
+    alignItems: 'stretch',
+    justifyContent: 'space-between',
     width: '100%',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
   },
   dualCol: {
     flex: 1,
     alignItems: 'center',
+    paddingHorizontal: 3,
   },
   dualDivider: {
     width: 1,
-    height: '90%',
     backgroundColor: '#E2E8F0',
-    marginHorizontal: 8,
+    marginHorizontal: 4,
+    alignSelf: 'stretch',
+  },
+  dualStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 20,
+    height: 25,
+    gap: 5,
+    maxWidth: '96%',
     alignSelf: 'center',
+    marginBottom: 6,
+  },
+  dualStatusText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  dualPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 4,
+    height: 34,
   },
   dualPriceHeroVal: {
-    fontSize: 27,
+    fontSize: 28,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: -0.8,
@@ -1091,24 +1169,57 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
+  dualSubRow: {
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
+    marginBottom: 8,
+  },
   dualPriceHeroSub: {
     fontSize: 11.5,
     fontWeight: '700',
     color: '#475569',
-    marginTop: 2,
+    textAlign: 'center',
   },
-  dualMiniMetricsRow: {
-    marginTop: 6,
+  dualTelemetryStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    height: 42,
   },
-  dualMiniMetricsText: {
-    fontSize: 10.5,
+  dualTelemetryItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dualTelemetryVal: {
+    fontSize: 11.5,
+    fontWeight: '900',
+    color: '#0F172A',
+    fontVariant: ['tabular-nums'],
+  },
+  dualTelemetryUnit: {
+    fontSize: 8.5,
     fontWeight: '700',
     color: '#64748B',
+    marginTop: 1,
+    textTransform: 'uppercase',
+  },
+  dualTelemetryDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: '#E2E8F0',
   },
   dualTotalSpeedSubtext: {
     fontSize: 11.5,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: '#64748B',
     marginTop: 8,
     textAlign: 'center',
   },
