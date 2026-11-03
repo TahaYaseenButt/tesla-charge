@@ -776,8 +776,12 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Voltage / Current</Text>
-                <Text style={styles.gunMetricVal}>{voltageA}V • {currentA}A</Text>
+                <Text style={styles.gunMetricLabel}>Voltage</Text>
+                <Text style={styles.gunMetricVal}>{voltageA} V</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Current</Text>
+                <Text style={styles.gunMetricVal}>{currentA} A</Text>
               </View>
               <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Session Energy</Text>
@@ -807,8 +811,12 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Voltage / Current</Text>
-                <Text style={styles.gunMetricVal}>{voltageB}V • {currentB}A</Text>
+                <Text style={styles.gunMetricLabel}>Voltage</Text>
+                <Text style={styles.gunMetricVal}>{voltageB} V</Text>
+              </View>
+              <View style={styles.gunMetricRow}>
+                <Text style={styles.gunMetricLabel}>Current</Text>
+                <Text style={styles.gunMetricVal}>{currentB} A</Text>
               </View>
               <View style={styles.gunMetricRow}>
                 <Text style={styles.gunMetricLabel}>Session Energy</Text>
@@ -830,8 +838,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 48 : 32,
-    paddingBottom: Platform.OS === 'ios' ? 105 : 90,
+    paddingTop: Platform.OS === 'ios' ? 46 : 28,
+    paddingBottom: Platform.OS === 'ios' ? 100 : 86,
     justifyContent: 'space-between',
   },
   loadingContainer: {
@@ -891,48 +899,48 @@ const styles = StyleSheet.create({
   /* Hero Charger Image - dynamically scales within available space */
   heroChargerContainer: {
     width: '100%',
-    flex: 1,
-    maxHeight: 180,
-    minHeight: 110,
+    flex: 1.2,
+    maxHeight: 250,
+    minHeight: 140,
     justifyContent: 'center',
     alignItems: 'center',
-    marginVertical: 2,
+    marginVertical: 4,
   },
   heroChargerImage: {
     width: '100%',
     height: '100%',
-    maxWidth: 380,
+    maxWidth: 390,
   },
 
   /* Power Section & Hero Price */
   powerSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 4,
+    marginVertical: 6,
   },
   priceHeroColumn: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   priceHeroVal: {
-    fontSize: 36,
+    fontSize: 40,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: -1,
+    letterSpacing: -1.2,
     fontVariant: ['tabular-nums'],
   },
   priceHeroCurr: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: '#0284C7',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   powerSubtext: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#64748B',
-    marginTop: 2,
+    marginTop: 3,
   },
   powerRow: {
     flexDirection: 'row',
@@ -956,16 +964,16 @@ const styles = StyleSheet.create({
   dualContainer: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 2,
+    marginTop: 4,
   },
   gunCard: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    borderRadius: 14,
+    borderRadius: 16,
     shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
@@ -976,16 +984,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   gunTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   gunDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 6.5,
+    height: 6.5,
+    borderRadius: 3.25,
     marginRight: 6,
   },
   gunTitle: {
@@ -995,31 +1003,32 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   miniStatusPill: {
-    paddingHorizontal: 6,
+    paddingHorizontal: 6.5,
     paddingVertical: 2,
     borderRadius: 6,
   },
   miniStatusText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   gunPower: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '900',
     color: '#0F172A',
   },
   gunMetricRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 3,
   },
   gunMetricLabel: {
     fontSize: 11,
-    color: '#475569',
-    fontWeight: '700',
+    color: '#64748B',
+    fontWeight: '600',
   },
   gunMetricVal: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '800',
     color: '#0F172A',
   },
