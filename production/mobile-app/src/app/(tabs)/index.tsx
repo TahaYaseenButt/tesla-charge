@@ -28,10 +28,7 @@ import { useSimulator } from '@/config/simulator';
 import { SimulatorModal } from '@/components/SimulatorModal';
 import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
 import {
-  ElectricFlowPulse,
-  ElectricWaveShimmer,
   AnimatedMetricValue,
-  ReconnectionHeartbeat,
 } from '@/components/motion/MotionGraphics';
 
 const STATE_IMAGES = {
@@ -656,132 +653,120 @@ export default function HomeScreen() {
         /* Dual Gun Live Showcase: Both cars displayed side-by-side with individual SoC, Price, and Power */
         <View style={styles.dualHeroContainer}>
           {/* Gun A Hero Card */}
-          <ElectricFlowPulse active={isGunACharging} color="#10B981" style={{ flex: 1 }}>
-            <View style={[styles.dualHeroCard, isGunACharging && styles.dualHeroCardActive]}>
-              <View style={styles.dualHeroHeader}>
-                <View style={styles.dualHeroTitleRow}>
-                  <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-                  <Text style={styles.dualHeroTitle}>GUN A</Text>
-                </View>
-                <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
-                  <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-                </View>
+          <View style={[styles.dualHeroCard, { flex: 1 }]}>
+            <View style={styles.dualHeroHeader}>
+              <View style={styles.dualHeroTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+                <Text style={styles.dualHeroTitle}>GUN A</Text>
               </View>
-
-              {/* Battery SoC */}
-              <View style={styles.dualHeroSocRow}>
-                <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocA ? `${activeSocA}%` : '--'} />
-                <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
+                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
               </View>
-              <View style={styles.batteryTrackMinimal}>
-                <View
-                  style={[
-                    styles.batteryFillMinimal,
-                    {
-                      width: `${hasSocA ? Math.min(100, Math.max(4, activeSocA!)) : 0}%`,
-                      backgroundColor: isGunACharging ? '#10B981' : hasSocA && activeSocA! > 20 ? '#0F172A' : '#EF4444',
-                    },
-                  ]}
-                >
-                  {isGunACharging && <ElectricWaveShimmer active={isGunACharging} />}
-                </View>
-              </View>
-
-              {/* Individual Gun A Price */}
-              <View style={styles.dualHeroPriceSection}>
-                <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costA} />
-                <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
-              </View>
-
-              {/* Speed & Energy */}
-              <Text style={styles.dualHeroMetaText}>
-                {Number(powerA).toFixed(1)} kW • {energyA} kWh
-              </Text>
             </View>
-          </ElectricFlowPulse>
+
+            {/* Battery SoC */}
+            <View style={styles.dualHeroSocRow}>
+              <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocA ? `${activeSocA}%` : '--'} />
+              <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
+            </View>
+            <View style={styles.batteryTrackMinimal}>
+              <View
+                style={[
+                  styles.batteryFillMinimal,
+                  {
+                    width: `${hasSocA ? Math.min(100, Math.max(4, activeSocA!)) : 0}%`,
+                    backgroundColor: '#0F172A',
+                  },
+                ]}
+              />
+            </View>
+
+            {/* Individual Gun A Price */}
+            <View style={styles.dualHeroPriceSection}>
+              <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costA} />
+              <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
+            </View>
+
+            {/* Speed & Energy */}
+            <Text style={styles.dualHeroMetaText}>
+              {Number(powerA).toFixed(1)} kW • {energyA} kWh
+            </Text>
+          </View>
 
           {/* Gun B Hero Card */}
-          <ElectricFlowPulse active={isGunBCharging} color="#10B981" style={{ flex: 1 }}>
-            <View style={[styles.dualHeroCard, isGunBCharging && styles.dualHeroCardActive]}>
-              <View style={styles.dualHeroHeader}>
-                <View style={styles.dualHeroTitleRow}>
-                  <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
-                  <Text style={styles.dualHeroTitle}>GUN B</Text>
-                </View>
-                <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
-                  <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-                </View>
+          <View style={[styles.dualHeroCard, { flex: 1 }]}>
+            <View style={styles.dualHeroHeader}>
+              <View style={styles.dualHeroTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
+                <Text style={styles.dualHeroTitle}>GUN B</Text>
               </View>
-
-              {/* Battery SoC */}
-              <View style={styles.dualHeroSocRow}>
-                <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocB ? `${activeSocB}%` : '--'} />
-                <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
+                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
               </View>
-              <View style={styles.batteryTrackMinimal}>
-                <View
-                  style={[
-                    styles.batteryFillMinimal,
-                    {
-                      width: `${hasSocB ? Math.min(100, Math.max(4, activeSocB!)) : 0}%`,
-                      backgroundColor: isGunBCharging ? '#10B981' : hasSocB && activeSocB! > 20 ? '#0F172A' : '#EF4444',
-                    },
-                  ]}
-                >
-                  {isGunBCharging && <ElectricWaveShimmer active={isGunBCharging} />}
-                </View>
-              </View>
-
-              {/* Individual Gun B Price */}
-              <View style={styles.dualHeroPriceSection}>
-                <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costB} />
-                <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
-              </View>
-
-              {/* Speed & Energy */}
-              <Text style={styles.dualHeroMetaText}>
-                {Number(powerB).toFixed(1)} kW • {energyB} kWh
-              </Text>
             </View>
-          </ElectricFlowPulse>
+
+            {/* Battery SoC */}
+            <View style={styles.dualHeroSocRow}>
+              <AnimatedMetricValue style={styles.dualHeroSocPercent} value={hasSocB ? `${activeSocB}%` : '--'} />
+              <Text style={styles.dualHeroSocLabel}>BATTERY</Text>
+            </View>
+            <View style={styles.batteryTrackMinimal}>
+              <View
+                style={[
+                  styles.batteryFillMinimal,
+                  {
+                    width: `${hasSocB ? Math.min(100, Math.max(4, activeSocB!)) : 0}%`,
+                    backgroundColor: '#0F172A',
+                  },
+                ]}
+              />
+            </View>
+
+            {/* Individual Gun B Price */}
+            <View style={styles.dualHeroPriceSection}>
+              <AnimatedMetricValue style={styles.dualHeroPriceVal} value={costB} />
+              <Text style={styles.dualHeroPriceCurr}>{curr}</Text>
+            </View>
+
+            {/* Speed & Energy */}
+            <Text style={styles.dualHeroMetaText}>
+              {Number(powerB).toFixed(1)} kW • {energyB} kWh
+            </Text>
+          </View>
         </View>
       ) : (
         /* Single Gun or Standby Hero Layout */
         <>
           {displaySoc !== null && (
-            <ElectricFlowPulse active={isActivelyChargingNow} color="#10B981">
-              <View style={styles.batteryHeroCard}>
-                <View style={styles.batteryHeroTopRow}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <View style={[styles.statusDot, { backgroundColor: isActivelyChargingNow ? '#10B981' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
-                        <Text style={styles.batteryHeroTitle}>
-                          {displaySocGunLabel} {isActivelyChargingNow ? '• CHARGING' : '• BATTERY'}
-                        </Text>
-                      </View>
-                      <AnimatedMetricValue style={styles.batteryHeroPercent} value={`${displaySoc}%`} />
+            <View style={styles.batteryHeroCard}>
+              <View style={styles.batteryHeroTopRow}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <View style={[styles.statusDot, { backgroundColor: isActivelyChargingNow ? '#0F172A' : '#64748B', width: 6, height: 6, borderRadius: 3, marginRight: 0 }]} />
+                      <Text style={styles.batteryHeroTitle}>
+                        {displaySocGunLabel} {isActivelyChargingNow ? '• CHARGING' : '• BATTERY'}
+                      </Text>
                     </View>
-                    <View style={styles.batteryTrackMinimal}>
-                      <View
-                        style={[
-                          styles.batteryFillMinimal,
-                          {
-                            width: `${Math.min(100, Math.max(4, displaySoc))}%`,
-                            backgroundColor: isActivelyChargingNow ? '#10B981' : displaySoc > 20 ? '#0F172A' : '#EF4444',
-                          },
-                        ]}
-                      >
-                        {isActivelyChargingNow && <ElectricWaveShimmer active={isActivelyChargingNow} />}
-                      </View>
-                    </View>
-                    <Text style={styles.batteryHeroSubtitle}>
-                      {isActivelyChargingNow ? 'Charging session in progress' : 'Plugged in & Ready'}
-                    </Text>
+                    <AnimatedMetricValue style={styles.batteryHeroPercent} value={`${displaySoc}%`} />
                   </View>
+                  <View style={styles.batteryTrackMinimal}>
+                    <View
+                      style={[
+                        styles.batteryFillMinimal,
+                        {
+                          width: `${Math.min(100, Math.max(4, displaySoc))}%`,
+                          backgroundColor: '#0F172A',
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.batteryHeroSubtitle}>
+                    {isActivelyChargingNow ? 'Charging session in progress' : 'Plugged in & Ready'}
+                  </Text>
                 </View>
               </View>
-            </ElectricFlowPulse>
+            </View>
           )}
 
           {/* Power & Live Cost (PKR Below Amount) */}
@@ -873,82 +858,78 @@ export default function HomeScreen() {
         /* Dual Gun View: Both Gun A and Gun B Cards Always Visible Side by Side */
         <View style={styles.dualContainer}>
           {/* Gun A Column */}
-          <ElectricFlowPulse active={isGunACharging} color="#10B981" style={{ flex: 1 }}>
-            <View style={styles.gunCard}>
-              <View style={styles.gunHeader}>
-                <View style={styles.gunTitleRow}>
-                  <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-                  <Text style={styles.gunTitle}>GUN A</Text>
+          <View style={[styles.gunCard, { flex: 1 }]}>
+            <View style={styles.gunHeader}>
+              <View style={styles.gunTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
+                <Text style={styles.gunTitle}>GUN A</Text>
+              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
                 </View>
-                {isOnline && (
-                  <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg }]}>
-                    <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
-                <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerA).toFixed(1)} kW`} />
-                {hasSocA ? (
-                  <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocA}%</Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Voltage</Text>
-                <Text style={styles.gunMetricVal}>{voltageA} V</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Current</Text>
-                <Text style={styles.gunMetricVal}>{currentA} A</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Energy</Text>
-                <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
-              </View>
+              )}
             </View>
-          </ElectricFlowPulse>
+
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
+              <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerA).toFixed(1)} kW`} />
+              {hasSocA ? (
+                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocA}%</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Voltage</Text>
+              <Text style={styles.gunMetricVal}>{voltageA} V</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Current</Text>
+              <Text style={styles.gunMetricVal}>{currentA} A</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Energy</Text>
+              <Text style={styles.gunMetricVal}>{energyA} kWh</Text>
+            </View>
+          </View>
 
           {/* Gun B Column */}
-          <ElectricFlowPulse active={isGunBCharging} color="#10B981" style={{ flex: 1 }}>
-            <View style={styles.gunCard}>
-              <View style={styles.gunHeader}>
-                <View style={styles.gunTitleRow}>
-                  <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
-                  <Text style={styles.gunTitle}>GUN B</Text>
+          <View style={[styles.gunCard, { flex: 1 }]}>
+            <View style={styles.gunHeader}>
+              <View style={styles.gunTitleRow}>
+                <View style={[styles.gunDot, { backgroundColor: themeB.color }]} />
+                <Text style={styles.gunTitle}>GUN B</Text>
+              </View>
+              {isOnline && (
+                <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
+                  <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
                 </View>
-                {isOnline && (
-                  <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg }]}>
-                    <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
-                <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerB).toFixed(1)} kW`} />
-                {hasSocB ? (
-                  <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocB}%</Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Voltage</Text>
-                <Text style={styles.gunMetricVal}>{voltageB} V</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Current</Text>
-                <Text style={styles.gunMetricVal}>{currentB} A</Text>
-              </View>
-              <View style={styles.gunMetricRow}>
-                <Text style={styles.gunMetricLabel}>Energy</Text>
-                <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
-              </View>
+              )}
             </View>
-          </ElectricFlowPulse>
+
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
+              <AnimatedMetricValue style={styles.gunPower} value={`${Number(powerB).toFixed(1)} kW`} />
+              {hasSocB ? (
+                <View style={{ backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{activeSocB}%</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Voltage</Text>
+              <Text style={styles.gunMetricVal}>{voltageB} V</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Current</Text>
+              <Text style={styles.gunMetricVal}>{currentB} A</Text>
+            </View>
+            <View style={styles.gunMetricRow}>
+              <Text style={styles.gunMetricLabel}>Energy</Text>
+              <Text style={styles.gunMetricVal}>{energyB} kWh</Text>
+            </View>
+          </View>
         </View>
       )}
 
@@ -1108,8 +1089,8 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   dualHeroCardActive: {
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-    backgroundColor: '#FAFCFF',
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
   },
   dualHeroHeader: {
     flexDirection: 'row',
