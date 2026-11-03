@@ -426,7 +426,9 @@ apiRouter.get("/chargers", async (_req, res) => {
 
       const isConnectedToWs = ocppConnected.some((c) => c.chargePointId.toLowerCase() === id.toLowerCase());
       const lastHb = live.lastHeartbeat || data.lastHeartbeat;
-      const isOnline = isConnectedToWs || (lastHb && (Date.now() - new Date(lastHb).getTime() < 300000));
+      const elapsedMs = lastHb ? (Date.now() - new Date(lastHb).getTime()) : null;
+      // Strictly require active WebSocket connection, or non-negative heartbeat within 60 seconds
+      const isOnline = Boolean(isConnectedToWs || (elapsedMs !== null && elapsedMs >= 0 && elapsedMs < 60000));
 
       const status1 = c1?.status || data.connector_1_status || "Available";
       const status2 = c2?.status || data.connector_2_status || "Available";

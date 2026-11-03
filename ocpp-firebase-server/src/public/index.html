@@ -3,367 +3,513 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tesla-Charge | Network Operations Center & Multi-Station Dashboard</title>
+  <title>Tesla Charge | Superadmin Fleet Console</title>
+  <!-- Tailwind CSS & Google Fonts -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            tesla: {
+              blue: '#0284C7',
+              sky: '#0EA5E9',
+              slate: '#0F172A',
+              card: '#FFFFFF',
+              canvas: '#F8FAFC',
+              border: '#E2E8F0',
+              emerald: '#10B981',
+              amber: '#F59E0B',
+              rose: '#EF4444',
+            }
+          }
+        }
+      }
+    };
+  </script>
   <style>
-    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      background-color: #F8FAFC;
+      color: #0F172A;
+      -webkit-font-smoothing: antialiased;
+    }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
-    .glass-card {
-      background: rgba(15, 23, 42, 0.75);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(51, 65, 85, 0.6);
+    .station-card {
+      background: #FFFFFF;
+      border: 1.5px solid #E2E8F0;
+      border-radius: 18px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
     }
-    .glass-card-hover {
-      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    .station-card:hover {
+      border-color: #0284C7;
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px -8px rgba(2, 132, 199, 0.12), 0 4px 10px -2px rgba(15, 23, 42, 0.04);
     }
-    .glass-card-hover:hover {
-      transform: translateY(-3px);
-      border-color: rgba(6, 182, 212, 0.4);
-      box-shadow: 0 16px 36px -12px rgba(6, 182, 212, 0.15);
+    .gun-subcard {
+      background: #F8FAFC;
+      border: 1.5px solid #E2E8F0;
+      border-radius: 14px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
     }
-    @keyframes pulse-slow {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.6; transform: scale(0.98); }
-    }
-    .animate-pulse-slow {
-      animation: pulse-slow 3s ease-in-out infinite;
-    }
-    /* Custom scrollbars */
+    /* Scrollbars */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
-    ::-webkit-scrollbar-thumb { background: rgba(51, 65, 85, 0.8); borderRadius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(6, 182, 212, 0.8); }
+    ::-webkit-scrollbar-track { background: #F1F5F9; }
+    ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
   </style>
 </head>
-<body class="bg-[#060913] text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500/30 selection:text-cyan-300">
+<body class="min-h-screen flex flex-col bg-[#F8FAFC]">
 
-  <!-- Top Navigation / Network Operations Header -->
-  <header class="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-6 py-4 sticky top-0 z-40">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+  <!-- Top Navigation Header (Exact Mobile App Theme) -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Brand & Title -->
       <div class="flex items-center gap-3">
-        <div class="h-11 w-11 rounded-2xl bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-600 flex items-center justify-center text-xl shadow-lg shadow-cyan-500/25">
-          ⚡
-        </div>
+        <img src="/assets/images/brand-logo.png" alt="Tesla Charge Logo" class="w-8 h-8 object-contain" onerror="this.src='/assets/images/icon.png'" />
         <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-lg font-black tracking-tight text-white uppercase">Tesla Charge Operations Center</h1>
-            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
-              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-              NETWORK ACTIVE
+          <div class="flex items-center gap-2.5">
+            <h1 class="text-lg font-black tracking-wider text-slate-900 uppercase">TESLA CHARGE</h1>
+            <span class="text-[10px] uppercase font-extrabold tracking-wider px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+              SUPERADMIN CONSOLE
+            </span>
+            <span class="hidden md:inline-flex items-center gap-1.5 text-[10px] uppercase font-extrabold tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span id="hdr-fleet-pulse">FLEET ACTIVE</span>
             </span>
           </div>
-          <p class="text-xs text-slate-400 font-mono">Central Fleet Supervision &bull; 240kW &bull; 60kW &bull; 30kW</p>
+          <p class="text-xs text-slate-500 font-medium">OCPP 1.6-J Central Management &bull; Asia/Karachi (PKT UTC+5)</p>
         </div>
       </div>
 
-      <div class="flex items-center gap-3">
-        <a href="/monitor" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-mono text-cyan-400 hover:text-cyan-300 transition">
-          <span>🖥️ Server Diagnostic Node</span>
+      <!-- Action Buttons (Identical to Mobile App) -->
+      <div class="flex items-center gap-2.5">
+        <!-- Simulator Button -->
+        <button onclick="openSimulatorModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-800 transition active:scale-95">
+          <span>🧪 Test UI</span>
+        </button>
+
+        <!-- Diagnostics Node Link -->
+        <a href="/monitor" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-800 transition active:scale-95">
+          <span>🖥️ Server Diagnostics</span>
         </a>
-        <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
-          <span class="text-slate-500">SYNC:</span>
-          <span id="hdr-sync" class="text-emerald-400 font-bold">2s AUTO</span>
+
+        <!-- Live Sync Pill -->
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono">
+          <span class="text-slate-400">SYNC:</span>
+          <span id="hdr-sync" class="text-emerald-600 font-bold">2s LIVE</span>
         </div>
-        <button onclick="fetchChargers()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1">
-          🔄 Refresh
+
+        <!-- Refresh Button -->
+        <button onclick="fetchChargers(true)" id="btn-refresh" class="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm active:scale-95">
+          <span id="refresh-icon">🔄</span>
+          <span>Refresh</span>
         </button>
       </div>
+
     </div>
   </header>
 
-  <!-- Network Overview KPI Stats Bar -->
-  <section class="max-w-7xl mx-auto px-6 pt-6 pb-2 w-full">
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div class="glass-card rounded-2xl p-4 relative overflow-hidden">
-        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
-          <span>Total Network Capacity</span>
-          <span class="text-cyan-400">⚡</span>
-        </div>
-        <div class="text-2xl font-black text-white font-mono" id="stat-total-capacity">330 kW</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">Ultra-Fast & DC High-Power</div>
-      </div>
+  <!-- Main Viewport -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full flex-1 flex flex-col gap-6">
 
-      <div class="glass-card rounded-2xl p-4 relative overflow-hidden">
-        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
+    <!-- KPI Metrics Row (4 Clean Modern Cards) -->
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Online Stations -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center justify-between">
           <span>Active Stations</span>
-          <span class="text-emerald-400">🔌</span>
+          <span class="text-emerald-500 font-black">●</span>
         </div>
-        <div class="text-2xl font-black text-emerald-400 font-mono" id="stat-active-stations">3 / 3</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">Fleet Connectivity Normal</div>
+        <div class="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight" id="stat-active-stations">
+          1 / 8
+        </div>
+        <div class="text-[12px] font-semibold text-emerald-600 mt-1 flex items-center gap-1">
+          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+          <span id="stat-active-sub">charger1 Connected</span>
+        </div>
       </div>
 
-      <div class="glass-card rounded-2xl p-4 relative overflow-hidden">
-        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
-          <span>Energy Delivered</span>
-          <span class="text-blue-400">🔋</span>
+      <!-- Fleet Capacity -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center justify-between">
+          <span>Fleet Capacity</span>
+          <span class="text-sky-500">⚡</span>
         </div>
-        <div class="text-2xl font-black text-white font-mono" id="stat-total-energy">-- kWh</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">Historical Billed Energy</div>
+        <div class="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight font-mono" id="stat-total-capacity">
+          450 kW
+        </div>
+        <div class="text-[12px] font-medium text-slate-500 mt-1">
+          240kW, 60kW & 30kW DC Fast
+        </div>
       </div>
 
-      <div class="glass-card rounded-2xl p-4 relative overflow-hidden">
-        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
+      <!-- Delivered Energy -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center justify-between">
+          <span>Delivered Energy</span>
+          <span class="text-indigo-500">🔋</span>
+        </div>
+        <div class="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight font-mono" id="stat-total-energy">
+          819.1 kWh
+        </div>
+        <div class="text-[12px] font-medium text-slate-500 mt-1" id="stat-sessions-sub">
+          48 Lifetime Sessions
+        </div>
+      </div>
+
+      <!-- Network Revenue -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center justify-between">
           <span>Network Revenue</span>
-          <span class="text-emerald-400">💰</span>
+          <span class="text-sky-600">💰</span>
         </div>
-        <div class="text-2xl font-black text-emerald-400 font-mono" id="stat-total-revenue">-- PKR</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">Tarrif: 125 PKR/kWh</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Filter & View Controls -->
-  <section class="max-w-7xl mx-auto px-6 py-4 w-full">
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
-      <div class="flex items-center gap-2 overflow-x-auto">
-        <button onclick="setFilter('all')" id="filter-all" class="filter-btn px-3 py-1.5 rounded-xl text-xs font-bold transition bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20">
-          All Chargers (<span id="cnt-all">3</span>)
-        </button>
-        <button onclick="setFilter('240kw')" id="filter-240kw" class="filter-btn px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800">
-          ⚡ 240kW Ultra-Fast
-        </button>
-        <button onclick="setFilter('60kw')" id="filter-60kw" class="filter-btn px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800">
-          ⚡ 60kW Dual-Gun
-        </button>
-        <button onclick="setFilter('30kw')" id="filter-30kw" class="filter-btn px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800">
-          ⚡ 30kW Fast DC
-        </button>
-        <button onclick="setFilter('charging')" id="filter-charging" class="filter-btn px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800">
-          🟢 Actively Charging
-        </button>
+        <div class="text-2xl sm:text-3xl font-black text-sky-600 tracking-tight font-mono" id="stat-total-revenue">
+          102,383 PKR
+        </div>
+        <div class="text-[12px] font-medium text-slate-500 mt-1">
+          Settled via Station Tariffs
+        </div>
       </div>
 
-      <div class="text-xs text-slate-400 font-mono">
-        Click any station card to inspect live telemetry, remote controls, history & hardware gallery
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Chargers Grid -->
-  <main class="max-w-7xl mx-auto px-6 pb-12 w-full flex-1">
-    <div id="chargers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      <!-- Charger Cards injected dynamically -->
-      <div class="col-span-full py-16 text-center text-slate-500 font-mono">
-        Connecting to fleet telemetry stream...
+    <!-- Toolbar: Filter Pills & Search Bar -->
+    <section class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+      
+      <!-- Pill Buttons (Exact Mobile App Theme) -->
+      <div class="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-none" id="filter-pills-bar">
+        <button onclick="setFilter('all')" id="filter-all" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-slate-900 text-white shadow-sm">
+          All Stations (<span id="cnt-all">8</span>)
+        </button>
+        <button onclick="setFilter('online')" id="filter-online" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-white text-slate-700 border border-slate-200 hover:bg-slate-50">
+          Online Only (<span id="cnt-online">1</span>)
+        </button>
+        <button onclick="setFilter('offline')" id="filter-offline" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-white text-slate-700 border border-slate-200 hover:bg-slate-50">
+          Offline (<span id="cnt-offline">7</span>)
+        </button>
+        <button onclick="setFilter('240kw')" id="filter-240kw" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-white text-slate-700 border border-slate-200 hover:bg-slate-50">
+          240kW Superchargers
+        </button>
+        <button onclick="setFilter('60kw')" id="filter-60kw" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-white text-slate-700 border border-slate-200 hover:bg-slate-50">
+          60kW Fast
+        </button>
+        <button onclick="setFilter('30kw')" id="filter-30kw" class="filter-btn px-4 py-1.5 rounded-full text-xs font-bold transition bg-white text-slate-700 border border-slate-200 hover:bg-slate-50">
+          30kW Compact
+        </button>
       </div>
-    </div>
+
+      <!-- Search Input -->
+      <div class="relative min-w-[240px]">
+        <input
+          type="text"
+          id="search-input"
+          oninput="handleSearch(this.value)"
+          placeholder="Search by ID, model, location..."
+          class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500 focus:bg-white transition"
+        />
+        <span class="absolute right-3 top-2 text-xs text-slate-400 pointer-events-none">🔍</span>
+      </div>
+
+    </section>
+
+    <!-- Stations Grid -->
+    <section id="chargers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Dynamically Rendered Station Cards -->
+    </section>
+
   </main>
 
-  <!-- Interactive Station Detail Modal Drawer -->
-  <div id="detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-200">
-    <div class="glass-card bg-slate-900/95 border border-slate-700/80 rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden transform scale-95 transition-transform duration-200" id="detail-modal-card">
+  <!-- Superadmin Station Management Drawer / Modal -->
+  <div id="station-modal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
       
       <!-- Modal Header -->
-      <div class="border-b border-slate-800 p-6 flex items-center justify-between gap-4">
+      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
         <div class="flex items-center gap-3">
-          <div class="h-12 w-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-2xl" id="modal-hdr-icon">
-            ⚡
-          </div>
+          <img id="modal-brand-logo" src="/assets/images/brand-logo.png" class="w-7 h-7 object-contain" />
           <div>
             <div class="flex items-center gap-2">
-              <h2 class="text-xl font-black text-white" id="modal-station-name">240kW Ultra-Fast Station</h2>
-              <span id="modal-status-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                Online
-              </span>
+              <h2 id="modal-title" class="text-lg font-black text-slate-900 uppercase">CHARGER1</h2>
+              <span id="modal-status-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase">ONLINE</span>
             </div>
-            <p class="text-xs text-slate-400 font-mono" id="modal-station-id">ID: charger1 &bull; 240kW DC High-Power</p>
+            <p id="modal-subtitle" class="text-xs text-slate-500 font-medium">240kW DC Supercharger &bull; Central Station</p>
           </div>
         </div>
-
-        <button onclick="closeModal()" class="h-10 w-10 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition text-lg">
+        <button onclick="closeStationModal()" class="w-8 h-8 rounded-full bg-white hover:bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-900 text-sm font-bold transition">
           ✕
         </button>
       </div>
 
-      <!-- Modal Tabs Nav -->
-      <div class="flex border-b border-slate-800 px-6 bg-slate-950/40">
-        <button onclick="switchModalTab('telemetry')" id="tab-btn-telemetry" class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-cyan-400 border-b-2 border-cyan-400 transition">
-          ⚡ Live Telemetry & Control
+      <!-- Modal Tabs Bar -->
+      <div class="px-6 border-b border-slate-200 flex gap-4 bg-white">
+        <button onclick="setModalTab('controls')" id="tab-btn-controls" class="py-3 text-xs font-bold border-b-2 border-sky-600 text-sky-600 transition">
+          ⚡ Superadmin Controls
         </button>
-        <button onclick="switchModalTab('history')" id="tab-btn-history" class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition">
-          📜 Charging History
+        <button onclick="setModalTab('telemetry')" id="tab-btn-telemetry" class="py-3 text-xs font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition">
+          📊 Live Telemetry
         </button>
-        <button onclick="switchModalTab('gallery')" id="tab-btn-gallery" class="px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition">
-          🖼️ Hardware & Image Showcase
+        <button onclick="setModalTab('history')" id="tab-btn-history" class="py-3 text-xs font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition">
+          📜 Session History (<span id="modal-history-count">0</span>)
         </button>
       </div>
 
       <!-- Modal Body (Scrollable) -->
-      <div class="p-6 overflow-y-auto flex-1 space-y-6">
-        
-        <!-- Tab 1: Live Telemetry & Remote Control -->
-        <div id="tab-content-telemetry" class="space-y-6">
-          <!-- Hero Vehicle Graphic Stage -->
-          <div class="glass-card rounded-2xl p-6 bg-gradient-to-b from-slate-950/80 to-slate-900/60 flex flex-col items-center justify-center relative overflow-hidden">
-            <div class="absolute inset-0 bg-radial-gradient from-cyan-500/10 via-transparent to-transparent pointer-events-none"></div>
-            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 font-mono" id="modal-live-state-title">
-              DYNAMIC VEHICLE CONNECTION STATE
-            </div>
-            <img id="modal-hero-state-img" src="/assets/images/states/state_240kw_idle.png" alt="Dynamic vehicle state" class="max-h-56 object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300" />
-            <div class="mt-2 text-xs font-mono text-cyan-400" id="modal-state-caption">
-              Station Ready &bull; Both Guns Idle
+      <div class="p-6 overflow-y-auto flex-1 bg-[#F8FAFC]">
+
+        <!-- Tab 1: Superadmin Controls & Tariff -->
+        <div id="tab-controls" class="space-y-6">
+          
+          <!-- Tariff Rate Manager -->
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 class="text-sm font-black text-slate-900 uppercase tracking-wide mb-1">Station Tariff Configuration</h3>
+            <p class="text-xs text-slate-500 mb-4">Set the billing rate applied for all charging sessions initiated on this station.</p>
+            
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 w-48">
+                <span class="text-xs font-bold text-slate-400">PKR</span>
+                <input type="number" id="input-tariff-rate" class="w-full bg-transparent text-sm font-black text-slate-900 focus:outline-none" placeholder="125" />
+                <span class="text-[11px] font-semibold text-slate-500">/ kWh</span>
+              </div>
+              <button onclick="saveTariffRate()" class="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow-sm active:scale-95">
+                💾 Save Tariff
+              </button>
+              <span id="tariff-status-msg" class="text-xs font-bold text-emerald-600 hidden"></span>
             </div>
           </div>
 
-          <!-- Live Gauges Grid -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="glass-card rounded-2xl p-4 bg-slate-950/40">
-              <div class="text-[10px] uppercase font-bold text-slate-400 font-mono">Active Power</div>
-              <div class="text-2xl font-black text-cyan-400 font-mono mt-1" id="modal-gauge-power">0.0 kW</div>
-              <div class="text-[10px] text-slate-500 mt-0.5">Real-time DC output</div>
-            </div>
+          <!-- Remote Hardware Actions -->
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 class="text-sm font-black text-slate-900 uppercase tracking-wide mb-1">OCPP 1.6-J Remote Dispatch</h3>
+            <p class="text-xs text-slate-500 mb-4">Direct commands sent through persistent WebSocket channel to the physical charger.</p>
 
-            <div class="glass-card rounded-2xl p-4 bg-slate-950/40">
-              <div class="text-[10px] uppercase font-bold text-slate-400 font-mono">Voltage / Current</div>
-              <div class="text-2xl font-black text-white font-mono mt-1" id="modal-gauge-vi">0 V &bull; 0 A</div>
-              <div class="text-[10px] text-slate-500 mt-0.5">Direct DC bus reading</div>
-            </div>
-
-            <div class="glass-card rounded-2xl p-4 bg-slate-950/40">
-              <div class="text-[10px] uppercase font-bold text-slate-400 font-mono">Session Energy</div>
-              <div class="text-2xl font-black text-emerald-400 font-mono mt-1" id="modal-gauge-energy">0.00 kWh</div>
-              <div class="text-[10px] text-slate-500 mt-0.5">Billed delivered energy</div>
-            </div>
-
-            <div class="glass-card rounded-2xl p-4 bg-slate-950/40">
-              <div class="text-[10px] uppercase font-bold text-slate-400 font-mono">Session Cost (PKR)</div>
-              <div class="text-2xl font-black text-emerald-400 font-mono mt-1" id="modal-gauge-cost">0 PKR</div>
-              <div class="text-[10px] text-slate-500 mt-0.5">Clean rounded tariff (125/kWh)</div>
-            </div>
-          </div>
-
-          <!-- Remote Operations Control Center -->
-          <div class="glass-card rounded-2xl p-5 border border-slate-800">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                <span>🎮 Remote Control Dispatch</span>
-              </h3>
-              <div class="flex items-center gap-2 text-xs font-mono">
-                <span class="text-slate-400">Target Gun:</span>
-                <select id="modal-gun-select" class="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 font-bold focus:outline-none focus:border-cyan-500">
-                  <option value="1">Gun 1 (Connector A)</option>
-                  <option value="2">Gun 2 (Connector B)</option>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <!-- Gun Selector -->
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Target Connector (Gun)</label>
+                <select id="modal-gun-select" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none">
+                  <option value="1">Gun A (Connector 1)</option>
+                  <option value="2">Gun B (Connector 2)</option>
                 </select>
+              </div>
+
+              <!-- IdTag / User Identifier -->
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1.5">Authorization Tag (RFID / Driver)</label>
+                <input type="text" id="modal-idtag-input" value="SUPERADMIN_DISPATCH" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none" />
               </div>
             </div>
 
+            <!-- Action Buttons Grid -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <button onclick="dispatchRemoteAction('start')" class="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md shadow-emerald-600/20 active:scale-95">
-                <span>▶️ Start Session</span>
+              <button onclick="dispatchRemoteAction('RemoteStartTransaction')" class="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-sm flex items-center justify-center gap-1.5 active:scale-95">
+                <span>⚡ Start Charging</span>
               </button>
-
-              <button onclick="dispatchRemoteAction('stop')" class="px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md shadow-rose-600/20 active:scale-95">
-                <span>⏹️ Stop Session</span>
+              <button onclick="dispatchRemoteAction('RemoteStopTransaction')" class="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-sm flex items-center justify-center gap-1.5 active:scale-95">
+                <span>🛑 Stop Charging</span>
               </button>
-
-              <button onclick="dispatchRemoteAction('unlock')" class="px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition shadow-md shadow-indigo-600/20 active:scale-95">
-                <span>🔓 Unlock Gun</span>
+              <button onclick="dispatchRemoteAction('UnlockConnector')" class="px-4 py-2.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95">
+                <span>🔓 Unlock Latch</span>
               </button>
-
-              <button onclick="dispatchRemoteAction('reset')" class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition active:scale-95">
+              <button onclick="dispatchRemoteAction('Reset')" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95">
                 <span>🔄 Soft Reboot</span>
               </button>
             </div>
 
-            <div id="modal-action-status" class="mt-3 text-xs font-mono text-slate-400 hidden p-2 rounded-lg bg-slate-950/60 border border-slate-800">
-              Command status will appear here...
+            <!-- Action Status Message -->
+            <div id="modal-action-status" class="hidden mt-4 p-3 rounded-xl text-xs font-mono"></div>
+          </div>
+
+        </div>
+
+        <!-- Tab 2: Live Telemetry Table -->
+        <div id="tab-telemetry" class="hidden space-y-4">
+          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <h3 class="text-sm font-black text-slate-900 uppercase tracking-wide mb-3">Real-Time Meter Values & Telemetry</h3>
+            
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun A Voltage</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-v1">0 V</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun A Current</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-i1">0.0 A</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun A Power</span>
+                <div class="text-lg font-black text-sky-600 font-mono mt-0.5" id="tele-p1">0.0 kW</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun A Energy</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-e1">0.00 kWh</div>
+              </div>
+
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun B Voltage</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-v2">0 V</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun B Current</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-i2">0.0 A</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun B Power</span>
+                <div class="text-lg font-black text-sky-600 font-mono mt-0.5" id="tele-p2">0.0 kW</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Gun B Energy</span>
+                <div class="text-lg font-black text-slate-900 font-mono mt-0.5" id="tele-e2">0.00 kWh</div>
+              </div>
             </div>
+
+            <div class="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <span class="text-slate-400 font-medium">Last Heartbeat:</span>
+                <span id="tele-hb" class="font-bold text-slate-800 ml-1">--</span>
+              </div>
+              <div>
+                <span class="text-slate-400 font-medium">Active Tx ID:</span>
+                <span id="tele-tx" class="font-bold text-slate-800 ml-1">None</span>
+              </div>
+              <div>
+                <span class="text-slate-400 font-medium">WebSocket Status:</span>
+                <span id="tele-ws" class="font-bold text-emerald-600 ml-1">Connected</span>
+              </div>
+            </div>
+
           </div>
         </div>
 
-        <!-- Tab 2: Charging History -->
-        <div id="tab-content-history" class="space-y-4 hidden">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-200">
-              Station Session Archive (Delivered Energy > 0 kWh)
-            </h3>
-            <span class="text-xs text-slate-500 font-mono" id="modal-history-count">0 sessions</span>
-          </div>
-
-          <div class="border border-slate-800 rounded-2xl overflow-hidden glass-card">
-            <table class="w-full text-left text-xs font-mono">
-              <thead class="bg-slate-950/60 border-b border-slate-800 text-slate-400 font-bold uppercase">
-                <tr>
-                  <th class="p-3">Session ID</th>
-                  <th class="p-3">Gun</th>
-                  <th class="p-3">Start Time</th>
-                  <th class="p-3">Energy (kWh)</th>
-                  <th class="p-3">Cost (PKR)</th>
-                  <th class="p-3">Stop Reason</th>
-                  <th class="p-3">Status</th>
-                </tr>
-              </thead>
-              <tbody id="modal-history-tbody" class="divide-y divide-slate-800/60 text-slate-300">
-                <tr>
-                  <td colspan="7" class="p-6 text-center text-slate-500 font-mono">Loading history...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Tab 3: Hardware Specifications & Image Showcase -->
-        <div id="tab-content-gallery" class="space-y-6 hidden">
-          <div>
-            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-200 mb-3">
-              Hardware Architecture & Model Photography
-            </h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <!-- Physical Unit Photograph -->
-              <div class="glass-card rounded-2xl p-4 flex flex-col items-center justify-center bg-slate-950/50">
-                <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 font-mono">Physical Station Enclosure</span>
-                <img id="modal-gallery-model-img" src="/assets/images/models/charger_240kw.png" alt="Hardware model unit" class="max-h-64 object-contain" />
-                <span class="text-xs text-cyan-400 mt-2 font-mono" id="modal-gallery-model-label">240kW Ultra-Fast DC Charger</span>
-              </div>
-
-              <!-- Technical Specifications Table -->
-              <div class="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col justify-between">
-                <div>
-                  <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono mb-3">Specification Profile</h4>
-                  <div class="space-y-2.5 text-xs font-mono" id="modal-specs-list">
-                    <!-- Injected dynamically -->
-                  </div>
-                </div>
-
-                <div class="mt-4 p-3 rounded-xl bg-cyan-950/20 border border-cyan-800/30 text-[11px] text-cyan-300">
-                  Certified for OCPP 1.6-J JSON-over-WebSocket protocol with dynamic cloud orchestration.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- All Dynamic States Visual Gallery -->
-          <div>
-            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-200 mb-3">
-              Dynamic Visual States Gallery
-            </h3>
-            <div id="modal-gallery-states-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <!-- States injected dynamically -->
+        <!-- Tab 3: Session History Table -->
+        <div id="tab-history" class="hidden">
+          <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                    <th class="p-3.5">Tx ID</th>
+                    <th class="p-3.5">Gun</th>
+                    <th class="p-3.5">Start Time</th>
+                    <th class="p-3.5">Energy (kWh)</th>
+                    <th class="p-3.5">Cost (PKR)</th>
+                    <th class="p-3.5">Stop Reason</th>
+                    <th class="p-3.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="modal-history-tbody" class="divide-y divide-slate-100 font-medium">
+                  <tr>
+                    <td colspan="7" class="p-6 text-center text-slate-400 font-mono">Loading history...</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
 
       </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 border-t border-slate-200 bg-white flex justify-end">
+        <button onclick="closeStationModal()" class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition">
+          Close Window
+        </button>
+      </div>
+
     </div>
   </div>
 
-  <footer class="border-t border-slate-900 bg-slate-950/60 py-4 px-6 text-center text-xs text-slate-500 font-mono">
-    Tesla-Charge Intelligent Charging Infrastructure &bull; OCPP 1.6-J &bull; Dual Database Architecture
+  <!-- Test UI Simulator Modal (Desk Testing) -->
+  <div id="sim-modal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+        <div class="flex items-center gap-2">
+          <span class="text-lg">🧪</span>
+          <h3 class="text-base font-black text-slate-900 uppercase">Test UI Simulator</h3>
+        </div>
+        <button onclick="closeSimulatorModal()" class="text-slate-400 hover:text-slate-700 text-sm font-bold">✕</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-4">
+        Preview live charging animations, high-speed telemetry, and faulted warning states directly in the web dashboard without physical cars.
+      </p>
+
+      <div class="space-y-2">
+        <button onclick="applySimPreset('both_charging')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50/50 transition">
+          <div class="text-xs font-black text-slate-900">⚡ Both Guns Charging (High Speed)</div>
+          <div class="text-[11px] text-slate-500">Gun A: 120kW • Gun B: 85kW with real-time live tickers</div>
+        </button>
+        <button onclick="applySimPreset('gun_a_charging')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50/50 transition">
+          <div class="text-xs font-black text-slate-900">⚡ Gun A Single Charging (240kW Max)</div>
+          <div class="text-[11px] text-slate-500">Gun A: 210kW • Gun B: Standby Available</div>
+        </button>
+        <button onclick="applySimPreset('vehicle_connected')" class="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50/50 transition">
+          <div class="text-xs font-black text-slate-900">🔌 Vehicle Plugged In (Preparing)</div>
+          <div class="text-[11px] text-slate-500">Ready to charge state • Waiting for driver start</div>
+        </button>
+        <button onclick="applySimPreset('reset_real')" class="w-full text-left p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition">
+          <div class="text-xs font-black text-slate-700">🔄 Reset to Real Hardware Fleet Data</div>
+          <div class="text-[11px] text-slate-500">Restores genuine physical station telemetry from server</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-400 font-medium mt-auto">
+    Tesla Charge Intelligent Infrastructure &bull; Central Superadmin Console &bull; Asia/Karachi Timezone
   </footer>
 
+  <!-- Web Logic Script -->
   <script>
     let chargers = [];
     let currentFilter = 'all';
+    let searchQuery = '';
     let selectedCharger = null;
     let selectedChargerHistory = [];
-    let activeModalTab = 'telemetry';
+    let activeModalTab = 'controls';
+    let isSimulating = false;
+    let simOverrides = null;
 
-    // Fetch chargers from backend API
-    async function fetchChargers() {
+    // Theme color dictionary matching React Native mobile app
+    const STATUS_THEMES = {
+      Charging: { color: '#0284C7', bg: '#E0F2FE', border: '#BAE6FD', label: 'Charging' },
+      Preparing: { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A', label: 'Preparing' },
+      SuspendedEV: { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A', label: 'Suspended' },
+      SuspendedEVSE: { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A', label: 'Suspended' },
+      Finishing: { color: '#0284C7', bg: '#E0F2FE', border: '#BAE6FD', label: 'Finishing' },
+      Faulted: { color: '#DC2626', bg: '#FEE2E2', border: '#FECACA', label: 'Faulted' },
+      Unavailable: { color: '#475569', bg: '#F1F5F9', border: '#E2E8F0', label: 'Unavailable' },
+      Available: { color: '#059669', bg: '#ECFDF5', border: '#A7F3D0', label: 'Available' },
+      Offline: { color: '#64748B', bg: '#F1F5F9', border: '#E2E8F0', label: 'Offline' },
+    };
+
+    function getTheme(status) {
+      return STATUS_THEMES[status] || STATUS_THEMES.Available;
+    }
+
+    // Fetch chargers & network summary
+    async function fetchChargers(isManual = false) {
+      if (isManual) {
+        const icon = document.getElementById('refresh-icon');
+        icon.classList.add('animate-spin');
+        setTimeout(() => icon.classList.remove('animate-spin'), 600);
+      }
+
+      if (isSimulating && simOverrides) {
+        applySimData();
+        return;
+      }
+
       try {
         const [chargersRes, networkRes] = await Promise.all([
           fetch('/api/chargers'),
@@ -381,311 +527,485 @@
 
         if (networkRes && networkRes.ok) {
           const net = await networkRes.json();
-          if (net.success && net.summary) {
-            document.getElementById('stat-total-energy').textContent = `${Math.round(net.summary.totalDeliveredEnergyKwh || 0)} kWh`;
-            document.getElementById('stat-total-revenue').textContent = `${Math.round(net.summary.totalRevenuePkr || 0).toLocaleString()} PKR`;
-            document.getElementById('stat-total-capacity').textContent = `${net.summary.totalCapacityKw || 330} kW`;
-            document.getElementById('stat-active-stations').textContent = `${net.summary.onlineChargers || 3} / ${net.summary.totalChargers || 3}`;
+          if (net.success) {
+            const energy = net.totalEnergyDeliveredKwh || 0;
+            const revenue = net.totalRevenuePkr || 0;
+            const sessions = net.completedSessionsCount || 0;
+            const activeCount = net.activeConnectionsCount || 0;
+
+            document.getElementById('stat-total-energy').textContent = `${energy.toFixed(1)} kWh`;
+            document.getElementById('stat-total-revenue').textContent = `${Math.round(revenue).toLocaleString()} PKR`;
+            document.getElementById('stat-sessions-sub').textContent = `${sessions} Lifetime Sessions`;
+
+            // Active stations count from physical connections
+            const onlineCount = chargers.filter(c => c.isOnline).length;
+            document.getElementById('stat-active-stations').textContent = `${onlineCount} / ${chargers.length}`;
+            
+            const connectedStation = net.connectedChargers?.[0]?.chargePointId || 'charger1';
+            document.getElementById('stat-active-sub').textContent = `${connectedStation} Connected`;
           }
         }
 
-        // If modal is open, refresh modal data seamlessly
+        // Keep modal fresh if open
         if (selectedCharger) {
           const fresh = chargers.find(c => c.id.toLowerCase() === selectedCharger.id.toLowerCase());
           if (fresh) {
             selectedCharger = fresh;
-            updateModalTelemetry();
+            updateModalDetails();
           }
         }
       } catch (err) {
-        console.warn('Sync error:', err);
+        console.warn('Network sync error:', err);
       }
     }
 
-    // Filter controls
+    // Filter selector
     function setFilter(filter) {
       currentFilter = filter;
       document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.remove('bg-cyan-500', 'text-slate-950', 'shadow-md', 'shadow-cyan-500/20');
-        btn.classList.add('bg-slate-900', 'text-slate-300', 'border', 'border-slate-800');
+        btn.classList.remove('bg-slate-900', 'text-white', 'shadow-sm');
+        btn.classList.add('bg-white', 'text-slate-700', 'border', 'border-slate-200');
       });
       const activeBtn = document.getElementById(`filter-${filter}`);
       if (activeBtn) {
-        activeBtn.classList.remove('bg-slate-900', 'text-slate-300', 'border', 'border-slate-800');
-        activeBtn.classList.add('bg-cyan-500', 'text-slate-950', 'shadow-md', 'shadow-cyan-500/20');
+        activeBtn.classList.remove('bg-white', 'text-slate-700', 'border', 'border-slate-200');
+        activeBtn.classList.add('bg-slate-900', 'text-white', 'shadow-sm');
       }
       renderChargersGrid();
     }
 
-    function updateCounts() {
-      document.getElementById('cnt-all').textContent = chargers.length;
+    function handleSearch(val) {
+      searchQuery = (val || '').trim().toLowerCase();
+      renderChargersGrid();
     }
 
-    // Render chargers cards
+    function updateCounts() {
+      const allCount = chargers.length;
+      const onlineCount = chargers.filter(c => c.isOnline).length;
+      const offlineCount = allCount - onlineCount;
+
+      document.getElementById('cnt-all').textContent = allCount;
+      document.getElementById('cnt-online').textContent = onlineCount;
+      document.getElementById('cnt-offline').textContent = offlineCount;
+
+      document.getElementById('hdr-fleet-pulse').textContent = `${onlineCount} ONLINE • ${offlineCount} OFFLINE`;
+    }
+
+    // Render Station Cards
     function renderChargersGrid() {
       const container = document.getElementById('chargers-grid');
       let filtered = chargers;
 
-      if (currentFilter === '240kw') {
-        filtered = chargers.filter(c => c.powerRatingKw >= 200 || c.model.includes('240'));
+      // Filter logic
+      if (currentFilter === 'online') {
+        filtered = filtered.filter(c => c.isOnline);
+      } else if (currentFilter === 'offline') {
+        filtered = filtered.filter(c => !c.isOnline);
+      } else if (currentFilter === '240kw') {
+        filtered = filtered.filter(c => c.powerRatingKw >= 200 || c.model.includes('240'));
       } else if (currentFilter === '60kw') {
-        filtered = chargers.filter(c => (c.powerRatingKw >= 50 && c.powerRatingKw < 200) || c.model.includes('60'));
+        filtered = filtered.filter(c => (c.powerRatingKw >= 50 && c.powerRatingKw < 200) || c.model.includes('60'));
       } else if (currentFilter === '30kw') {
-        filtered = chargers.filter(c => c.powerRatingKw <= 40 || c.model.includes('30'));
-      } else if (currentFilter === 'charging') {
-        filtered = chargers.filter(c => {
-          const c1 = c.connectors?.['1'];
-          const c2 = c.connectors?.['2'];
-          return c1?.status === 'Charging' || c2?.status === 'Charging';
-        });
+        filtered = filtered.filter(c => c.powerRatingKw <= 40 || c.model.includes('30'));
+      }
+
+      if (searchQuery) {
+        filtered = filtered.filter(c => 
+          c.id.toLowerCase().includes(searchQuery) ||
+          (c.name && c.name.toLowerCase().includes(searchQuery)) ||
+          (c.model && c.model.toLowerCase().includes(searchQuery)) ||
+          (c.location && c.location.toLowerCase().includes(searchQuery))
+        );
       }
 
       if (filtered.length === 0) {
         container.innerHTML = `
-          <div class="col-span-full py-16 text-center text-slate-500 font-mono">
-            No chargers found matching filter criteria.
+          <div class="col-span-full py-16 text-center text-slate-400 font-medium bg-white rounded-2xl border border-slate-200 p-8">
+            <span class="text-3xl block mb-2">🔍</span>
+            No charging stations match the selected filter or search term.
           </div>
         `;
         return;
       }
 
       container.innerHTML = filtered.map(c => {
-        const c1 = c.connectors?.['1'] || { status: 'Available', powerKw: 0 };
-        const c2 = c.connectors?.['2'] || null;
-        const isCharging = c1.status === 'Charging' || c2?.status === 'Charging';
-        const totalPower = ((c1.powerKw || 0) + (c2?.powerKw || 0)).toFixed(1);
+        const isOnline = Boolean(c.isOnline);
+        const is30kW = c.powerRatingKw <= 40 || c.model?.includes('30');
+        const c1 = c.connectors?.['1'] || {};
+        const c2 = c.connectors?.['2'] || {};
 
-        const getPill = (status) => {
-          if (status === 'Charging') return 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30';
-          if (status === 'Preparing') return 'bg-amber-500/10 text-amber-400 border border-amber-500/30';
-          if (status === 'Available') return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
-          return 'bg-slate-800 text-slate-400 border border-slate-700';
-        };
+        const status1 = isOnline ? (c1.status || 'Available') : 'Offline';
+        const status2 = isOnline ? (c2.status || 'Available') : 'Offline';
+
+        const theme1 = getTheme(status1);
+        const theme2 = getTheme(status2);
+
+        const power1 = Number(c1.powerKw || 0).toFixed(1);
+        const power2 = Number(c2.powerKw || 0).toFixed(1);
+        const energy1 = Number(c1.energyKwh || 0).toFixed(2);
+        const energy2 = Number(c2.energyKwh || 0).toFixed(2);
+        const volt1 = Math.round(c1.voltage || 0);
+        const volt2 = Math.round(c2.voltage || 0);
+        const curr1 = Number(c1.current || 0).toFixed(1);
+        const curr2 = Number(c2.current || 0).toFixed(1);
+        const soc1 = c1.soc;
+        const soc2 = c2.soc;
+
+        const isChargingA = isOnline && status1 === 'Charging';
+        const isChargingB = isOnline && !is30kW && status2 === 'Charging';
+        const totalLivePower = (Number(power1) + (is30kW ? 0 : Number(power2))).toFixed(1);
+
+        // Model graphic path
+        let modelImg = '/assets/images/models/charger_240kw.png';
+        if (is30kW) modelImg = '/assets/images/models/charger_30kw.png';
+        else if (c.powerRatingKw <= 80 || c.model?.includes('60')) modelImg = '/assets/images/models/charger_60kw.png';
+
+        // Hero state text
+        let heroTitle = 'STANDBY';
+        let heroSubtitle = `READY TO CONNECT • ${c.tariffRate || 125} PKR/kWh`;
+        let heroColor = 'text-slate-900';
+
+        if (!isOnline) {
+          heroTitle = 'OFFLINE';
+          heroSubtitle = 'STATION STANDBY • DISCONNECTED';
+          heroColor = 'text-slate-400';
+        } else if (isChargingA && isChargingB) {
+          heroTitle = `${totalLivePower} kW`;
+          heroSubtitle = `BOTH GUNS ACTIVE • ${Math.round(totalLivePower * (c.tariffRate || 125))} PKR/hr`;
+          heroColor = 'text-sky-600';
+        } else if (isChargingA) {
+          heroTitle = `${power1} kW`;
+          heroSubtitle = `GUN A CHARGING • ${soc1 ? soc1 + '% SoC' : 'Active Delivery'}`;
+          heroColor = 'text-sky-600';
+        } else if (isChargingB) {
+          heroTitle = `${power2} kW`;
+          heroSubtitle = `GUN B CHARGING • ${soc2 ? soc2 + '% SoC' : 'Active Delivery'}`;
+          heroColor = 'text-sky-600';
+        }
 
         return `
-          <div onclick="openChargerModal('${c.id}')" class="glass-card glass-card-hover rounded-3xl p-6 cursor-pointer flex flex-col justify-between relative group">
+          <div class="station-card p-5 flex flex-col justify-between" id="card-${c.id}">
+            
+            <!-- Station Card Header -->
             <div>
-              <!-- Top Card Bar -->
-              <div class="flex items-center justify-between mb-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <h3 class="text-base font-black text-white group-hover:text-cyan-300 transition uppercase">${c.name}</h3>
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase font-mono tracking-wider ${c.isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}">
-                      ${c.isOnline ? '● ONLINE' : '○ OFFLINE'}
+              <div class="flex items-start justify-between gap-3 mb-2">
+                <div class="flex items-center gap-2.5">
+                  <img src="/assets/images/brand-logo.png" class="w-6 h-6 object-contain" />
+                  <div>
+                    <h3 class="text-base font-black text-slate-900 tracking-wide uppercase">${c.name || c.id}</h3>
+                    <span class="text-[11px] font-semibold text-slate-400">${c.location || 'Central Station'}</span>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                    ${c.powerRatingKw || (is30kW ? 30 : 240)}kW
+                  </span>
+                  <span class="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${
+                    isOnline ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
+                  }">
+                    <span class="h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}"></span>
+                    ${isOnline ? 'ONLINE' : 'OFFLINE'}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Charger Model Transparent Visual -->
+              <div class="h-36 w-full flex items-center justify-center my-2 p-2">
+                <img src="${modelImg}" alt="${c.model}" class="max-h-full max-w-full object-contain filter drop-shadow-sm" />
+              </div>
+
+              <!-- Price & Power Hero Section (Matching Mobile App) -->
+              <div class="text-center my-3">
+                <div class="text-2xl font-black font-mono tracking-tight ${heroColor}">
+                  ${heroTitle}
+                </div>
+                <div class="text-xs font-bold text-slate-500 uppercase tracking-wide mt-0.5">
+                  ${heroSubtitle}
+                </div>
+              </div>
+
+              <!-- Gun Status Section (Exact Mobile App Gun Cards) -->
+              ${is30kW ? `
+                <!-- 30kW Single Gun Card -->
+                <div class="gun-subcard p-3 mb-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="h-2 w-2 rounded-full" style="background-color: ${theme1.color};"></span>
+                      <span class="text-xs font-black text-slate-900 uppercase">GUN 1 (30kW)</span>
+                    </div>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-md" style="background-color: ${theme1.bg}; color: ${theme1.color}; border: 1px solid ${theme1.border};">
+                      ${theme1.label}
                     </span>
                   </div>
-                  <p class="text-xs text-slate-400 font-mono mt-0.5">${c.model} &bull; ${c.powerRatingKw}kW Max</p>
-                </div>
-                <div class="px-2.5 py-1 rounded-xl bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 font-mono text-xs font-black">
-                  ${c.powerRatingKw} kW
-                </div>
-              </div>
 
-              <!-- Station Hardware & Dynamic State Graphics -->
-              <div class="grid grid-cols-2 gap-3 my-4 bg-slate-950/50 rounded-2xl p-3 border border-slate-800/60">
-                <div class="flex flex-col items-center justify-center p-2 bg-slate-900/40 rounded-xl">
-                  <span class="text-[9px] uppercase font-bold text-slate-500 font-mono mb-1">Hardware Unit</span>
-                  <img src="${c.modelImage}" alt="${c.model}" class="h-28 object-contain drop-shadow" />
-                </div>
-                <div class="flex flex-col items-center justify-center p-2 bg-slate-900/40 rounded-xl">
-                  <span class="text-[9px] uppercase font-bold text-slate-500 font-mono mb-1">Vehicle State</span>
-                  <img src="${c.stateImage}" alt="Vehicle State" class="h-28 object-contain drop-shadow" />
-                </div>
-              </div>
-
-              <!-- Connectors & Live Telemetry -->
-              <div class="space-y-2 mt-4 font-mono text-xs">
-                <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
-                  <div class="flex items-center gap-2">
-                    <span class="h-2 w-2 rounded-full ${c1.status === 'Charging' ? 'bg-cyan-400 animate-ping' : 'bg-emerald-400'}"></span>
-                    <span class="font-bold text-slate-300">GUN 1:</span>
-                    <span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${getPill(c1.status)}">${c1.status}</span>
+                  <div class="flex items-baseline justify-between mb-2">
+                    <span class="text-lg font-black text-slate-900 font-mono">${power1} kW</span>
+                    ${soc1 ? `<span class="text-[10px] font-bold bg-slate-200 text-slate-800 px-1.5 py-0.5 rounded">${soc1}% SoC</span>` : ''}
                   </div>
-                  <span class="text-cyan-400 font-bold">${c1.powerKw > 0 ? c1.powerKw + ' kW' : '0.0 kW'}</span>
-                </div>
 
-                ${c2 ? `
-                <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/60">
-                  <div class="flex items-center gap-2">
-                    <span class="h-2 w-2 rounded-full ${c2.status === 'Charging' ? 'bg-cyan-400 animate-ping' : 'bg-emerald-400'}"></span>
-                    <span class="font-bold text-slate-300">GUN 2:</span>
-                    <span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${getPill(c2.status)}">${c2.status}</span>
+                  <div class="flex justify-between text-[11px] py-0.5">
+                    <span class="text-slate-500 font-medium">Voltage / Current</span>
+                    <span class="font-bold text-slate-800 font-mono">${volt1}V &bull; ${curr1}A</span>
                   </div>
-                  <span class="text-cyan-400 font-bold">${c2.powerKw > 0 ? c2.powerKw + ' kW' : '0.0 kW'}</span>
+                  <div class="flex justify-between text-[11px] py-0.5">
+                    <span class="text-slate-500 font-medium">Session Energy</span>
+                    <span class="font-bold text-slate-800 font-mono">${energy1} kWh</span>
+                  </div>
                 </div>
-                ` : ''}
-              </div>
+              ` : `
+                <!-- Dual Gun Cards (Gun A & Gun B) -->
+                <div class="grid grid-cols-2 gap-2.5 mb-4">
+                  
+                  <!-- Gun A -->
+                  <div class="gun-subcard p-3">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-1.5">
+                        <span class="h-2 w-2 rounded-full" style="background-color: ${theme1.color};"></span>
+                        <span class="text-xs font-black text-slate-900">GUN A</span>
+                      </div>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded" style="background-color: ${theme1.bg}; color: ${theme1.color};">
+                        ${theme1.label}
+                      </span>
+                    </div>
+
+                    <div class="flex items-baseline justify-between mb-2">
+                      <span class="text-base font-black text-slate-900 font-mono">${power1} kW</span>
+                      ${soc1 ? `<span class="text-[9px] font-bold bg-slate-200 text-slate-800 px-1 py-0.2 rounded">${soc1}%</span>` : ''}
+                    </div>
+
+                    <div class="text-[10px] text-slate-500 flex justify-between py-0.5">
+                      <span>V / I</span>
+                      <span class="font-bold text-slate-800 font-mono">${volt1}V &bull; ${curr1}A</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 flex justify-between py-0.5">
+                      <span>Energy</span>
+                      <span class="font-bold text-slate-800 font-mono">${energy1} kWh</span>
+                    </div>
+                  </div>
+
+                  <!-- Gun B -->
+                  <div class="gun-subcard p-3">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-1.5">
+                        <span class="h-2 w-2 rounded-full" style="background-color: ${theme2.color};"></span>
+                        <span class="text-xs font-black text-slate-900">GUN B</span>
+                      </div>
+                      <span class="text-[9px] font-bold px-1.5 py-0.5 rounded" style="background-color: ${theme2.bg}; color: ${theme2.color};">
+                        ${theme2.label}
+                      </span>
+                    </div>
+
+                    <div class="flex items-baseline justify-between mb-2">
+                      <span class="text-base font-black text-slate-900 font-mono">${power2} kW</span>
+                      ${soc2 ? `<span class="text-[9px] font-bold bg-slate-200 text-slate-800 px-1 py-0.2 rounded">${soc2}%</span>` : ''}
+                    </div>
+
+                    <div class="text-[10px] text-slate-500 flex justify-between py-0.5">
+                      <span>V / I</span>
+                      <span class="font-bold text-slate-800 font-mono">${volt2}V &bull; ${curr2}A</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 flex justify-between py-0.5">
+                      <span>Energy</span>
+                      <span class="font-bold text-slate-800 font-mono">${energy2} kWh</span>
+                    </div>
+                  </div>
+
+                </div>
+              `}
             </div>
 
-            <!-- Inspect Station Button -->
-            <button class="mt-5 w-full py-2.5 rounded-xl bg-slate-800/80 group-hover:bg-cyan-500 group-hover:text-slate-950 text-slate-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition border border-slate-700/80 group-hover:border-transparent">
-              <span>Inspect & Control Station</span>
-              <span>→</span>
-            </button>
+            <!-- Superadmin Action Footer -->
+            <div class="pt-3 border-t border-slate-100 flex items-center gap-2">
+              <button onclick="openStationModal('${c.id}')" class="flex-1 py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition text-center shadow-sm active:scale-95">
+                ⚙️ Manage Station
+              </button>
+              <button onclick="quickStartStation('${c.id}')" class="p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 text-xs font-bold transition active:scale-95" title="Remote Start">
+                ⚡
+              </button>
+              <button onclick="quickUnlockStation('${c.id}')" class="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold transition active:scale-95" title="Unlock Cable">
+                🔓
+              </button>
+            </div>
+
           </div>
         `;
       }).join('');
     }
 
-    // Modal Drawer Logic
-    async function openChargerModal(chargerId) {
-      const charger = chargers.find(c => c.id.toLowerCase() === chargerId.toLowerCase());
-      if (!charger) return;
+    // Open Station Modal
+    function openStationModal(chargerId) {
+      const c = chargers.find(item => item.id.toLowerCase() === chargerId.toLowerCase());
+      if (!c) return;
+      selectedCharger = c;
 
-      selectedCharger = charger;
-      document.getElementById('modal-station-name').textContent = charger.name;
-      document.getElementById('modal-station-id').textContent = `ID: ${charger.id} • ${charger.model} • ${charger.powerRatingKw}kW`;
-      
+      document.getElementById('modal-title').textContent = c.name || c.id.toUpperCase();
+      document.getElementById('modal-subtitle').textContent = `${c.model} • ${c.location || 'Central Superhub'}`;
+
       const badge = document.getElementById('modal-status-badge');
-      badge.textContent = charger.isOnline ? 'Online' : 'Offline';
-      badge.className = `px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${charger.isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`;
+      badge.textContent = c.isOnline ? 'ONLINE' : 'OFFLINE';
+      badge.className = `px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+        c.isOnline ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
+      }`;
 
-      // Populate Gun Select
-      const select = document.getElementById('modal-gun-select');
-      select.innerHTML = '<option value="1">Gun 1 (Connector A)</option>';
-      if (charger.connectors?.['2']) {
-        select.innerHTML += '<option value="2">Gun 2 (Connector B)</option>';
-      }
+      document.getElementById('input-tariff-rate').value = c.tariffRate || 125;
+      document.getElementById('modal-action-status').classList.add('hidden');
 
-      updateModalTelemetry();
-      setupHardwareGallery();
-      loadChargerHistory(charger.id);
+      updateModalDetails();
+      loadChargerHistory(c.id);
 
-      // Show Modal
-      const modal = document.getElementById('detail-modal');
-      const card = document.getElementById('detail-modal-card');
+      const modal = document.getElementById('station-modal');
       modal.classList.remove('hidden');
-      setTimeout(() => {
-        modal.classList.remove('opacity-0');
-        card.classList.remove('scale-95');
-      }, 10);
+      modal.classList.add('flex');
     }
 
-    function closeModal() {
-      const modal = document.getElementById('detail-modal');
-      const card = document.getElementById('detail-modal-card');
-      modal.classList.add('opacity-0');
-      card.classList.add('scale-95');
-      setTimeout(() => {
-        modal.classList.add('hidden');
-        selectedCharger = null;
-      }, 200);
+    function closeStationModal() {
+      const modal = document.getElementById('station-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      selectedCharger = null;
     }
 
-    function switchModalTab(tab) {
+    function setModalTab(tab) {
       activeModalTab = tab;
-      ['telemetry', 'history', 'gallery'].forEach(t => {
+      ['controls', 'telemetry', 'history'].forEach(t => {
         const btn = document.getElementById(`tab-btn-${t}`);
-        const content = document.getElementById(`tab-content-${t}`);
+        const panel = document.getElementById(`tab-${t}`);
         if (t === tab) {
-          btn.className = 'px-4 py-3 text-xs font-bold uppercase tracking-wider text-cyan-400 border-b-2 border-cyan-400 transition';
-          content.classList.remove('hidden');
+          btn.className = 'py-3 text-xs font-bold border-b-2 border-sky-600 text-sky-600 transition';
+          panel.classList.remove('hidden');
         } else {
-          btn.className = 'px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition';
-          content.classList.add('hidden');
+          btn.className = 'py-3 text-xs font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition';
+          panel.classList.add('hidden');
         }
       });
     }
 
-    function updateModalTelemetry() {
+    function updateModalDetails() {
       if (!selectedCharger) return;
-      const c = selectedCharger;
-      const c1 = c.connectors?.['1'] || { powerKw: 0, voltage: 0, current: 0, energyKwh: 0 };
-      const c2 = c.connectors?.['2'] || { powerKw: 0, voltage: 0, current: 0, energyKwh: 0 };
+      const c1 = selectedCharger.connectors?.['1'] || {};
+      const c2 = selectedCharger.connectors?.['2'] || {};
 
-      const activeConn = (c2 && c2.status === 'Charging') ? c2 : c1;
-      const totalPower = ((c1.powerKw || 0) + (c2.powerKw || 0)).toFixed(1);
-      const totalEnergy = ((c1.energyKwh || 0) + (c2.energyKwh || 0)).toFixed(2);
-      const rate = c.tariffRate || 125;
-      const liveCost = Math.round(Number(totalEnergy) * rate);
+      document.getElementById('tele-v1').textContent = `${Math.round(c1.voltage || 0)} V`;
+      document.getElementById('tele-i1').textContent = `${Number(c1.current || 0).toFixed(1)} A`;
+      document.getElementById('tele-p1').textContent = `${Number(c1.powerKw || 0).toFixed(1)} kW`;
+      document.getElementById('tele-e1').textContent = `${Number(c1.energyKwh || 0).toFixed(2)} kWh`;
 
-      document.getElementById('modal-hero-state-img').src = c.stateImage;
-      document.getElementById('modal-gauge-power').textContent = `${totalPower} kW`;
-      document.getElementById('modal-gauge-vi').textContent = `${activeConn.voltage || 0}V • ${activeConn.current || 0}A`;
-      document.getElementById('modal-gauge-energy').textContent = `${totalEnergy} kWh`;
-      document.getElementById('modal-gauge-cost').textContent = `${liveCost.toLocaleString()} PKR`;
+      document.getElementById('tele-v2').textContent = `${Math.round(c2.voltage || 0)} V`;
+      document.getElementById('tele-i2').textContent = `${Number(c2.current || 0).toFixed(1)} A`;
+      document.getElementById('tele-p2').textContent = `${Number(c2.powerKw || 0).toFixed(1)} kW`;
+      document.getElementById('tele-e2').textContent = `${Number(c2.energyKwh || 0).toFixed(2)} kWh`;
 
-      const caption = document.getElementById('modal-state-caption');
-      if (c1.status === 'Charging' && c2.status === 'Charging') {
-        caption.textContent = 'Dual Charging Active • Power Splitting High-Voltage DC';
-      } else if (c1.status === 'Charging') {
-        caption.textContent = 'Gun 1 Charging Active • High Power DC Flowing';
-      } else if (c2.status === 'Charging') {
-        caption.textContent = 'Gun 2 Charging Active • High Power DC Flowing';
-      } else {
-        caption.textContent = 'Station Standby • Ready for Vehicle Connection';
+      document.getElementById('tele-hb').textContent = selectedCharger.lastHeartbeat ? new Date(selectedCharger.lastHeartbeat).toLocaleTimeString() : 'N/A';
+      document.getElementById('tele-tx').textContent = c1.activeTx || c2.activeTx || 'None';
+      document.getElementById('tele-ws').textContent = selectedCharger.isOnline ? 'Connected (OCPP 1.6-J)' : 'Disconnected';
+      document.getElementById('tele-ws').className = `font-bold ml-1 ${selectedCharger.isOnline ? 'text-emerald-600' : 'text-slate-400'}`;
+    }
+
+    // Save Tariff Rate
+    async function saveTariffRate() {
+      if (!selectedCharger) return;
+      const rate = Number(document.getElementById('input-tariff-rate').value);
+      const statusMsg = document.getElementById('tariff-status-msg');
+
+      if (!rate || rate <= 0) {
+        alert('Please enter a valid tariff rate in PKR');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/chargers/${selectedCharger.id}/tariff`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tariffRate: rate }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusMsg.textContent = '✓ Saved successfully';
+          statusMsg.classList.remove('hidden');
+          selectedCharger.tariffRate = rate;
+          setTimeout(() => statusMsg.classList.add('hidden'), 3000);
+          fetchChargers();
+        } else {
+          alert(`Error saving tariff: ${data.error || 'Server error'}`);
+        }
+      } catch (err) {
+        alert(`Network error: ${err.message}`);
       }
     }
 
-    // Hardware Specs & Gallery setup
-    function setupHardwareGallery() {
+    // Remote Command Dispatch
+    async function dispatchRemoteAction(action) {
       if (!selectedCharger) return;
-      const c = selectedCharger;
+      const chargerId = selectedCharger.id;
+      const connectorId = Number(document.getElementById('modal-gun-select').value || 1);
+      const idTag = document.getElementById('modal-idtag-input').value || 'SUPERADMIN_01';
+      const statusBox = document.getElementById('modal-action-status');
 
-      document.getElementById('modal-gallery-model-img').src = c.modelImage;
-      document.getElementById('modal-gallery-model-label').textContent = `${c.powerRatingKw}kW ${c.model}`;
+      statusBox.classList.remove('hidden');
+      statusBox.textContent = `⏳ Dispatching ${action} to station ${chargerId} (Gun ${connectorId})...`;
+      statusBox.className = 'mt-4 p-3 rounded-xl text-xs font-mono bg-sky-50 text-sky-800 border border-sky-200';
 
-      const specsList = document.getElementById('modal-specs-list');
-      const is30 = c.powerRatingKw <= 40;
-      const is240 = c.powerRatingKw >= 200;
-
-      specsList.innerHTML = `
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Model Class:</span><span class="text-white font-bold">${c.model}</span></div>
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Peak Power:</span><span class="text-cyan-400 font-bold">${c.powerRatingKw} kW DC</span></div>
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Input Voltage:</span><span class="text-white">380V - 480V AC 3-Phase</span></div>
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Output Voltage:</span><span class="text-white">150V - 1000V DC</span></div>
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Max Current:</span><span class="text-white">${is240 ? '250A per gun' : is30 ? '60A' : '125A per gun'}</span></div>
-        <div class="flex justify-between border-b border-slate-800/60 pb-1.5"><span class="text-slate-400">Connectors:</span><span class="text-white">${is30 ? '1x CCS2 Gun' : '2x CCS2 / GBT Guns'}</span></div>
-        <div class="flex justify-between pb-1.5"><span class="text-slate-400">Protection:</span><span class="text-white">IP54 / IK10 Outdoor Rated</span></div>
-      `;
-
-      // Render states gallery
-      const galleryGrid = document.getElementById('modal-gallery-states-grid');
-      let states = [];
-      if (is240) {
-        states = [
-          { label: 'Idle Standby', src: '/assets/images/states/state_240kw_idle.png' },
-          { label: 'Left Gun Charging', src: '/assets/images/states/state_240kw_left.png' },
-          { label: 'Right Gun Charging', src: '/assets/images/states/state_240kw_right.png' },
-          { label: 'Dual Guns Charging', src: '/assets/images/states/state_240kw_both.png' },
-        ];
-      } else if (is30) {
-        states = [
-          { label: 'Standby / Idle', src: '/assets/images/states/state_30kw_idle.png' },
-          { label: 'Vehicle Connected', src: '/assets/images/states/state_30kw_connected.png' },
-        ];
-      } else {
-        states = [
-          { label: 'Idle Standby', src: '/assets/images/states/state_idle.png' },
-          { label: 'Left Gun Active', src: '/assets/images/states/state_left.png' },
-          { label: 'Right Gun Active', src: '/assets/images/states/state_right.png' },
-          { label: 'Dual Active', src: '/assets/images/states/state_both.png' },
-        ];
+      try {
+        const res = await fetch(`/api/chargers/${chargerId}/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId, idTag }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          statusBox.textContent = `✅ Command ${action} accepted by station [${chargerId}].`;
+          statusBox.className = 'mt-4 p-3 rounded-xl text-xs font-mono bg-emerald-50 text-emerald-800 border border-emerald-200';
+          setTimeout(fetchChargers, 1000);
+        } else {
+          statusBox.textContent = `⚠️ Command rejected: ${data.error || 'Station unavailable'}`;
+          statusBox.className = 'mt-4 p-3 rounded-xl text-xs font-mono bg-rose-50 text-rose-800 border border-rose-200';
+        }
+      } catch (err) {
+        statusBox.textContent = `❌ Network error: ${err.message}`;
+        statusBox.className = 'mt-4 p-3 rounded-xl text-xs font-mono bg-rose-50 text-rose-800 border border-rose-200';
       }
-
-      galleryGrid.innerHTML = states.map(s => `
-        <div class="glass-card rounded-xl p-2.5 flex flex-col items-center justify-center bg-slate-950/60">
-          <img src="${s.src}" alt="${s.label}" class="h-20 object-contain drop-shadow" />
-          <span class="text-[10px] text-slate-400 font-mono mt-1 text-center font-bold">${s.label}</span>
-        </div>
-      `).join('');
     }
 
-    // Load History
+    async function quickStartStation(id) {
+      openStationModal(id);
+      dispatchRemoteAction('RemoteStartTransaction');
+    }
+
+    async function quickUnlockStation(id) {
+      if (!confirm(`Unlock cable latch for ${id}?`)) return;
+      try {
+        const res = await fetch(`/api/chargers/${id}/UnlockConnector`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId: 1 }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`Cable unlocked successfully on ${id}.`);
+        } else {
+          alert(`Unlock failed: ${data.error || 'Relieve tension on cable and retry'}`);
+        }
+      } catch (e) {
+        alert(`Error: ${e.message}`);
+      }
+    }
+
+    // Load Session History
     async function loadChargerHistory(chargerId) {
       const tbody = document.getElementById('modal-history-tbody');
-      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-500 font-mono">Loading history records...</td></tr>';
-      
+      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400 font-mono">Fetching session records...</td></tr>';
+
       try {
         const res = await fetch(`/api/chargers/${chargerId}/history`);
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.transactions)) {
             selectedChargerHistory = data.transactions;
-            document.getElementById('modal-history-count').textContent = `${data.transactions.length} sessions`;
-            
+            document.getElementById('modal-history-count').textContent = data.transactions.length;
+
             if (data.transactions.length === 0) {
-              tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-500 font-mono">No historical completed sessions recorded on this station yet.</td></tr>';
+              tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400 font-medium">No recorded transactions for this station yet.</td></tr>';
               return;
             }
 
@@ -696,59 +1016,144 @@
               const reason = tx.stopReason || tx.reason || 'Normal';
 
               return `
-                <tr class="hover:bg-slate-800/40 transition">
-                  <td class="p-3 font-bold text-cyan-400">#${tx.transactionId || tx.id}</td>
-                  <td class="p-3">Gun ${tx.connectorId || 1}</td>
-                  <td class="p-3 text-slate-400">${time}</td>
-                  <td class="p-3 font-bold text-white">${kwh}</td>
-                  <td class="p-3 font-bold text-emerald-400">${cost.toLocaleString()} PKR</td>
-                  <td class="p-3 text-slate-400">${reason}</td>
-                  <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Completed</span></td>
+                <tr class="hover:bg-slate-50 transition">
+                  <td class="p-3.5 font-bold text-sky-600 font-mono">#${tx.transactionId || tx.id}</td>
+                  <td class="p-3.5 font-bold text-slate-900">Gun ${tx.connectorId || 1}</td>
+                  <td class="p-3.5 text-slate-500">${time}</td>
+                  <td class="p-3.5 font-bold text-slate-900 font-mono">${kwh}</td>
+                  <td class="p-3.5 font-bold text-emerald-600 font-mono">${cost.toLocaleString()} PKR</td>
+                  <td class="p-3.5 text-slate-500">${reason}</td>
+                  <td class="p-3.5">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      Completed
+                    </span>
+                  </td>
                 </tr>
               `;
             }).join('');
           }
         }
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-rose-400 font-mono">Failed to fetch session history.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-rose-500 font-mono">Failed to load history records.</td></tr>';
       }
     }
 
-    // Remote Control Dispatch
-    async function dispatchRemoteAction(action) {
-      if (!selectedCharger) return;
-      const chargerId = selectedCharger.id;
-      const connectorId = Number(document.getElementById('modal-gun-select').value || 1);
-      const statusBox = document.getElementById('modal-action-status');
+    // Simulator Modal & Presets
+    function openSimulatorModal() {
+      document.getElementById('sim-modal').classList.remove('hidden');
+      document.getElementById('sim-modal').classList.add('flex');
+    }
 
-      statusBox.classList.remove('hidden');
-      statusBox.textContent = `⏳ Sending ${action.toUpperCase()} command to ${chargerId} (Gun ${connectorId})...`;
-      statusBox.className = 'mt-3 text-xs font-mono text-cyan-400 p-2 rounded-lg bg-cyan-950/40 border border-cyan-800/40';
+    function closeSimulatorModal() {
+      document.getElementById('sim-modal').classList.add('hidden');
+      document.getElementById('sim-modal').classList.remove('flex');
+    }
 
-      try {
-        const res = await fetch(`/api/chargers/${chargerId}/${action}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectorId, idTag: 'DISPATCH_NOC_01' }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          statusBox.textContent = `✅ Successfully executed ${action.toUpperCase()} on station ${chargerId}.`;
-          statusBox.className = 'mt-3 text-xs font-mono text-emerald-400 p-2 rounded-lg bg-emerald-950/40 border border-emerald-800/40';
-          setTimeout(fetchChargers, 1000);
-        } else {
-          statusBox.textContent = `⚠️ Action failed: ${data.error || 'Station did not acknowledge'}`;
-          statusBox.className = 'mt-3 text-xs font-mono text-rose-400 p-2 rounded-lg bg-rose-950/40 border border-rose-800/40';
+    function applySimPreset(preset) {
+      if (preset === 'reset_real') {
+        isSimulating = false;
+        simOverrides = null;
+        closeSimulatorModal();
+        fetchChargers(true);
+        return;
+      }
+
+      isSimulating = true;
+      closeSimulatorModal();
+
+      if (preset === 'both_charging') {
+        simOverrides = {
+          status1: 'Charging',
+          status2: 'Charging',
+          powerKw1: 120.0,
+          powerKw2: 85.0,
+          energyKwh1: 24.8,
+          energyKwh2: 17.5,
+          voltage1: 412,
+          voltage2: 398,
+          current1: 291.2,
+          current2: 213.5,
+          soc1: 68,
+          soc2: 44,
+        };
+      } else if (preset === 'gun_a_charging') {
+        simOverrides = {
+          status1: 'Charging',
+          status2: 'Available',
+          powerKw1: 210.0,
+          powerKw2: 0,
+          energyKwh1: 42.1,
+          energyKwh2: 0,
+          voltage1: 425,
+          voltage2: 0,
+          current1: 494.1,
+          current2: 0,
+          soc1: 82,
+          soc2: null,
+        };
+      } else if (preset === 'vehicle_connected') {
+        simOverrides = {
+          status1: 'Preparing',
+          status2: 'Available',
+          powerKw1: 0,
+          powerKw2: 0,
+          energyKwh1: 0,
+          energyKwh2: 0,
+          voltage1: 400,
+          voltage2: 0,
+          current1: 0,
+          current2: 0,
+          soc1: 35,
+          soc2: null,
+        };
+      }
+
+      applySimData();
+    }
+
+    function applySimData() {
+      if (!simOverrides) return;
+      chargers = chargers.map(c => {
+        if (c.id.toLowerCase() === 'charger1') {
+          return {
+            ...c,
+            isOnline: true,
+            connectors: {
+              '1': {
+                id: 1,
+                status: simOverrides.status1,
+                powerKw: simOverrides.powerKw1,
+                energyKwh: simOverrides.energyKwh1,
+                voltage: simOverrides.voltage1,
+                current: simOverrides.current1,
+                soc: simOverrides.soc1,
+              },
+              '2': {
+                id: 2,
+                status: simOverrides.status2,
+                powerKw: simOverrides.powerKw2,
+                energyKwh: simOverrides.energyKwh2,
+                voltage: simOverrides.voltage2,
+                current: simOverrides.current2,
+                soc: simOverrides.soc2,
+              }
+            }
+          };
         }
-      } catch (err) {
-        statusBox.textContent = `❌ Network error: ${err.message}`;
-        statusBox.className = 'mt-3 text-xs font-mono text-rose-400 p-2 rounded-lg bg-rose-950/40 border border-rose-800/40';
-      }
+        return c;
+      });
+      renderChargersGrid();
+      updateCounts();
     }
 
-    // Initialize and start live polling
+    // Auto-polling interval: 2.5 seconds
     fetchChargers();
-    setInterval(fetchChargers, 2000);
+    setInterval(() => {
+      if (!isSimulating) {
+        fetchChargers();
+      }
+    }, 2500);
+
   </script>
 </body>
 </html>
