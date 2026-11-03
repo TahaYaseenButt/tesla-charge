@@ -591,6 +591,26 @@ export default function HomeScreen() {
   const bothCharging = isGunACharging && isGunBCharging;
   const isActivelyChargingNow = isGunACharging || isGunBCharging;
 
+  // Attached car detection (Plugged in or Charging or Active Tx)
+  const isCarAAttached =
+    isGunAConnected ||
+    Number(powerA) > 0 ||
+    status1 === 'Charging' ||
+    status1 === 'Preparing' ||
+    Boolean(txA);
+
+  const isCarBAttached =
+    !is30kW &&
+    (isGunBConnected ||
+      Number(powerB) > 0 ||
+      status2 === 'Charging' ||
+      status2 === 'Preparing' ||
+      Boolean(txB));
+
+  const bothCarsAttached = isCarAAttached && isCarBAttached;
+  const onlyCarAAttached = isCarAAttached && !isCarBAttached;
+  const onlyCarBAttached = isCarBAttached && !isCarAAttached;
+
   const hasSocA = typeof activeSocA === 'number' && activeSocA > 0;
   const hasSocB = typeof activeSocB === 'number' && activeSocB > 0;
   const showDualBattery = !is30kW && (
@@ -649,7 +669,7 @@ export default function HomeScreen() {
 
         {/* Primary Live Status / Price Hero Section */}
         <View style={styles.powerSection}>
-          {isGunACharging && isGunBCharging ? (
+          {bothCarsAttached ? (
             <View style={styles.dualPriceHeroContainer}>
               <View style={styles.dualPriceHeroRow}>
                 {/* Gun A Car Price */}
@@ -690,17 +710,7 @@ export default function HomeScreen() {
                 Combined Speed: {totalPower} kW • Total: {totalCost} PKR
               </Text>
             </View>
-          ) : isGunACharging ? (
-            <View style={styles.priceHeroColumn}>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                <AnimatedMetricValue style={styles.priceHeroVal} value={costA} />
-                <Text style={styles.priceHeroCurr}>{curr}</Text>
-              </View>
-              <Text style={styles.powerSubtext}>
-                Gun A • Speed: {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
-              </Text>
-            </View>
-          ) : isGunBCharging ? (
+          ) : onlyCarBAttached ? (
             <View style={styles.priceHeroColumn}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
                 <AnimatedMetricValue style={styles.priceHeroVal} value={costB} />
@@ -708,6 +718,16 @@ export default function HomeScreen() {
               </View>
               <Text style={styles.powerSubtext}>
                 Gun B • Speed: {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
+              </Text>
+            </View>
+          ) : onlyCarAAttached || is30kW ? (
+            <View style={styles.priceHeroColumn}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                <AnimatedMetricValue style={styles.priceHeroVal} value={costA} />
+                <Text style={styles.priceHeroCurr}>{curr}</Text>
+              </View>
+              <Text style={styles.powerSubtext}>
+                {is30kW ? '' : 'Gun A • '}Speed: {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
               </Text>
             </View>
           ) : hasAnyGunConnected ? (
@@ -745,45 +765,8 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Gun Status Section: Gun A & Gun B Cards (or Single Gun for 30kW) */}
-        {is30kW ? (
-          <View style={styles.singleContainer}>
-            <View style={styles.singleGunHeader}>
-              <View style={[styles.gunDot, { backgroundColor: themeA.color }]} />
-              <Text style={styles.gunTitle}>GUN 1 (30kW)</Text>
-              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
-                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
-              </View>
-              {tel1?.soc != null && tel1?.soc !== '' ? (
-                <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#0F172A' }}>{tel1.soc}% SoC</Text>
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.metricsGrid}>
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>POWER</Text>
-                <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>ENERGY</Text>
-                <Text style={styles.metricValue}>{energyA} kWh</Text>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>CURRENT</Text>
-                <Text style={styles.metricValue}>{currentA} A</Text>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.metricItem}>
-                <Text style={styles.metricLabel}>VOLTAGE</Text>
-                <Text style={styles.metricValue}>{voltageA} V</Text>
-              </View>
-            </View>
-          </View>
-        ) : (
+        {/* Gun Status Section: Gun A & Gun B Cards */}
+        {bothCarsAttached ? (
           <View style={styles.dualContainer}>
             {/* Gun A Card */}
             <View style={styles.gunCard}>
@@ -862,6 +845,113 @@ export default function HomeScreen() {
                 <Text style={styles.gunMetricVal}>{currentB} A</Text>
               </View>
             </View>
+          </View>
+        ) : onlyCarBAttached ? (
+          /* ONLY Car B is attached - Gun A is completely hidden without any 0s or placeholder */
+          <View style={styles.singleContainer}>
+            <View style={styles.singleGunHeader}>
+              <View style={[styles.gunDot, { backgroundColor: themeB.color, width: 8, height: 8 }]} />
+              <Text style={styles.gunTitle}>GUN B (ATTACHED)</Text>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeB.bg, marginLeft: 8 }]}>
+                <Text style={[styles.miniStatusText, { color: themeB.color }]}>{themeB.label}</Text>
+              </View>
+              {hasSocB ? (
+                <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F172A' }}>{activeSocB}% SoC</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>COST</Text>
+                <Text style={[styles.metricValue, { color: '#0284C7' }]}>{Number(costB).toLocaleString()} PKR</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>POWER</Text>
+                <Text style={styles.metricValue}>{Number(powerB).toFixed(1)} kW</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>ENERGY</Text>
+                <Text style={styles.metricValue}>{energyB} kWh</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>CURRENT</Text>
+                <Text style={styles.metricValue}>{currentB} A</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>VOLTAGE</Text>
+                <Text style={styles.metricValue}>{voltageB} V</Text>
+              </View>
+            </View>
+          </View>
+        ) : onlyCarAAttached || is30kW ? (
+          /* ONLY Car A is attached (or 30kW) - Gun B is completely hidden without any 0s or placeholder */
+          <View style={styles.singleContainer}>
+            <View style={styles.singleGunHeader}>
+              <View style={[styles.gunDot, { backgroundColor: themeA.color, width: 8, height: 8 }]} />
+              <Text style={styles.gunTitle}>GUN A {is30kW ? '(30kW)' : '(ATTACHED)'}</Text>
+              <View style={[styles.miniStatusPill, { backgroundColor: themeA.bg, marginLeft: 8 }]}>
+                <Text style={[styles.miniStatusText, { color: themeA.color }]}>{themeA.label}</Text>
+              </View>
+              {hasSocA ? (
+                <View style={{ marginLeft: 'auto', backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#0F172A' }}>{activeSocA}% SoC</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>COST</Text>
+                <Text style={[styles.metricValue, { color: '#0284C7' }]}>{Number(costA).toLocaleString()} PKR</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>POWER</Text>
+                <Text style={styles.metricValue}>{Number(powerA).toFixed(1)} kW</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>ENERGY</Text>
+                <Text style={styles.metricValue}>{energyA} kWh</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>CURRENT</Text>
+                <Text style={styles.metricValue}>{currentA} A</Text>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.metricItem}>
+                <Text style={styles.metricLabel}>VOLTAGE</Text>
+                <Text style={styles.metricValue}>{voltageA} V</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          /* NEITHER car is attached - Clean Standby Ready UI without fake 0s/0V/0A placeholders */
+          <View style={styles.standbyContainer}>
+            <View style={styles.standbyHeaderRow}>
+              <View style={[styles.gunDot, { backgroundColor: '#10B981', width: 7, height: 7 }]} />
+              <Text style={styles.standbyHeaderTitle}>STATION AVAILABLE • READY TO CHARGE</Text>
+            </View>
+            <View style={styles.standbyPillsRow}>
+              <View style={styles.standbyBadge}>
+                <Text style={styles.standbyBadgeText}>GUN A • AVAILABLE</Text>
+              </View>
+              {!is30kW ? (
+                <View style={styles.standbyBadge}>
+                  <Text style={styles.standbyBadgeText}>GUN B • AVAILABLE</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.standbyHint}>
+              Plug charging cable into your electric vehicle to begin
+            </Text>
           </View>
         )}
 
@@ -1137,18 +1227,22 @@ const styles = StyleSheet.create({
   /* Single Gun Connected */
   singleContainer: {
     width: '100%',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    borderRadius: 14,
+    borderRadius: 16,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 2,
   },
   singleGunHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
 
   /* Standard Metrics Grid */
@@ -1157,7 +1251,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#E2E8F0',
   },
   metricItem: {
     flex: 1,
@@ -1166,18 +1260,70 @@ const styles = StyleSheet.create({
   divider: {
     width: 1,
     height: '100%',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#E2E8F0',
   },
   metricLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#94A3B8',
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
     letterSpacing: 0.5,
     marginBottom: 2,
   },
   metricValue: {
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#0F172A',
+    fontVariant: ['tabular-nums'],
+  },
+
+  /* Standby Container when no cars attached */
+  standbyContainer: {
+    width: '100%',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  standbyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  standbyHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  standbyPillsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginVertical: 4,
+  },
+  standbyBadge: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  standbyBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+    letterSpacing: 0.5,
+  },
+  standbyHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 6,
   },
 });
