@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
-import { Platform, AppState } from 'react-native';
+import { Platform, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, onValue } from 'firebase/database';
 import { apiRequest, subscribeToLiveStatus } from '@/config/api';
@@ -44,7 +44,6 @@ async function ensureAndroidChannel() {
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
     });
-    // Also keep legacy channel active
     await Notifications.setNotificationChannelAsync('charging-status', {
       name: 'Charging Status',
       importance: Notifications.AndroidImportance.MAX,
@@ -114,7 +113,6 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
   }
 
   if (token) {
-    // 1. Send to server backend
     try {
       await apiRequest('/api/notifications/register-token', {
         method: 'POST',
@@ -127,7 +125,6 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
       });
     } catch (_e) {}
 
-    // 2. Direct Firestore fallback persistence so server can always reach this device
     try {
       if (userId && userId !== 'admin_local' && userId !== 'anonymous') {
         const userUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/users/${encodeURIComponent(
@@ -169,7 +166,6 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
  * Trigger local notification on device (fires whenever app is in background / screen off)
  */
 export async function scheduleLocalNotification(title: string, body: string, data: any = {}) {
-  // Only suppress when the user actively has the app open in foreground (unless explicitly forced)
   if (AppState.currentState === 'active' && !data?.allowInForeground) {
     return;
   }
@@ -192,11 +188,48 @@ export async function scheduleLocalNotification(title: string, body: string, dat
         priority: Notifications.AndroidNotificationPriority.MAX,
         ...(Platform.OS === 'android' ? { channelId: NOTIF_CHANNEL_ID } : {}),
       },
-      trigger: null, // Immediate presentation
+      trigger: null,
     });
     console.log(`[Notification] Fired: "${title}" - "${body}"`);
   } catch (err: any) {
     console.warn('[Notifications] Error scheduling local notification:', err.message);
+  }
+}
+
+/**
+ * Schedules a native OS alarm notification N seconds in the future.
+ * Handed directly to Android AlarmManager so it fires even after closing the app.
+ */
+export async function scheduleDelayedTestNotification(seconds: number = 5): Promise<boolean> {
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      const req = await Notifications.requestPermissionsAsync();
+      if (req.status !== 'granted') return false;
+    }
+
+    await ensureAndroidChannel();
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '⚡ Tesla Charge Alert Active',
+        body: 'Background & lockscreen notifications are working properly on your device.',
+        data: { forceShow: true, test: true },
+        sound: 'default',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+        ...(Platform.OS === 'android' ? { channelId: NOTIF_CHANNEL_ID } : {}),
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds,
+        repeats: false,
+        ...(Platform.OS === 'android' ? { channelId: NOTIF_CHANNEL_ID } : {}),
+      },
+    });
+    return true;
+  } catch (err: any) {
+    console.warn('[Notifications] Error scheduling delayed test notification:', err.message);
+    return false;
   }
 }
 
@@ -235,6 +268,30 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
     lastEnergyMilestone2: 0,
     lastCompletedTxId: null,
     wasOfflineDuringCharge: false,
+  };
+
+  let latestLiveSummary: {
+    txId1: string | null;
+    txId2: string | null;
+    soc1: number;
+    soc2: number;
+    kwh1: number;
+    kwh2: number;
+    cost1: number;
+    cost2: number;
+    power1: number;
+    power2: number;
+  } = {
+    txId1: null,
+    txId2: null,
+    soc1: 0,
+    soc2: 0,
+    kwh1: 0,
+    kwh2: 0,
+    cost1: 0,
+    cost2: 0,
+    power1: 0,
+    power2: 0,
   };
 
   let isReady = false;
@@ -309,17 +366,32 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
     const cost1 = Math.round(Number(tx1?.cost || 0));
     const cost2 = Math.round(Number(tx2?.cost || 0));
 
-    // First-ever baseline sync: record current state so we don't spam old events on first install
+    const power1 = Number(c1.telemetry?.powerKw || tx1?.currentPowerKw || 0);
+    const power2 = Number(c2.telemetry?.powerKw || tx2?.currentPowerKw || 0);
+
+    latestLiveSummary = {
+      txId1,
+      txId2,
+      soc1,
+      soc2,
+      kwh1,
+      kwh2,
+      cost1,
+      cost2,
+      power1,
+      power2,
+    };
+
     if (!state.initialized) {
       state.initialized = true;
       state.status1 = status1;
       state.status2 = status2;
       state.activeTxId1 = txId1;
       state.activeTxId2 = txId2;
-      state.lastSocMilestone1 = Math.floor(soc1 / 10) * 10;
-      state.lastSocMilestone2 = Math.floor(soc2 / 10) * 10;
-      state.lastEnergyMilestone1 = Math.floor(kwh1 / 10) * 10;
-      state.lastEnergyMilestone2 = Math.floor(kwh2 / 10) * 10;
+      state.lastSocMilestone1 = Math.floor(soc1 / 5) * 5;
+      state.lastSocMilestone2 = Math.floor(soc2 / 5) * 5;
+      state.lastEnergyMilestone1 = Math.floor(kwh1 / 5) * 5;
+      state.lastEnergyMilestone2 = Math.floor(kwh2 / 5) * 5;
       state.lastCompletedTxId = completedId;
       persistState();
       return;
@@ -349,12 +421,12 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
       changed = true;
     }
 
-    // 3. Gun A Charging Start & Milestones
+    // 3. Gun A Charging Start & 5% SoC Milestones
     if (txId1) {
       if (txId1 !== state.activeTxId1) {
         state.activeTxId1 = txId1;
-        state.lastSocMilestone1 = Math.floor(soc1 / 10) * 10;
-        state.lastEnergyMilestone1 = Math.floor(kwh1 / 10) * 10;
+        state.lastSocMilestone1 = Math.floor(soc1 / 5) * 5;
+        state.lastEnergyMilestone1 = Math.floor(kwh1 / 5) * 5;
         const socText = soc1 > 0 ? ` • Battery at ${soc1}%` : '';
         scheduleLocalNotification(
           '⚡ Charging Started (Gun A)',
@@ -362,18 +434,17 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
         );
         changed = true;
       } else {
-        // Check 10% SoC milestones (e.g. 20%, 30% ... 90%, 100%)
-        const currentSocMilestone = Math.floor(soc1 / 10) * 10;
-        if (soc1 > 0 && currentSocMilestone > state.lastSocMilestone1 && currentSocMilestone >= 20) {
+        const currentSocMilestone = Math.floor(soc1 / 5) * 5;
+        if (soc1 > 0 && currentSocMilestone > state.lastSocMilestone1 && currentSocMilestone >= 10) {
           state.lastSocMilestone1 = currentSocMilestone;
           scheduleLocalNotification(
             `🔋 Gun A • ${soc1}% Charged`,
-            `${kwh1.toFixed(2)} kWh delivered • PKR ${cost1.toLocaleString()}`
+            `${power1.toFixed(1)} kW • ${kwh1.toFixed(2)} kWh delivered • PKR ${cost1.toLocaleString()}`
           );
           changed = true;
         } else if (soc1 === 0) {
-          const currentEnergyMilestone = Math.floor(kwh1 / 10) * 10;
-          if (currentEnergyMilestone > state.lastEnergyMilestone1 && currentEnergyMilestone >= 10) {
+          const currentEnergyMilestone = Math.floor(kwh1 / 5) * 5;
+          if (currentEnergyMilestone > state.lastEnergyMilestone1 && currentEnergyMilestone >= 5) {
             state.lastEnergyMilestone1 = currentEnergyMilestone;
             scheduleLocalNotification(
               `⚡ Gun A • ${kwh1.toFixed(1)} kWh Delivered`,
@@ -388,12 +459,12 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
       changed = true;
     }
 
-    // 4. Gun B Charging Start & Milestones
+    // 4. Gun B Charging Start & 5% SoC Milestones
     if (txId2) {
       if (txId2 !== state.activeTxId2) {
         state.activeTxId2 = txId2;
-        state.lastSocMilestone2 = Math.floor(soc2 / 10) * 10;
-        state.lastEnergyMilestone2 = Math.floor(kwh2 / 10) * 10;
+        state.lastSocMilestone2 = Math.floor(soc2 / 5) * 5;
+        state.lastEnergyMilestone2 = Math.floor(kwh2 / 5) * 5;
         const socText = soc2 > 0 ? ` • Battery at ${soc2}%` : '';
         scheduleLocalNotification(
           '⚡ Charging Started (Gun B)',
@@ -401,17 +472,17 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
         );
         changed = true;
       } else {
-        const currentSocMilestone = Math.floor(soc2 / 10) * 10;
-        if (soc2 > 0 && currentSocMilestone > state.lastSocMilestone2 && currentSocMilestone >= 20) {
+        const currentSocMilestone = Math.floor(soc2 / 5) * 5;
+        if (soc2 > 0 && currentSocMilestone > state.lastSocMilestone2 && currentSocMilestone >= 10) {
           state.lastSocMilestone2 = currentSocMilestone;
           scheduleLocalNotification(
             `🔋 Gun B • ${soc2}% Charged`,
-            `${kwh2.toFixed(2)} kWh delivered • PKR ${cost2.toLocaleString()}`
+            `${power2.toFixed(1)} kW • ${kwh2.toFixed(2)} kWh delivered • PKR ${cost2.toLocaleString()}`
           );
           changed = true;
         } else if (soc2 === 0) {
-          const currentEnergyMilestone = Math.floor(kwh2 / 10) * 10;
-          if (currentEnergyMilestone > state.lastEnergyMilestone2 && currentEnergyMilestone >= 10) {
+          const currentEnergyMilestone = Math.floor(kwh2 / 5) * 5;
+          if (currentEnergyMilestone > state.lastEnergyMilestone2 && currentEnergyMilestone >= 5) {
             state.lastEnergyMilestone2 = currentEnergyMilestone;
             scheduleLocalNotification(
               `⚡ Gun B • ${kwh2.toFixed(1)} kWh Delivered`,
@@ -468,7 +539,32 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
     }
   }
 
-  // Channel 1: Real-time Firebase RTDB WebSocket listener (instant push from cloud over persistent socket)
+  // When user closes/minimizes app while a session is actively charging, immediately show status banner
+  let prevAppState: string = AppState.currentState || 'active';
+  const appStateSub = AppState.addEventListener('change', (nextState) => {
+    if (prevAppState === 'active' && (nextState === 'background' || nextState === 'inactive')) {
+      const { txId1, txId2, soc1, soc2, kwh1, kwh2, cost1, cost2, power1, power2 } = latestLiveSummary;
+      if (txId1) {
+        const socBadge = soc1 > 0 ? ` • ${soc1}% SoC` : '';
+        scheduleLocalNotification(
+          `⚡ Gun A Charging${socBadge}`,
+          `${power1.toFixed(1)} kW • ${kwh1.toFixed(2)} kWh delivered • PKR ${cost1.toLocaleString()}`,
+          { allowInForeground: true }
+        );
+      }
+      if (txId2) {
+        const socBadge = soc2 > 0 ? ` • ${soc2}% SoC` : '';
+        scheduleLocalNotification(
+          `⚡ Gun B Charging${socBadge}`,
+          `${power2.toFixed(1)} kW • ${kwh2.toFixed(2)} kWh delivered • PKR ${cost2.toLocaleString()}`,
+          { allowInForeground: true }
+        );
+      }
+    }
+    prevAppState = nextState;
+  });
+
+  // Channel 1: Real-time Firebase RTDB WebSocket listener
   let unsubRtdb: (() => void) | null = null;
   try {
     const chargerRef = ref(rtdb, livePath(cleanId));
@@ -489,6 +585,7 @@ export function startBackgroundNotificationMonitor(chargerId: string = 'charger1
   });
 
   return () => {
+    appStateSub.remove();
     if (unsubRtdb) unsubRtdb();
     unsubServer();
   };

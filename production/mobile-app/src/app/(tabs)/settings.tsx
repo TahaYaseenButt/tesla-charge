@@ -17,6 +17,7 @@ import * as Updates from 'expo-updates';
 import { apiRequest } from '@/config/api';
 import { useAuth } from '@/config/auth';
 import { SwipeableTabScreen } from '@/components/SwipeableTabScreen';
+import { scheduleDelayedTestNotification } from '@/services/notifications';
 import {
   isNfcSupported,
   isNfcEnabled,
@@ -69,7 +70,8 @@ export default function SettingsScreen() {
   const [manualId, setManualId] = useState<string>('');
 
   // OTA Updates state
-  const appVersion = Constants.expoConfig?.version || '1.0.1';
+  const appVersion = '1.0.2';
+  const otaShortId = Updates.updateId ? Updates.updateId.slice(0, 6) : null;
   const isOTAApplied = Boolean(Updates.isEmbeddedLaunch === false || Updates.updateId);
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [updateStatusText, setUpdateStatusText] = useState<string | null>(null);
@@ -503,7 +505,9 @@ export default function SettingsScreen() {
           <Text style={styles.infoLabel}>Installed Version</Text>
           <View style={styles.badgeRow}>
             <View style={styles.versionBadge}>
-              <Text style={styles.versionBadgeText}>v{appVersion}</Text>
+              <Text style={styles.versionBadgeText}>
+                v{appVersion}{otaShortId ? ` (${otaShortId})` : ''}
+              </Text>
             </View>
             {isOTAApplied && (
               <View style={styles.otaActiveBadge}>
@@ -543,6 +547,29 @@ export default function SettingsScreen() {
               ) : (
                 <Text style={styles.updateBtnText}>Search for Updates</Text>
               )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.updateBtn, { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' }]}
+              onPress={async () => {
+                const ok = await scheduleDelayedTestNotification(5);
+                if (ok) {
+                  Alert.alert(
+                    'Test Alert Scheduled (5s)',
+                    'Now close/minimize the app or lock your phone screen immediately.\n\nA notification will arrive in 5 seconds.'
+                  );
+                } else {
+                  Alert.alert(
+                    'Notification Permission Needed',
+                    'Please allow Notifications for Tesla Charge in your Android Settings.'
+                  );
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.updateBtnText, { color: '#0284C7' }]}>
+                🔔 Test Notification (Close App in 5s)
+              </Text>
             </TouchableOpacity>
 
             {Updates.isEnabled && (
