@@ -354,64 +354,33 @@ export default function HomeScreen() {
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
-  // Measure age of the latest packet from the charger (heartbeat or connector telemetry)
-  const getFreshnessAgeMs = () => {
-    const nowMs = Date.now() + serverTimeOffset;
-    const candidates: number[] = [];
-    const hb = chargerData?.lastHeartbeat || chargerData?.last_heartbeat;
-    if (hb) {
-      const ms = new Date(hb).getTime();
-      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
-    }
-    const t1 = connector1Data?.telemetry?.updatedAt || connector1Data?.updatedAt;
-    if (t1) {
-      const ms = new Date(t1).getTime();
-      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
-    }
-    const t2 = connector2Data?.telemetry?.updatedAt || connector2Data?.updatedAt;
-    if (t2) {
-      const ms = new Date(t2).getTime();
-      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
-    }
-    const txTs = activeTxData?.lastTelemetryAt || activeTxData?.updatedAt;
-    if (txTs) {
-      const ms = new Date(txTs).getTime();
-      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
-    }
-    return candidates.length > 0 ? Math.min(...candidates) : Infinity;
-  };
+  const offlineSinceRef = useRef<number | null>(null);
 
-  const telemetryAgeMs = getFreshnessAgeMs();
   const isChargerExplicitlyOffline =
     isWebSocketConnected === false ||
     String(chargerData?.status || '').toLowerCase() === 'offline';
 
-  // Scenario 2: Electricity went off during charging and did not return within 3 minutes (180s)
-  const isPowerLossTimeout = isChargerExplicitlyOffline && telemetryAgeMs >= 180000;
+  if (isChargerExplicitlyOffline) {
+    if (!offlineSinceRef.current) offlineSinceRef.current = Date.now();
+  } else {
+    offlineSinceRef.current = null;
+  }
 
-  // Scenario 1: Inverter/router internet dropped temporarily during charging (< 3 mins offline or > 40s without fresh data)
+  // Scenario 2: Electricity went off during charging and stayed offline for > 3 minutes (180s)
+  const isPowerLossTimeout =
+    Boolean(isChargerExplicitlyOffline && offlineSinceRef.current && (Date.now() - offlineSinceRef.current >= 180000));
+
+  // Scenario 1: Brief internet drop while charging (under 3 minutes)
   const isDataStreamInterrupted =
     !isSimulating &&
-    !isPowerLossTimeout &&
-    (isChargerExplicitlyOffline || (telemetryAgeMs >= 40000 && telemetryAgeMs < Infinity));
+    isChargerExplicitlyOffline &&
+    !isPowerLossTimeout;
 
   // Helper to determine if charger is actively alive and connected
   const isChargerStatusAlive = () => {
     const s = String(chargerData?.status || '').toLowerCase();
     return s === 'online' || s === 'available' || s === 'charging' || s === 'preparing' || s === 'suspendedev' || s === 'suspendedevse';
   };
-
-  const isChargerHeartbeatFresh = () => {
-    const hb = chargerData?.lastHeartbeat || chargerData?.last_heartbeat;
-    if (!hb) return false;
-    const diffMs = Math.abs(Date.now() + serverTimeOffset - new Date(hb).getTime());
-    return diffMs < 180000; // within 3 minutes
-  };
-
-  const hasLiveConnectorActivity =
-    !isChargerExplicitlyOffline &&
-    ((connector1Data && connector1Data.status && connector1Data.status !== 'Unavailable') ||
-      (connector2Data && connector2Data.status && connector2Data.status !== 'Unavailable'));
 
   const isAnyGunActivelyCharging =
     !isPowerLossTimeout &&
@@ -425,9 +394,7 @@ export default function HomeScreen() {
       !isChargerExplicitlyOffline &&
       (isWebSocketConnected === true ||
         isChargerStatusAlive() ||
-        Boolean(chargerData?.isOnline) ||
-        hasLiveConnectorActivity ||
-        isChargerHeartbeatFresh()))
+        Boolean(chargerData?.isOnline)))
   );
 
   const status1 = isOnline ? rawStatus1 : 'Unavailable';
@@ -499,9 +466,9 @@ export default function HomeScreen() {
 
   // Telemetry for Gun A (Connector 1) - directly from live OCPP server or simulator
   const tel1 = connector1Data?.telemetry;
-  const powerA = isSimulating ? simGunA.powerKw : (isDataStreamInterrupted ? 0 : Number(tel1?.powerKw || 0));
-  const voltageA = isSimulating ? simGunA.voltage : (isDataStreamInterrupted ? 0 : (tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0)));
-  const currentA = isSimulating ? simGunA.current : (isDataStreamInterrupted ? 0 : Number(tel1?.currentL1 || 0));
+  const powerA = isSimulating ? simGunA.powerKw : Number(tel1?.powerKw || 0);
+  const voltageA = isSimulating ? simGunA.voltage : tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0);
+  const currentA = isSimulating ? simGunA.current : Number(tel1?.currentL1 || 0);
   const socA = isSimulating ? (simGunA.soc > 0 ? simGunA.soc : null) : (typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null);
 
   // Helpers to safely resolve Gun A / Gun B active transactions
@@ -528,9 +495,9 @@ export default function HomeScreen() {
 
   // Telemetry for Gun B (Connector 2) - directly from live OCPP server or simulator
   const tel2 = isOnline ? connector2Data?.telemetry : null;
-  const powerB = isOnline && !is30kW ? (isSimulating ? simGunB.powerKw : (isDataStreamInterrupted ? 0 : Number(tel2?.powerKw || 0))) : 0;
-  const voltageB = isOnline && !is30kW ? (isSimulating ? simGunB.voltage : (isDataStreamInterrupted ? 0 : (tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0)))) : 0;
-  const currentB = isOnline && !is30kW ? (isSimulating ? simGunB.current : (isDataStreamInterrupted ? 0 : Number(tel2?.currentL1 || 0))) : 0;
+  const powerB = isOnline && !is30kW ? (isSimulating ? simGunB.powerKw : Number(tel2?.powerKw || 0)) : 0;
+  const voltageB = isOnline && !is30kW ? (isSimulating ? simGunB.voltage : tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0)) : 0;
+  const currentB = isOnline && !is30kW ? (isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0)) : 0;
   const socB = isOnline && !is30kW ? (isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null)) : null;
 
   // Session energy delivered for Gun B - anchored to authoritative server values
