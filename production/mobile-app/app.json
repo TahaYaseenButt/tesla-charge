@@ -15,11 +15,12 @@
     "scheme": "teslacharge",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.aliyan.teslacharge"
+      "bundleIdentifier": "com.teslacharge.app",
+      "supportsTablet": true
     },
     "android": {
       "package": "com.teslacharge.app",
+      "googleServicesFile": "./google-services.json",
       "navigationBar": {
         "backgroundColor": "#FFFFFF",
         "barStyle": "dark-content"
@@ -34,7 +35,11 @@
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.NFC"
+        "android.permission.NFC",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK"
       ]
     },
     "web": {

@@ -8,7 +8,10 @@ import { StatusBar } from 'expo-status-bar';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/config/auth';
 import { SimulatorProvider } from '@/config/simulator';
-import { registerForPushNotificationsAsync } from '@/services/notifications';
+import {
+  registerForPushNotificationsAsync,
+  startBackgroundNotificationMonitor,
+} from '@/services/notifications';
 
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
@@ -42,7 +45,12 @@ function NotificationRegistration() {
   const { user, chargerId } = useAuth();
 
   React.useEffect(() => {
-    registerForPushNotificationsAsync(user?.uid, chargerId || 'charger1');
+    const targetCharger = chargerId || 'charger1';
+    registerForPushNotificationsAsync(user?.uid, targetCharger);
+    const stopMonitor = startBackgroundNotificationMonitor(targetCharger);
+    return () => {
+      stopMonitor();
+    };
   }, [user?.uid, chargerId]);
 
   React.useEffect(() => {
