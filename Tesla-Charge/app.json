@@ -13,12 +13,17 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "teslacharge",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.teslacharge.app",
+      "supportsTablet": true
     },
     "android": {
       "package": "com.teslacharge.app",
+      "navigationBar": {
+        "backgroundColor": "#FFFFFF",
+        "barStyle": "dark-content"
+      },
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

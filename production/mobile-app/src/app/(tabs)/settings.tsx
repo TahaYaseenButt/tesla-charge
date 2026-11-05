@@ -335,6 +335,7 @@ export default function SettingsScreen() {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
+        nestedScrollEnabled={true}
       keyboardShouldPersistTaps="handled"
     >
       {/* Header */}

@@ -111,7 +111,7 @@ export const actionHandlers = {
 
     return {
       status: "Accepted",
-      currentTime: getKarachiIso(),
+      currentTime: new Date().toISOString(),
       interval: parseInt(process.env.HEARTBEAT_INTERVAL || "30", 10),
     };
   },
@@ -124,7 +124,7 @@ export const actionHandlers = {
       console.warn(`[LocalSync] saveChargerHeartbeat warning: ${err.message}`)
     );
     return {
-      currentTime: getKarachiIso(),
+      currentTime: new Date().toISOString(),
     };
   },
 

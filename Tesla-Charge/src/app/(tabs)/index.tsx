@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { router, Redirect } from 'expo-router';
 import { subscribeToLiveStatus } from '@/config/api';
-import { scheduleLocalNotification } from '@/services/notifications';
 import { useAuth } from '@/config/auth';
 import {
   getLocalChargerData,
@@ -131,6 +130,8 @@ export default function HomeScreen() {
   const prevStatus1Ref = useRef<string | null>(null);
   const prevStatus2Ref = useRef<string | null>(null);
   const prevActiveTxIdRef = useRef<string | null>(null);
+  const isFirstSyncDoneRef = useRef<boolean>(false);
+  const lastNotifiedProgressRef = useRef<{ [txId: string]: number }>({});
   const mountTimeRef = useRef(Date.now());
   const initialResolvedRef = useRef(false);
 
@@ -181,7 +182,7 @@ export default function HomeScreen() {
       if (isMounted && d) setConnector2Data((prev: any) => prev || d);
     });
     getLocalActiveTx(CHARGER_ID).then((tx) => {
-      if (isMounted && tx && tx.status === 'Charging') setActiveTxData((prev: any) => prev || tx);
+      // Ephemeral active transactions must only be confirmed via live server stream to prevent ghost charging state on reload
     });
     getLocalTransactions(CHARGER_ID, user?.uid).then((list) => {
       if (isMounted && list && list.length > 0) {
@@ -244,15 +245,7 @@ export default function HomeScreen() {
           const oldStatus1 = prevStatus1Ref.current;
           prevStatus1Ref.current = c1.status;
 
-          if (oldStatus1 !== null && oldStatus1 !== c1.status) {
-            if (c1.status === 'Preparing') {
-              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun A.');
-            } else if (c1.status === 'Charging') {
-              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun A.');
-            } else if ((oldStatus1 === 'Charging' || oldStatus1 === 'Preparing') && c1.status === 'Available') {
-              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun A.');
-            }
-          }
+          // Status tracking (notifications handled remotely by push server when app is closed)
         }
 
         if (c2) {
@@ -264,18 +257,7 @@ export default function HomeScreen() {
             setActiveTx2Data(null);
           }
 
-          const oldStatus2 = prevStatus2Ref.current;
           prevStatus2Ref.current = c2.status;
-
-          if (oldStatus2 !== null && oldStatus2 !== c2.status) {
-            if (c2.status === 'Preparing') {
-              scheduleLocalNotification('🔌 Vehicle Connected', 'A vehicle was plugged into Gun B.');
-            } else if (c2.status === 'Charging') {
-              scheduleLocalNotification('⚡ Charging Started', 'Vehicle is charging on Gun B.');
-            } else if ((oldStatus2 === 'Charging' || oldStatus2 === 'Preparing') && c2.status === 'Available') {
-              scheduleLocalNotification('✅ Charging Completed', 'Vehicle finished charging on Gun B.');
-            }
-          }
         }
 
         const active = data.activeTransaction || live.activeTransaction || c1?.activeTx || c2?.activeTx;
@@ -288,19 +270,28 @@ export default function HomeScreen() {
           setActiveTxData(primaryTx);
           saveLocalActiveTx(CHARGER_ID, primaryTx);
 
-          // Notify when a new active transaction ID appears
           const txIdStr = String(primaryTx.transactionId || primaryTx.transaction_id || primaryTx.id || '');
-          if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
+          const deliveredKwh = Number(primaryTx.energyDeliveredKwh || (primaryTx.energyDeliveredWh ? primaryTx.energyDeliveredWh / 1000 : 0)) || 0;
+
+          if (!isFirstSyncDoneRef.current) {
+            isFirstSyncDoneRef.current = true;
             prevActiveTxIdRef.current = txIdStr;
-            const gunLabel = Number(primaryTx.connectorId || primaryTx.connector_id) === 2 ? 'Gun B' : 'Gun A';
-            scheduleLocalNotification('⚡ Charging Started', `Vehicle started charging on ${gunLabel} (Session #${txIdStr}).`);
+            lastNotifiedProgressRef.current[txIdStr] = Math.floor(deliveredKwh / 10) * 10;
+          } else {
+            if (txIdStr && txIdStr !== prevActiveTxIdRef.current) {
+              prevActiveTxIdRef.current = txIdStr;
+              lastNotifiedProgressRef.current[txIdStr] = Math.floor(deliveredKwh / 10) * 10;
+            }
           }
         } else {
+          isFirstSyncDoneRef.current = true;
           if (prevActiveTxIdRef.current) {
+            const finishedTxId = prevActiveTxIdRef.current;
             prevActiveTxIdRef.current = null;
-            scheduleLocalNotification('✅ Charging Completed', 'Charging session has finished.');
+            delete lastNotifiedProgressRef.current[finishedTxId];
           }
           setActiveTxData(null);
+          saveLocalActiveTx(CHARGER_ID, null);
         }
 
         const completed = data.lastCompletedTx || live.lastCompletedTx;
@@ -308,7 +299,7 @@ export default function HomeScreen() {
           const done = completed;
           const doneId = String(done.transaction_id || done.transactionId || done.id || '');
           if (doneId !== '275384' && doneId !== '72089') {
-            const formatted = {
+            const formatted: any = {
               id: doneId,
               transactionId: doneId,
               connectorId: done.connector_id || done.connectorId || 1,
@@ -318,7 +309,12 @@ export default function HomeScreen() {
               stopTime: done.stop_time || done.stopTime,
               status: done.status || 'Completed',
               idTag: done.id_tag || done.idTag || '',
+              socStart: typeof done.socStart === 'number' ? done.socStart : (typeof done.soc_start === 'number' ? done.soc_start : null),
+              socStop: typeof done.socStop === 'number' ? done.socStop : (typeof done.soc_stop === 'number' ? done.soc_stop : null),
+              socGained: typeof done.socGained === 'number' ? done.socGained : null,
             };
+            if (done.createdAt) formatted.createdAt = done.createdAt;
+            if (done.updatedAt) formatted.updatedAt = done.updatedAt;
             setLastCompletedTx(formatted);
             mergeLocalTransaction(CHARGER_ID, formatted, user?.uid);
           }
@@ -358,6 +354,47 @@ export default function HomeScreen() {
   const isGunBPlugged = !is30kW && CONNECTED_STATUS_LIST.includes(rawStatus2);
   const isActivelyEngaged = isGunAPlugged || isGunBPlugged;
 
+  // Measure age of the latest packet from the charger (heartbeat or connector telemetry)
+  const getFreshnessAgeMs = () => {
+    const nowMs = Date.now() + serverTimeOffset;
+    const candidates: number[] = [];
+    const hb = chargerData?.lastHeartbeat || chargerData?.last_heartbeat;
+    if (hb) {
+      const ms = new Date(hb).getTime();
+      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
+    }
+    const t1 = connector1Data?.telemetry?.updatedAt || connector1Data?.updatedAt;
+    if (t1) {
+      const ms = new Date(t1).getTime();
+      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
+    }
+    const t2 = connector2Data?.telemetry?.updatedAt || connector2Data?.updatedAt;
+    if (t2) {
+      const ms = new Date(t2).getTime();
+      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
+    }
+    const txTs = activeTxData?.lastTelemetryAt || activeTxData?.updatedAt;
+    if (txTs) {
+      const ms = new Date(txTs).getTime();
+      if (!isNaN(ms)) candidates.push(Math.max(0, nowMs - ms));
+    }
+    return candidates.length > 0 ? Math.min(...candidates) : Infinity;
+  };
+
+  const telemetryAgeMs = getFreshnessAgeMs();
+  const isChargerExplicitlyOffline =
+    isWebSocketConnected === false ||
+    String(chargerData?.status || '').toLowerCase() === 'offline';
+
+  // Scenario 2: Electricity went off during charging and did not return within 3 minutes (180s)
+  const isPowerLossTimeout = isChargerExplicitlyOffline && telemetryAgeMs >= 180000;
+
+  // Scenario 1: Inverter/router internet dropped temporarily during charging (< 3 mins offline or > 40s without fresh data)
+  const isDataStreamInterrupted =
+    !isSimulating &&
+    !isPowerLossTimeout &&
+    (isChargerExplicitlyOffline || (telemetryAgeMs >= 40000 && telemetryAgeMs < Infinity));
+
   // Helper to determine if charger is actively alive and connected
   const isChargerStatusAlive = () => {
     const s = String(chargerData?.status || '').toLowerCase();
@@ -367,22 +404,25 @@ export default function HomeScreen() {
   const isChargerHeartbeatFresh = () => {
     const hb = chargerData?.lastHeartbeat || chargerData?.last_heartbeat;
     if (!hb) return false;
-    const diffMs = Math.abs(Date.now() - new Date(hb).getTime());
+    const diffMs = Math.abs(Date.now() + serverTimeOffset - new Date(hb).getTime());
     return diffMs < 180000; // within 3 minutes
   };
 
   const hasLiveConnectorActivity =
-    (connector1Data && connector1Data.status && connector1Data.status !== 'Unavailable') ||
-    (connector2Data && connector2Data.status && connector2Data.status !== 'Unavailable');
+    !isChargerExplicitlyOffline &&
+    ((connector1Data && connector1Data.status && connector1Data.status !== 'Unavailable') ||
+      (connector2Data && connector2Data.status && connector2Data.status !== 'Unavailable'));
 
   const isAnyGunActivelyCharging =
-    (connector1Data?.status === 'Charging') ||
-    (connector2Data?.status === 'Charging');
+    !isPowerLossTimeout &&
+    ((connector1Data?.status === 'Charging') ||
+      (connector2Data?.status === 'Charging'));
 
   // Track true server connectivity and charger online status
   const isOnline = isSimulating || (
     isAnyGunActivelyCharging ||
     (isServerReachable !== false &&
+      !isChargerExplicitlyOffline &&
       (isWebSocketConnected === true ||
         isChargerStatusAlive() ||
         Boolean(chargerData?.isOnline) ||
@@ -430,8 +470,14 @@ export default function HomeScreen() {
     heroImageSource || (is30kW ? STATE_IMAGES_30KW.idle : STATE_IMAGES.idle);
 
   // Fix Issue 6: Use safe getStatusConfig so custom/unknown statuses never crash the app
-  const themeA = getStatusConfig(status1);
-  const themeB = getStatusConfig(status2);
+  const baseThemeA = getStatusConfig(status1);
+  const baseThemeB = getStatusConfig(status2);
+  const themeA = (isDataStreamInterrupted && status1 === 'Charging')
+    ? { ...baseThemeA, label: 'Reconnecting...', color: '#D97706', bg: '#FEF3C7' }
+    : baseThemeA;
+  const themeB = (isDataStreamInterrupted && status2 === 'Charging')
+    ? { ...baseThemeB, label: 'Reconnecting...', color: '#D97706', bg: '#FEF3C7' }
+    : baseThemeB;
 
   // Primary state config for top header indication
   const activeStatus = !isOnline
@@ -453,9 +499,9 @@ export default function HomeScreen() {
 
   // Telemetry for Gun A (Connector 1) - directly from live OCPP server or simulator
   const tel1 = connector1Data?.telemetry;
-  const powerA = isSimulating ? simGunA.powerKw : Number(tel1?.powerKw || 0);
-  const voltageA = isSimulating ? simGunA.voltage : tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0);
-  const currentA = isSimulating ? simGunA.current : Number(tel1?.currentL1 || 0);
+  const powerA = isSimulating ? simGunA.powerKw : (isDataStreamInterrupted ? 0 : Number(tel1?.powerKw || 0));
+  const voltageA = isSimulating ? simGunA.voltage : (isDataStreamInterrupted ? 0 : (tel1?.voltage ? Math.round(Number(tel1.voltage)) : (tel1?.voltageL1 ? Math.round(Number(tel1.voltageL1)) : 0)));
+  const currentA = isSimulating ? simGunA.current : (isDataStreamInterrupted ? 0 : Number(tel1?.currentL1 || 0));
   const socA = isSimulating ? (simGunA.soc > 0 ? simGunA.soc : null) : (typeof tel1?.soc === 'number' && tel1.soc > 0 ? tel1.soc : null);
 
   // Helpers to safely resolve Gun A / Gun B active transactions
@@ -482,9 +528,9 @@ export default function HomeScreen() {
 
   // Telemetry for Gun B (Connector 2) - directly from live OCPP server or simulator
   const tel2 = isOnline ? connector2Data?.telemetry : null;
-  const powerB = isOnline && !is30kW ? (isSimulating ? simGunB.powerKw : Number(tel2?.powerKw || 0)) : 0;
-  const voltageB = isOnline && !is30kW ? (isSimulating ? simGunB.voltage : tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0)) : 0;
-  const currentB = isOnline && !is30kW ? (isSimulating ? simGunB.current : Number(tel2?.currentL1 || 0)) : 0;
+  const powerB = isOnline && !is30kW ? (isSimulating ? simGunB.powerKw : (isDataStreamInterrupted ? 0 : Number(tel2?.powerKw || 0))) : 0;
+  const voltageB = isOnline && !is30kW ? (isSimulating ? simGunB.voltage : (isDataStreamInterrupted ? 0 : (tel2?.voltage ? Math.round(Number(tel2.voltage)) : (tel2?.voltageL1 ? Math.round(Number(tel2.voltageL1)) : 0)))) : 0;
+  const currentB = isOnline && !is30kW ? (isSimulating ? simGunB.current : (isDataStreamInterrupted ? 0 : Number(tel2?.currentL1 || 0))) : 0;
   const socB = isOnline && !is30kW ? (isSimulating ? (simGunB.soc > 0 ? simGunB.soc : null) : (typeof tel2?.soc === 'number' && tel2.soc > 0 ? tel2.soc : null)) : null;
 
   // Session energy delivered for Gun B - anchored to authoritative server values
@@ -509,34 +555,39 @@ export default function HomeScreen() {
   const totalPower = is30kW ? Number(powerA).toFixed(1) : (powerA + powerB).toFixed(1);
 
   // Real-time Cost Calculation using Tariff Rate (anchored to server-provided session cost)
-  const rate = chargerData?.tariffRate && Number(chargerData.tariffRate) > 0
+  const rateA = Number(txA?.tariffRate) > 0
+    ? Number(txA.tariffRate)
+    : chargerData?.tariffRate && Number(chargerData.tariffRate) > 0
     ? Number(chargerData.tariffRate)
     : tariffRate && tariffRate > 0
     ? tariffRate
     : 125;
+
+  const rateB = Number(txB?.tariffRate) > 0
+    ? Number(txB.tariffRate)
+    : chargerData?.tariffRate && Number(chargerData.tariffRate) > 0
+    ? Number(chargerData.tariffRate)
+    : tariffRate && tariffRate > 0
+    ? tariffRate
+    : 125;
+
   const curr = 'PKR';
-  const calcCostA = Math.round(sessionEnergyA * rate);
-  const baseCostA = Math.max(serverCostA, calcCostA);
+  const calcCostA = Math.round(sessionEnergyA * rateA);
   const costA = isSimulating
     ? Math.round(simGunA.cost).toString()
-    : (baseCostA > 0
-        ? Math.round(baseCostA + (liveAccumulatedA * rate)).toString()
-        : calcCostA.toString());
+    : Math.max(serverCostA, calcCostA).toString();
 
-  const calcCostB = Math.round(sessionEnergyB * rate);
-  const baseCostB = Math.max(serverCostB, calcCostB);
+  const calcCostB = Math.round(sessionEnergyB * rateB);
   const costB = isSimulating
     ? Math.round(simGunB.cost).toString()
-    : (baseCostB > 0
-        ? Math.round(baseCostB + (liveAccumulatedB * rate)).toString()
-        : calcCostB.toString());
+    : Math.max(serverCostB, calcCostB).toString();
 
   const totalEnergy = is30kW
     ? energyA
     : (sessionEnergyA + sessionEnergyB).toFixed(2);
   const totalCost = isSimulating
     ? Math.round(simGunA.cost + simGunB.cost).toLocaleString()
-    : Math.round(Number(totalEnergy) * rate).toLocaleString();
+    : Math.round(Number(costA) + (is30kW ? 0 : Number(costB))).toLocaleString();
   const hasAnyGunConnected = is30kW ? isGunAConnected : isGunAConnected || isGunBConnected;
 
   // Last completed session metrics for standby presentation
@@ -589,6 +640,44 @@ export default function HomeScreen() {
   useEffect(() => {
     setLiveAccumulatedB(0);
   }, [tel2?.energyWh, tel2?.energyKwh]);
+
+  // Scenario 2: When power-loss timeout (> 3 mins offline during charging) triggers,
+  // preserve the interrupted session into local history as Completed and clear stuck activeTx state
+  useEffect(() => {
+    if (!isPowerLossTimeout) return;
+    const candidate = activeTxData || activeTx1Data || activeTx2Data;
+    if (candidate && (candidate.transactionId || candidate.id)) {
+      const doneId = String(candidate.transactionId || candidate.id).trim();
+      const kwh = Number(candidate.energyDeliveredKwh) || (Number(candidate.energyDeliveredWh) ? Number(candidate.energyDeliveredWh) / 1000 : 0);
+      if (doneId && kwh > 0) {
+        const stopIso = candidate.lastTelemetryAt || candidate.updatedAt || new Date().toISOString();
+        const socStartVal = typeof candidate.socStart === 'number' && candidate.socStart > 0 ? candidate.socStart : null;
+        const socStopVal = typeof candidate.socCurrent === 'number' && candidate.socCurrent > 0
+          ? candidate.socCurrent
+          : (typeof candidate.soc === 'number' && candidate.soc > 0 ? candidate.soc : null);
+        const finalized: any = {
+          ...candidate,
+          id: doneId,
+          transactionId: candidate.transactionId || doneId,
+          status: 'Completed',
+          reason: 'PowerLoss',
+          energyDeliveredKwh: kwh,
+          cost: Number(candidate.cost) || Math.round(kwh * 125),
+          socStart: socStartVal,
+          socStop: socStopVal,
+          socGained: socStartVal && socStopVal && socStopVal >= socStartVal ? Number((socStopVal - socStartVal).toFixed(1)) : null,
+          stopTime: candidate.stopTime || stopIso,
+          updatedAt: stopIso,
+        };
+        setLastCompletedTx(finalized);
+        mergeLocalTransaction(CHARGER_ID, finalized, user?.uid);
+      }
+      setActiveTxData(null);
+      setActiveTx1Data(null);
+      setActiveTx2Data(null);
+      saveLocalActiveTx(CHARGER_ID, null);
+    }
+  }, [isPowerLossTimeout, activeTxData, activeTx1Data, activeTx2Data, CHARGER_ID, user?.uid]);
 
   // Active Battery State of Charge (SoC %) - safely converted to number from hardware/server
   const rawSocA = isSimulating
@@ -755,34 +844,62 @@ export default function HomeScreen() {
                       GUN A • {getDualStatusLabel(themeA.label)}
                     </Text>
                   </View>
-                  <View style={styles.dualPriceRow}>
-                    <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costA).toLocaleString()} />
-                    <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
-                  </View>
-                  <View style={styles.dualSubRow}>
-                    <Text style={styles.dualPriceHeroSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-                      {Number(powerA).toFixed(1)} kW {hasSocA ? `• ${activeSocA}% SoC` : ''}
-                    </Text>
-                  </View>
-                  <View style={styles.dualTelemetryStrip}>
-                    <View style={styles.dualTelemetryItem}>
-                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{energyA}</Text>
-                      <Text style={styles.dualTelemetryUnit}>kWh</Text>
+                    {/* Co-Heroes: Price & Battery SoC */}
+                    <View style={styles.dualHeroRow}>
+                      <View style={styles.dualHeroCol}>
+                        <Text style={styles.dualHeroLabel}>TOTAL</Text>
+                        <View style={styles.dualPriceRow}>
+                          <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costA).toLocaleString()} />
+                          <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.dualHeroCol}>
+                        <Text style={styles.dualHeroLabel}>BATTERY</Text>
+                        <View style={styles.dualPriceRow}>
+                          <Text style={styles.dualSocHeroVal}>{hasSocA ? `${activeSocA}%` : '--'}</Text>
+                        </View>
+                      </View>
                     </View>
-                    <View style={styles.dualTelemetryDivider} />
-                    <View style={styles.dualTelemetryItem}>
-                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>
-                        {Number(currentA).toFixed(Number(currentA) >= 100 ? 0 : 1)}
-                      </Text>
-                      <Text style={styles.dualTelemetryUnit}>A</Text>
-                    </View>
-                    <View style={styles.dualTelemetryDivider} />
-                    <View style={styles.dualTelemetryItem}>
-                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{voltageA}</Text>
-                      <Text style={styles.dualTelemetryUnit}>V</Text>
+
+                    {/* Battery Fill Track */}
+                    {hasSocA ? (
+                      <View style={styles.dualBatteryBar}>
+                        <View
+                          style={[
+                            styles.dualBatteryFill,
+                            {
+                              width: `${Math.min(100, Math.max(0, activeSocA || 0))}%`,
+                              backgroundColor: (activeSocA || 0) >= 80 ? '#10B981' : (activeSocA || 0) >= 20 ? '#0284C7' : '#F59E0B',
+                            },
+                          ]}
+                        />
+                      </View>
+                    ) : null}
+
+                    <View style={styles.dualTelemetryStrip}>
+                      <View style={styles.dualTelemetryItem}>
+                        <Text style={styles.dualTelemetryVal} numberOfLines={1}>{Number(powerA).toFixed(1)}</Text>
+                        <Text style={styles.dualTelemetryUnit}>kW</Text>
+                      </View>
+                      <View style={styles.dualTelemetryDivider} />
+                      <View style={styles.dualTelemetryItem}>
+                        <Text style={styles.dualTelemetryVal} numberOfLines={1}>{energyA}</Text>
+                        <Text style={styles.dualTelemetryUnit}>kWh</Text>
+                      </View>
+                      <View style={styles.dualTelemetryDivider} />
+                      <View style={styles.dualTelemetryItem}>
+                        <Text style={styles.dualTelemetryVal} numberOfLines={1}>
+                          {Number(currentA).toFixed(Number(currentA) >= 100 ? 0 : 1)}
+                        </Text>
+                        <Text style={styles.dualTelemetryUnit}>A</Text>
+                      </View>
+                      <View style={styles.dualTelemetryDivider} />
+                      <View style={styles.dualTelemetryItem}>
+                        <Text style={styles.dualTelemetryVal} numberOfLines={1}>{voltageA}</Text>
+                        <Text style={styles.dualTelemetryUnit}>V</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
 
                 {/* Elegant subtle vertical divider */}
                 <View style={styles.dualDivider} />
@@ -800,16 +917,44 @@ export default function HomeScreen() {
                       GUN B • {getDualStatusLabel(themeB.label)}
                     </Text>
                   </View>
-                  <View style={styles.dualPriceRow}>
-                    <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costB).toLocaleString()} />
-                    <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
+                  {/* Co-Heroes: Price & Battery SoC */}
+                  <View style={styles.dualHeroRow}>
+                    <View style={styles.dualHeroCol}>
+                      <Text style={styles.dualHeroLabel}>TOTAL</Text>
+                      <View style={styles.dualPriceRow}>
+                        <AnimatedMetricValue style={styles.dualPriceHeroVal} value={Number(costB).toLocaleString()} />
+                        <Text style={styles.dualPriceHeroCurr}>{curr}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.dualHeroCol}>
+                      <Text style={styles.dualHeroLabel}>BATTERY</Text>
+                      <View style={styles.dualPriceRow}>
+                        <Text style={styles.dualSocHeroVal}>{hasSocB ? `${activeSocB}%` : '--'}</Text>
+                      </View>
+                    </View>
                   </View>
-                  <View style={styles.dualSubRow}>
-                    <Text style={styles.dualPriceHeroSub} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-                      {Number(powerB).toFixed(1)} kW {hasSocB ? `• ${activeSocB}% SoC` : ''}
-                    </Text>
-                  </View>
+
+                  {/* Battery Fill Track */}
+                  {hasSocB ? (
+                    <View style={styles.dualBatteryBar}>
+                      <View
+                        style={[
+                          styles.dualBatteryFill,
+                          {
+                            width: `${Math.min(100, Math.max(0, activeSocB || 0))}%`,
+                            backgroundColor: (activeSocB || 0) >= 80 ? '#10B981' : (activeSocB || 0) >= 20 ? '#0284C7' : '#F59E0B',
+                          },
+                        ]}
+                      />
+                    </View>
+                  ) : null}
+
                   <View style={styles.dualTelemetryStrip}>
+                    <View style={styles.dualTelemetryItem}>
+                      <Text style={styles.dualTelemetryVal} numberOfLines={1}>{Number(powerB).toFixed(1)}</Text>
+                      <Text style={styles.dualTelemetryUnit}>kW</Text>
+                    </View>
+                    <View style={styles.dualTelemetryDivider} />
                     <View style={styles.dualTelemetryItem}>
                       <Text style={styles.dualTelemetryVal} numberOfLines={1}>{energyB}</Text>
                       <Text style={styles.dualTelemetryUnit}>kWh</Text>
@@ -834,30 +979,62 @@ export default function HomeScreen() {
               </Text>
             </View>
           ) : onlyCarBAttached ? (
-            /* ONLY Car B Attached: Unified Single Presentation without standing-out div */
+            /* ONLY Car B Attached: Co-Heroes Layout (Battery SOC & Price) */
             <View style={styles.unifiedSingleDashboard}>
               <View style={styles.unifiedStatusRow}>
                 <View style={[styles.unifiedStatusBadge, { backgroundColor: themeB.bg }]}>
                   <View style={[styles.gunDot, { backgroundColor: themeB.color, width: 7, height: 7 }]} />
                   <Text style={[styles.unifiedStatusText, { color: themeB.color }]}>GUN B • {themeB.label.toUpperCase()}</Text>
                 </View>
-                {hasSocB ? (
-                  <View style={styles.unifiedSocBadge}>
-                    <Text style={styles.unifiedSocText}>{activeSocB}% SoC</Text>
+              </View>
+
+              {/* CO-HEROES: PRICE & BATTERY SOC */}
+              <View style={styles.heroDuoRow}>
+                {/* Hero 1: Live Price */}
+                <View style={styles.heroDuoCard}>
+                  <Text style={styles.heroDuoLabel}>SESSION TOTAL</Text>
+                  <View style={styles.heroDuoValRow}>
+                    <AnimatedMetricValue style={styles.heroDuoPriceVal} value={Number(costB).toLocaleString()} />
+                    <Text style={styles.heroDuoPriceCurr}>{curr}</Text>
                   </View>
-                ) : null}
+                </View>
+
+                {/* Subtle Divider */}
+                <View style={styles.heroDuoDivider} />
+
+                {/* Hero 2: Battery SOC */}
+                <View style={styles.heroDuoCard}>
+                  <Text style={styles.heroDuoLabel}>BATTERY</Text>
+                  <View style={styles.heroDuoValRow}>
+                    <Text style={styles.heroDuoSocVal}>{hasSocB ? activeSocB : '--'}</Text>
+                    <Text style={styles.heroDuoSocUnit}>%</Text>
+                  </View>
+                </View>
               </View>
 
-              <View style={styles.unifiedPriceRow}>
-                <AnimatedMetricValue style={styles.unifiedPriceVal} value={Number(costB).toLocaleString()} />
-                <Text style={styles.unifiedPriceCurr}>{curr}</Text>
-              </View>
-
-              <Text style={styles.unifiedSpeedSub}>
-                {Number(powerB) > 0 ? `Charging at ${Number(powerB).toFixed(1)} kW` : 'Connected • Preparing'}
-              </Text>
+              {/* Battery Fill Track */}
+              {hasSocB ? (
+                <View style={styles.heroBatteryContainer}>
+                  <View style={styles.heroBatteryBar}>
+                    <View
+                      style={[
+                        styles.heroBatteryFill,
+                        {
+                          width: `${Math.min(100, Math.max(0, activeSocB || 0))}%`,
+                          backgroundColor: (activeSocB || 0) >= 80 ? '#10B981' : (activeSocB || 0) >= 20 ? '#0284C7' : '#F59E0B',
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ) : null}
 
               <View style={styles.unifiedMetricsRow}>
+                <View style={styles.unifiedMetricItem}>
+                  <Text style={styles.unifiedMetricLabel}>POWER</Text>
+                  <Text style={styles.unifiedMetricVal}>{Number(powerB).toFixed(1)} <Text style={styles.unifiedMetricUnit}>kW</Text></Text>
+                </View>
+                <View style={styles.unifiedMetricDivider} />
                 <View style={styles.unifiedMetricItem}>
                   <Text style={styles.unifiedMetricLabel}>ENERGY</Text>
                   <Text style={styles.unifiedMetricVal}>{energyB} <Text style={styles.unifiedMetricUnit}>kWh</Text></Text>
@@ -875,7 +1052,7 @@ export default function HomeScreen() {
               </View>
             </View>
           ) : onlyCarAAttached ? (
-            /* ONLY Car A Attached: Unified Single Presentation without standing-out div */
+            /* ONLY Car A Attached: Co-Heroes Layout (Battery SOC & Price) */
             <View style={styles.unifiedSingleDashboard}>
               <View style={styles.unifiedStatusRow}>
                 <View style={[styles.unifiedStatusBadge, { backgroundColor: themeA.bg }]}>
@@ -884,23 +1061,55 @@ export default function HomeScreen() {
                     GUN A {is30kW ? '(30kW)' : ''} • {themeA.label.toUpperCase()}
                   </Text>
                 </View>
-                {hasSocA ? (
-                  <View style={styles.unifiedSocBadge}>
-                    <Text style={styles.unifiedSocText}>{activeSocA}% SoC</Text>
+              </View>
+
+              {/* CO-HEROES: PRICE & BATTERY SOC */}
+              <View style={styles.heroDuoRow}>
+                {/* Hero 1: Live Price */}
+                <View style={styles.heroDuoCard}>
+                  <Text style={styles.heroDuoLabel}>SESSION TOTAL</Text>
+                  <View style={styles.heroDuoValRow}>
+                    <AnimatedMetricValue style={styles.heroDuoPriceVal} value={Number(costA).toLocaleString()} />
+                    <Text style={styles.heroDuoPriceCurr}>{curr}</Text>
                   </View>
-                ) : null}
+                </View>
+
+                {/* Subtle Divider */}
+                <View style={styles.heroDuoDivider} />
+
+                {/* Hero 2: Battery SOC */}
+                <View style={styles.heroDuoCard}>
+                  <Text style={styles.heroDuoLabel}>BATTERY</Text>
+                  <View style={styles.heroDuoValRow}>
+                    <Text style={styles.heroDuoSocVal}>{hasSocA ? activeSocA : '--'}</Text>
+                    <Text style={styles.heroDuoSocUnit}>%</Text>
+                  </View>
+                </View>
               </View>
 
-              <View style={styles.unifiedPriceRow}>
-                <AnimatedMetricValue style={styles.unifiedPriceVal} value={Number(costA).toLocaleString()} />
-                <Text style={styles.unifiedPriceCurr}>{curr}</Text>
-              </View>
-
-              <Text style={styles.unifiedSpeedSub}>
-                {Number(powerA) > 0 ? `Charging at ${Number(powerA).toFixed(1)} kW` : 'Connected • Preparing'}
-              </Text>
+              {/* Battery Fill Track */}
+              {hasSocA ? (
+                <View style={styles.heroBatteryContainer}>
+                  <View style={styles.heroBatteryBar}>
+                    <View
+                      style={[
+                        styles.heroBatteryFill,
+                        {
+                          width: `${Math.min(100, Math.max(0, activeSocA || 0))}%`,
+                          backgroundColor: (activeSocA || 0) >= 80 ? '#10B981' : (activeSocA || 0) >= 20 ? '#0284C7' : '#F59E0B',
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ) : null}
 
               <View style={styles.unifiedMetricsRow}>
+                <View style={styles.unifiedMetricItem}>
+                  <Text style={styles.unifiedMetricLabel}>POWER</Text>
+                  <Text style={styles.unifiedMetricVal}>{Number(powerA).toFixed(1)} <Text style={styles.unifiedMetricUnit}>kW</Text></Text>
+                </View>
+                <View style={styles.unifiedMetricDivider} />
                 <View style={styles.unifiedMetricItem}>
                   <Text style={styles.unifiedMetricLabel}>ENERGY</Text>
                   <Text style={styles.unifiedMetricVal}>{energyA} <Text style={styles.unifiedMetricUnit}>kWh</Text></Text>
@@ -1108,6 +1317,89 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textAlign: 'center',
   },
+  unifiedSpeedSubSmall: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+
+  /* Co-Heroes (Price & Battery SOC) */
+  heroDuoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    paddingVertical: 4,
+    marginVertical: 4,
+  },
+  heroDuoCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroDuoDivider: {
+    width: 1,
+    height: 48,
+    backgroundColor: '#E2E8F0',
+    marginHorizontal: 12,
+  },
+  heroDuoLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  heroDuoValRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  heroDuoPriceVal: {
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -1.2,
+    fontVariant: ['tabular-nums'],
+  },
+  heroDuoPriceCurr: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0284C7',
+    letterSpacing: 0.6,
+  },
+  heroDuoSocVal: {
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -1.2,
+    fontVariant: ['tabular-nums'],
+  },
+  heroDuoSocUnit: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#10B981',
+    letterSpacing: 0.6,
+  },
+  heroBatteryContainer: {
+    width: '100%',
+    paddingHorizontal: 8,
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  heroBatteryBar: {
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  heroBatteryFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
   unifiedMetricsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1115,8 +1407,8 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#F8FAFC',
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   unifiedMetricItem: {
     flex: 1,
@@ -1124,24 +1416,24 @@ const styles = StyleSheet.create({
   },
   unifiedMetricDivider: {
     width: 1,
-    height: 22,
+    height: 20,
     backgroundColor: '#E2E8F0',
   },
   unifiedMetricLabel: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '800',
     color: '#94A3B8',
     letterSpacing: 0.6,
     marginBottom: 2,
   },
   unifiedMetricVal: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '900',
     color: '#0F172A',
     fontVariant: ['tabular-nums'],
   },
   unifiedMetricUnit: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '700',
     color: '#64748B',
   },
@@ -1188,22 +1480,61 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4,
   },
+  /* Dual Hero Section */
+  dualHeroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginVertical: 2,
+  },
+  dualHeroCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  dualHeroLabel: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 1,
+  },
+  dualSocHeroVal: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.6,
+    fontVariant: ['tabular-nums'],
+  },
+  dualBatteryBar: {
+    height: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+    width: '90%',
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  dualBatteryFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
   dualPriceRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'center',
-    gap: 4,
-    height: 34,
+    gap: 3,
+    height: 30,
   },
   dualPriceHeroVal: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: -0.8,
+    letterSpacing: -0.6,
     fontVariant: ['tabular-nums'],
   },
   dualPriceHeroCurr: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '800',
     color: '#0284C7',
     letterSpacing: 0.5,
@@ -1239,13 +1570,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dualTelemetryVal: {
-    fontSize: 11.5,
+    fontSize: 10.5,
     fontWeight: '900',
     color: '#0F172A',
     fontVariant: ['tabular-nums'],
   },
   dualTelemetryUnit: {
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: '700',
     color: '#64748B',
     marginTop: 1,
@@ -1253,7 +1584,7 @@ const styles = StyleSheet.create({
   },
   dualTelemetryDivider: {
     width: 1,
-    height: 18,
+    height: 16,
     backgroundColor: '#E2E8F0',
   },
   dualTotalSpeedSubtext: {

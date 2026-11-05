@@ -20,6 +20,16 @@ export async function sendPushNotification(pushTokens, { title, body, data = {} 
     data,
     priority: "high",
     channelId: "charging-status",
+    badge: 1,
+    // iOS 15+ Time-Sensitive banner (WhatsApp style heads-up)
+    interruptionLevel: "time-sensitive",
+    // Android FCM High Priority heads-up banner
+    android: {
+      channelId: "charging-status",
+      priority: "max",
+      sound: true,
+      vibrate: [0, 250, 250, 250],
+    },
   }));
 
   try {

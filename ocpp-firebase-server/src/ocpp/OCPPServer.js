@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import { actionHandlers } from "./actionHandlers.js";
-import { saveChargerOffline } from "../services/firebaseSync.js";
+import { saveChargerOffline, saveChargerHeartbeat } from "../services/firebaseSync.js";
 import { getKarachiIso, getKarachiTimeString } from "../utils/time.js";
 import crypto from "crypto";
 
@@ -124,6 +124,7 @@ export class OCPPServer {
     });
 
     this.connections.set(chargePointId, connEntry);
+    saveChargerHeartbeat(chargePointId).catch(() => {});
 
     ws.on("message", async (data) => {
       connEntry.lastActivity = Date.now();

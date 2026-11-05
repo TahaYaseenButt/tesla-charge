@@ -5,15 +5,24 @@ import fs from "fs";
 import path from "path";
 import { sendPushNotification } from "./notificationService.js";
 import { getKarachiIso } from "../utils/time.js";
+import { db as sqliteDb } from "../database/db.js";
 
 /**
- * Fetch push tokens registered for a charger (Firestore + RTDB fallback)
+ * Fetch push tokens registered for a charger (SQLite + Firestore + RTDB fallback)
  */
 async function getSubscribedPushTokens(chargePointId) {
   const cleanId = (chargePointId || "charger1").trim().toLowerCase();
   const tokens = new Set();
 
-  // 1. Fetch from Firestore chargers/${cleanId}
+  // 1. Fetch from local SQLite push_tokens table
+  try {
+    const rows = sqliteDb.prepare("SELECT token FROM push_tokens WHERE charge_point_id = ? OR charge_point_id = 'charger1'").all(cleanId);
+    rows.forEach((r) => { if (r.token) tokens.add(r.token); });
+  } catch (sqlErr) {
+    console.warn("[Push] Error fetching tokens from SQLite:", sqlErr.message);
+  }
+
+  // 2. Fetch from Firestore chargers/${cleanId}
   try {
     const cSnap = await getDoc(doc(db, "chargers", cleanId));
     if (cSnap.exists()) {
@@ -173,10 +182,24 @@ export async function saveChargerBoot(chargePointId, data) {
   }
 }
 
+// Track 3-minute power-loss watchdog timers per charger so brief internet drops (Scenario 1)
+// are cancelled on reconnect, while permanent power outages (Scenario 2) auto-finalize sessions.
+const offlinePowerLossTimers = new Map();
+
+function clearPowerLossTimer(chargePointId) {
+  const key = String(chargePointId || "").toLowerCase();
+  const existing = offlinePowerLossTimers.get(key);
+  if (existing) {
+    clearTimeout(existing);
+    offlinePowerLossTimers.delete(key);
+  }
+}
+
 /**
  * Heartbeat -> RTDB only (was a Firestore write every 30s)
  */
 export async function saveChargerHeartbeat(chargePointId) {
+  clearPowerLossTimer(chargePointId);
   try {
     await update(ref(rtdb, livePath(chargePointId)), {
       chargePointId,
@@ -189,15 +212,50 @@ export async function saveChargerHeartbeat(chargePointId) {
 }
 
 /**
- * Mark charger offline when its WebSocket closes -> RTDB only
+ * Mark charger offline when its WebSocket closes -> RTDB only.
+ * Starts a 3-minute (180s) grace timer:
+ * - Scenario 1 (Inverter/router internet drops briefly and reconnects): Timer is cancelled on first packet; session continues seamlessly.
+ * - Scenario 2 (Electricity goes off during charging and does not return): After 3 minutes offline, any open 'Charging' session is finalized & saved.
  */
 export async function saveChargerOffline(chargePointId) {
+  const cleanId = String(chargePointId || "").toLowerCase();
+  clearPowerLossTimer(cleanId);
   try {
     await update(ref(rtdb, livePath(chargePointId)), {
       status: "Offline",
+      disconnectedAt: nowIso(),
       updatedAt: nowIso(),
     });
-    console.log(`[RTDB] Charger ${chargePointId} marked Offline`);
+    console.log(`[RTDB] Charger ${chargePointId} marked Offline (starting 3-min power-loss grace window)`);
+
+    const timer = setTimeout(async () => {
+      offlinePowerLossTimers.delete(cleanId);
+      try {
+        const liveSnap = await get(ref(rtdb, livePath(chargePointId)));
+        if (!liveSnap.exists()) return;
+        const liveVal = liveSnap.val() || {};
+        // If charger came back online within the grace period, do nothing
+        if (liveVal.status === "Online") return;
+
+        const activeMap = liveVal.activeTx || {};
+        for (const [connKey, act] of Object.entries(activeMap)) {
+          if (act && act.transactionId && act.status === "Charging") {
+            const lastMeterWh =
+              Number(act.currentEnergyWh) ||
+              (Number(act.meterStart || 0) + Number(act.energyDeliveredWh || 0));
+            const stopTs = act.lastTelemetryAt || act.updatedAt || liveVal.disconnectedAt || nowIso();
+            console.log(
+              `[PowerLoss Watchdog] Charger ${chargePointId} [Gun ${connKey}] remained offline for 3 mins during Tx #${act.transactionId} -> Finalizing session at ${lastMeterWh} Wh`
+            );
+            await saveStopTransaction(act.transactionId, chargePointId, lastMeterWh, stopTs, "PowerLoss");
+          }
+        }
+      } catch (wErr) {
+        console.warn(`[PowerLoss Watchdog] Error checking ${chargePointId}:`, wErr.message);
+      }
+    }, 180000);
+
+    offlinePowerLossTimers.set(cleanId, timer);
   } catch (err) {
     console.error(`[RTDB Error] saveChargerOffline for ${chargePointId}:`, err.message);
   }
@@ -207,16 +265,38 @@ export async function saveChargerOffline(chargePointId) {
  * Connector status change (Available, Preparing, Charging, Faulted...) -> RTDB & Firestore
  */
 export async function saveConnectorStatus(chargePointId, connectorId, status, errorCode, info) {
+  clearPowerLossTimer(chargePointId);
   try {
     const connIdNum = Number(connectorId);
     const updates = {};
+    updates[livePath(chargePointId, "status")] = "Online";
+    updates[livePath(chargePointId, "lastHeartbeat")] = nowIso();
     updates[livePath(chargePointId, "connectors", connIdNum, "status")] = status;
     updates[livePath(chargePointId, "connectors", connIdNum, "errorCode")] = errorCode || "NoError";
     updates[livePath(chargePointId, "connectors", connIdNum, "info")] = info || "";
     updates[livePath(chargePointId, "connectors", connIdNum, "updatedAt")] = nowIso();
 
-    // If status is not Charging, clear any activeTx from RTDB
-    if (status === "Available" || status === "Unavailable" || status === "Faulted") {
+    // Scenario 2: If connector transitions to Available or Faulted while an unclosed Charging session exists
+    // (e.g., electricity went off during charging and charger rebooted without sending StopTransaction),
+    // automatically finalize and save the interrupted transaction before clearing activeTx!
+    if (connIdNum > 0 && (status === "Available" || status === "Faulted")) {
+      try {
+        const activeSnap = await get(ref(rtdb, livePath(chargePointId, "activeTx", connIdNum)));
+        if (activeSnap.exists()) {
+          const act = activeSnap.val() || {};
+          if (act.transactionId && act.status === "Charging") {
+            const lastMeterWh =
+              Number(act.currentEnergyWh) ||
+              (Number(act.meterStart || 0) + Number(act.energyDeliveredWh || 0));
+            const stopTs = act.lastTelemetryAt || act.updatedAt || nowIso();
+            console.log(
+              `[PowerLoss Recovery] Connector ${connIdNum} reported ${status} while Tx #${act.transactionId} was still Charging -> Auto-completing session at ${lastMeterWh} Wh`
+            );
+            await saveStopTransaction(act.transactionId, chargePointId, lastMeterWh, stopTs, "PowerLoss");
+          }
+        }
+      } catch (_recErr) {}
+
       updates[livePath(chargePointId, "connectors", connIdNum, "activeTx")] = null;
       updates[livePath(chargePointId, "activeTx", connIdNum)] = null;
     }
@@ -230,7 +310,7 @@ export async function saveConnectorStatus(chargePointId, connectorId, status, er
       info: info || "",
       updatedAt: nowIso(),
     };
-    if (status === "Available" || status === "Unavailable" || status === "Faulted") {
+    if (connIdNum > 0 && (status === "Available" || status === "Faulted")) {
       fsDoc.activeTx = deleteField();
     }
 
@@ -281,12 +361,15 @@ export async function saveConnectorStatus(chargePointId, connectorId, status, er
  * This was the most expensive Firestore path (1-2 writes every 10-15s per connector).
  */
 export async function saveMeterValues(chargePointId, connectorId, transactionId, telemetryData) {
+  clearPowerLossTimer(chargePointId);
   try {
     // Drop the raw OCPP payload: it is large and not needed by any client (saves bandwidth)
     const { raw: _raw, ...telemetry } = telemetryData || {};
     const targetConnId = Number(connectorId || 1);
 
     const updates = {};
+    updates[livePath(chargePointId, "status")] = "Online";
+    updates[livePath(chargePointId, "lastHeartbeat")] = nowIso();
     updates[livePath(chargePointId, "connectors", targetConnId, "telemetry")] = {
       ...telemetry,
       updatedAt: nowIso(),
@@ -304,6 +387,18 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
           act = activeSnap.val() || {};
         }
       } catch (_e) {}
+
+      // Scenario 1 Recovery: If RTDB activeTx lost meterStart/socStart/createdAt during an internet drop or server restart,
+      // restore full transaction context from Firestore so charging resumes seamlessly without losing data!
+      if (!act.meterStart || !act.createdAt) {
+        try {
+          const txDocSnap = await getDoc(doc(db, "transactions", String(resolvedTxId)));
+          if (txDocSnap.exists()) {
+            const fsTx = txDocSnap.data() || {};
+            act = { ...fsTx, ...act, meterStart: act.meterStart || fsTx.meterStart, socStart: act.socStart || fsTx.socStart, createdAt: act.createdAt || fsTx.createdAt, startTime: act.startTime || fsTx.startTime };
+          }
+        } catch (_fsRestoreErr) {}
+      }
     } else {
       // If transactionId was omitted by charger, ONLY consider it active if RTDB currently has a Charging session
       try {
@@ -392,26 +487,48 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
     updates[`${txBase}/energyDeliveredKwh`] = sessionEnergyKwh;
     updates[`${txBase}/cost`] = liveCost;
     updates[`${txBase}/lastTelemetryAt`] = nowIso();
+    if (mStart > 0) updates[`${txBase}/meterStart`] = mStart;
+    if (act.startTime) updates[`${txBase}/startTime`] = act.startTime;
+    if (act.createdAt) updates[`${txBase}/createdAt`] = act.createdAt;
+    if (sessionStatus === "Charging") {
+      updates[livePath(chargePointId, "connectors", targetConnId, "status")] = "Charging";
+    }
 
     // Mirror activeTx into connectors/{targetConnId}/activeTx in RTDB as well
     updates[livePath(chargePointId, "connectors", targetConnId, "activeTx")] = {
       transactionId: resolvedTxId,
       status: sessionStatus,
       meterStart: mStart,
+      startTime: act.startTime || null,
+      createdAt: act.createdAt || null,
+      socStart: act.socStart || null,
+      socCurrent: typeof telemetry.soc === "number" && telemetry.soc > 0 ? telemetry.soc : (act.socCurrent || null),
       currentPowerKw: telemetry.powerKw || 0,
       currentEnergyWh: telemetry.energyWh || 0,
       energyDeliveredKwh: sessionEnergyKwh,
       energyDeliveredWh: sessionEnergyWh,
       cost: liveCost,
+      lastTelemetryAt: nowIso(),
       updatedAt: nowIso(),
     };
+
+    const voltage = Number(telemetry.voltage || telemetry.voltageL1 || telemetry.voltageL2 || telemetry.voltageL3 || 0);
+    const currentAmp = Number(telemetry.current || telemetry.currentL1 || telemetry.currentL2 || telemetry.currentL3 || 0);
+    const powerKw = Number(telemetry.powerKw || 0);
+    const isActuallyDelivering = currentAmp >= 0.5 || powerKw >= 0.2 || sessionEnergyWh > 0;
+    let capturedStartSoc = null;
 
     if (typeof telemetry.soc === 'number' && telemetry.soc > 0) {
       updates[`${txBase}/soc`] = telemetry.soc;
       updates[`${txBase}/socCurrent`] = telemetry.soc;
-      // Capture the first valid non-zero BMS battery percentage
-      if (act.socStart === undefined || act.socStart === null || act.socStart === 0) {
+
+      // Accurately determine starting SoC: Must wait for charging power/current to flow and voltage to raise above 100V
+      const isStartSocNeeded = (act.socStart === undefined || act.socStart === null || act.socStart === 0);
+      if (isActuallyDelivering && voltage >= 100 && isStartSocNeeded) {
         updates[`${txBase}/socStart`] = telemetry.soc;
+        act.socStart = telemetry.soc;
+        capturedStartSoc = telemetry.soc;
+        console.log(`[SoC Tracking] Confirmed starting SoC: ${telemetry.soc}% (Voltage: ${voltage}V >= 100V, Power: ${powerKw}kW) on session #${resolvedTxId}`);
       }
 
       // Push Notification: Whenever SoC increases by a 10% milestone (e.g. 30%, 40%, 50%, 60%, 70%, 80%, 90%, 100%)
@@ -421,10 +538,11 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
         updates[`${txBase}/lastNotifiedSoc`] = currentSoc;
         getSubscribedPushTokens(chargePointId).then((tokens) => {
           const gunName = targetConnId === 2 ? "Gun B" : "Gun A";
+          const startSocText = act.socStart ? ` (Started at ${act.socStart}%)` : "";
           sendPushNotification(tokens, {
-            title: `🔋 Battery at ${currentSoc}%`,
-            body: `${gunName} vehicle reached ${currentSoc}% battery (+${currentSoc - lastNotifiedSoc}% gained).`,
-            data: { chargePointId, connectorId: targetConnId, soc: currentSoc },
+            title: `🔋 Battery reached ${currentSoc}%`,
+            body: `${gunName} vehicle reached ${currentSoc}% battery (+${currentSoc - lastNotifiedSoc}% gained)${startSocText}.`,
+            data: { chargePointId, connectorId: targetConnId, soc: currentSoc, socStart: act.socStart },
           });
         });
       }
@@ -442,8 +560,8 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
       };
       if (typeof telemetry.soc === 'number' && telemetry.soc > 0) {
         txUpdates.socCurrent = telemetry.soc;
-        if (act.socStart === undefined || act.socStart === null || act.socStart === 0) {
-          txUpdates.socStart = telemetry.soc;
+        if (capturedStartSoc !== null) {
+          txUpdates.socStart = capturedStartSoc;
         }
       }
       await updateDoc(doc(db, "transactions", String(resolvedTxId)), txUpdates);
@@ -501,7 +619,13 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
  * Firestore: permanent transaction record (1 write). RTDB: live active session.
  */
 export async function saveStartTransaction(transactionId, chargePointId, connectorId, idTag, meterStart, timestamp) {
-  const startTime = timestamp || nowIso();
+  let startTime = nowIso();
+  if (timestamp) {
+    const tMs = new Date(timestamp).getTime();
+    if (!isNaN(tMs) && Math.abs(Date.now() - tMs) < 24 * 3600 * 1000) {
+      startTime = timestamp;
+    }
+  }
   try {
     // Check if a driver app user started this session
     let userId = null;
@@ -537,21 +661,9 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
     } catch (_e) {}
 
     try {
-      if (socStart === null || socStart === 0) {
-        const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connectorId, "telemetry")));
-        if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
-          socStart = connSnap.val().soc;
-        }
-      }
-    } catch (_e) {}
-
-    try {
       const fsConn = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(connectorId)));
       if (fsConn.exists()) {
         const cData = fsConn.data();
-        if (socStart === null && typeof cData?.telemetry?.soc === 'number') {
-          socStart = cData.telemetry.soc;
-        }
         if (!userId && cData?.activeTx?.userId) userId = cData.activeTx.userId;
         if (!userEmail && cData?.activeTx?.userEmail) userEmail = cData.activeTx.userEmail;
         if (!targetKwh && cData?.activeTx?.targetKwh) targetKwh = Number(cData.activeTx.targetKwh);
@@ -726,7 +838,13 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
     const energyDeliveredWh = Math.max(0, Number(meterStop) - Number(meterStart));
     const energyDeliveredKwh = Number((energyDeliveredWh / 1000).toFixed(2));
     const totalCost = Number((energyDeliveredKwh * effectivePrice).toFixed(2));
-    const stopTime = timestamp || nowIso();
+    let stopTime = nowIso();
+    if (timestamp) {
+      const tMs = new Date(timestamp).getTime();
+      if (!isNaN(tMs) && Math.abs(Date.now() - tMs) < 24 * 3600 * 1000) {
+        stopTime = timestamp;
+      }
+    }
 
     // Determine start and stop battery percentage (SoC) - strictly non-zero
     let socStart = typeof live?.tx?.socStart === 'number' && live.tx.socStart > 0
@@ -744,23 +862,20 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
       const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connIdNum, "telemetry")));
       if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
         socStop = connSnap.val().soc;
-        if (socStart === null || socStart === 0) socStart = connSnap.val().soc;
       }
     } catch (_e) {}
 
     try {
-      if (socStop === null || socStart === null || socStart === 0) {
+      if (socStop === null) {
         const fsConn = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(connIdNum)));
         if (fsConn.exists() && typeof fsConn.data()?.telemetry?.soc === 'number' && fsConn.data().telemetry.soc > 0) {
-          const s = fsConn.data().telemetry.soc;
-          if (socStop === null) socStop = s;
-          if (socStart === null || socStart === 0) socStart = s;
+          socStop = fsConn.data().telemetry.soc;
         }
       }
     } catch (_e) {}
 
-    const socGained = typeof socStart === 'number' && socStart > 0 && typeof socStop === 'number' && socStop > 0
-      ? Math.max(0, socStop - socStart)
+    const socGained = typeof socStart === 'number' && socStart > 0 && typeof socStop === 'number' && socStop >= socStart
+      ? Number((socStop - socStart).toFixed(1))
       : null;
 
     const finalFields = {
@@ -790,6 +905,7 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
       idTag: base.idTag || "Anonymous",
       meterStart: Number(meterStart),
       startTime: base.startTime || null,
+      createdAt: base.createdAt || base.startTime || null,
       ...finalFields,
     };
     await set(ref(rtdb, livePath(chargePointId, "lastCompletedTx")), completed);
@@ -826,15 +942,24 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
     // Push Notification: When charging session has completed / stopped
     getSubscribedPushTokens(chargePointId).then((tokens) => {
       const gunName = Number(connIdStr) === 2 ? "Gun B" : "Gun A";
-      const socGainText = socGained ? ` (${socGained}% gained)` : "";
+      const socText = (socStart && socStop)
+        ? ` (Battery: ${socStart}% → ${socStop}%${socGained ? ` +${socGained}%` : ''})`
+        : (socStop ? ` (Battery: ${socStop}%)` : "");
+      const isPowerLoss = reason === "PowerLoss";
       sendPushNotification(tokens, {
-        title: "🛑 Charging Completed",
-        body: `${gunName} finished: ${energyDeliveredKwh} kWh delivered${socGainText} for PKR ${totalCost}.`,
+        title: isPowerLoss ? "⚠️ Power Lost — Session Saved" : "🛑 Charging Completed",
+        body: isPowerLoss
+          ? `${gunName} stopped due to power/connection loss: ${energyDeliveredKwh} kWh saved${socText} for PKR ${totalCost}.`
+          : `${gunName} finished: ${energyDeliveredKwh} kWh delivered${socText} for PKR ${totalCost}.`,
         data: {
           chargePointId,
           transactionId,
           energyDeliveredKwh,
           cost: totalCost,
+          socStart,
+          socStop,
+          socGained,
+          reason: reason || "Local",
           status: "Completed",
         },
       });

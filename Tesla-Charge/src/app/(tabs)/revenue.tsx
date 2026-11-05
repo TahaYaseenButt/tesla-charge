@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '@/config/auth';
+import { useChargerLive } from '@/hooks/useChargerLive';
 import {
   fetchTransactionsWithCacheStrategy,
   getLocalTransactions,
@@ -42,6 +43,7 @@ export default function RevenueScreen() {
   const { chargerId: configuredId, user } = useAuth();
   const CHARGER_ID = (configuredId || user?.stationId || user?.defaultChargerId || 'charger1').trim().toLowerCase();
   const cleanId = CHARGER_ID;
+  const { connector1, connector2 } = useChargerLive(cleanId);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -105,9 +107,45 @@ export default function RevenueScreen() {
     };
   }, [cleanId, user?.uid, loadRevenueData]);
 
+  // Combine completed transactions with any currently running active charging sessions
+  const combinedTransactions = useMemo(() => {
+    const list = [...transactions];
+    const existingIds = new Set(list.map((t) => String(t.id || t.transactionId)));
+
+    const activeSessions: any[] = [];
+    if (connector1?.activeTx && (connector1.activeTx.status === 'Charging' || connector1.activeTx.energyDeliveredKwh > 0)) {
+      activeSessions.push({ ...connector1.activeTx, connectorId: 1 });
+    }
+    if (connector2?.activeTx && (connector2.activeTx.status === 'Charging' || connector2.activeTx.energyDeliveredKwh > 0)) {
+      activeSessions.push({ ...connector2.activeTx, connectorId: 2 });
+    }
+
+    for (const act of activeSessions) {
+      const id = String(act.transactionId || act.id || '');
+      if (id && !existingIds.has(id)) {
+        list.unshift({
+          id,
+          transactionId: id,
+          chargePointId: cleanId,
+          connectorId: act.connectorId || 1,
+          status: act.status || 'Charging',
+          startTime: act.startTime || act.createdAt || new Date().toISOString(),
+          createdAt: act.createdAt || act.startTime || new Date().toISOString(),
+          energyDeliveredKwh: act.energyDeliveredKwh || 0,
+          energyDeliveredWh: act.energyDeliveredWh || 0,
+          cost: act.cost || 0,
+          tariffRate: act.tariffRate || 125,
+          socStart: act.socStart,
+          socCurrent: act.socCurrent,
+        });
+      }
+    }
+    return list;
+  }, [transactions, connector1, connector2, cleanId]);
+
   // Normalized transaction metrics helper
   const parsedTransactions = useMemo(() => {
-    return transactions.map((tx) => {
+    return combinedTransactions.map((tx) => {
       const energyKwh =
         Number(tx.energyDeliveredKwh) ||
         (Number(tx.energyDeliveredWh) ? Number(tx.energyDeliveredWh) / 1000 : 0) ||
@@ -118,9 +156,25 @@ export default function RevenueScreen() {
       const cost = Number(tx.cost) > 0 ? Number(tx.cost) : Math.round(energyKwh * rate);
       const connId = Number(tx.connectorId) || 1;
 
-      const rawDateStr = tx.startTime || tx.createdAt || tx.stopTime;
-      const dateObj = rawDateStr ? new Date(rawDateStr) : new Date();
-      const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+      // Authoritative Date: prioritize createdAt/updatedAt over startTime.
+      // Many physical chargers have unsynchronized RTC clocks sending stale dates (e.g. 2026-10-12),
+      // whereas createdAt/updatedAt is the true server timestamp of when the session actually occurred.
+      let validDate: Date;
+      const createdMs = tx.createdAt ? new Date(tx.createdAt).getTime() : 0;
+      const startMs = tx.startTime ? new Date(tx.startTime).getTime() : 0;
+
+      if (!isNaN(createdMs) && createdMs > 0) {
+        validDate = new Date(createdMs);
+      } else if (!isNaN(startMs) && startMs > 0) {
+        validDate = new Date(startMs);
+      } else if (tx.updatedAt) {
+        validDate = new Date(tx.updatedAt);
+      } else if (tx.stopTime) {
+        validDate = new Date(tx.stopTime);
+      } else {
+        validDate = new Date();
+      }
+      if (isNaN(validDate.getTime())) validDate = new Date();
 
       let dateKey: string;
       let monthKey: string;
@@ -154,7 +208,7 @@ export default function RevenueScreen() {
         monthKey,
       };
     });
-  }, [transactions]);
+  }, [combinedTransactions]);
 
   // Lifetime Overall Totals
   const lifetimeTotals = useMemo(() => {
@@ -195,13 +249,25 @@ export default function RevenueScreen() {
     return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   }, [selectedYear, selectedMonth]);
 
-  // Today helper string
+  // Today helper string in Asia/Karachi (Pakistan Standard Time, UTC+5)
   const todayKey = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Karachi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(new Date());
+      const map: Record<string, string> = {};
+      for (const p of parts) map[p.type] = p.value;
+      return `${map.year}-${map.month}-${map.day}`;
+    } catch (_e) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
   }, []);
 
   // Filtered Transactions according to active TimeFilter
@@ -359,6 +425,7 @@ export default function RevenueScreen() {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
+        nestedScrollEnabled={true}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}

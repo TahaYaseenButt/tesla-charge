@@ -7,6 +7,9 @@ import { ocppServer } from "../ocpp/OCPPServer.js";
 import { db } from "../database/db.js";
 import { getLocalChargerLive, liveEvents } from "../services/localSync.js";
 import { getKarachiIso } from "../utils/time.js";
+import { db as firestoreDb, rtdb } from "../config/firebase.js";
+import { doc, setDoc, getDoc } from "firebase/firestore";
+import { ref, set } from "firebase/database";
 
 export const apiRouter = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "tesla-charge-local-secret-key-2026";
@@ -539,6 +542,10 @@ apiRouter.get("/transactions", authenticateToken, (req, res) => {
       paymentStatus: r.payment_status,
       reason: r.reason,
       stopReason: r.reason,
+      socStart: r.soc_start,
+      socStop: r.soc_stop,
+      socCurrent: r.soc_current,
+      socGained: (r.soc_start && r.soc_stop && r.soc_stop >= r.soc_start) ? Number((r.soc_stop - r.soc_start).toFixed(1)) : null,
     }));
 
     return res.json({ success: true, transactions });
@@ -581,6 +588,10 @@ apiRouter.get("/chargers/:id/history", authenticateToken, (req, res) => {
       paymentStatus: r.payment_status,
       reason: r.reason,
       stopReason: r.reason,
+      socStart: r.soc_start,
+      socStop: r.soc_stop,
+      socCurrent: r.soc_current,
+      socGained: (r.soc_start && r.soc_stop && r.soc_stop >= r.soc_start) ? Number((r.soc_stop - r.soc_start).toFixed(1)) : null,
     }));
 
     return res.json({ success: true, count: transactions.length, transactions });
@@ -671,7 +682,7 @@ apiRouter.delete("/chargers/:chargePointId/rfid-tags/:tagId", authenticateToken,
 // 7. PUSH NOTIFICATION TOKEN REGISTRY
 // ==========================================
 
-apiRouter.post("/notifications/register-token", (req, res) => {
+apiRouter.post("/notifications/register-token", async (req, res) => {
   const { token, chargerId, userId, platform } = req.body;
   if (!token) {
     return res.status(400).json({ success: false, error: "Push token is required" });
@@ -679,8 +690,10 @@ apiRouter.post("/notifications/register-token", (req, res) => {
 
   const cId = (chargerId || "charger1").toLowerCase();
   const now = getKarachiIso();
+  const safeToken = String(token).replace(/[^a-zA-Z0-9_-]/g, "_");
 
   try {
+    // 1. Save to SQLite database
     db.prepare(`
       INSERT INTO push_tokens (token, charge_point_id, user_id, platform, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -691,8 +704,43 @@ apiRouter.post("/notifications/register-token", (req, res) => {
         updated_at = excluded.updated_at
     `).run(token.trim(), cId, userId || "anonymous", platform || "unknown", now, now);
 
+    // 2. Dual-write to Firestore charger document
+    try {
+      const chargerRef = doc(firestoreDb, "chargers", cId);
+      const cSnap = await getDoc(chargerRef);
+      let existingTokens = [];
+      if (cSnap.exists()) {
+        const cData = cSnap.data();
+        existingTokens = Array.isArray(cData.pushTokens) ? cData.pushTokens : [];
+      }
+      if (!existingTokens.includes(token)) {
+        existingTokens.push(token);
+      }
+      await setDoc(
+        chargerRef,
+        {
+          pushTokens: existingTokens,
+          lastPushToken: token,
+          pushTokenUpdatedAt: now,
+        },
+        { merge: true }
+      );
+    } catch (_fErr) {}
+
+    // 3. Dual-write to RTDB live subscribers
+    try {
+      await set(ref(rtdb, `notifications/subscribers/${cId}/${safeToken}`), {
+        token,
+        userId: userId || "anonymous",
+        platform: platform || "unknown",
+        updatedAt: now,
+      });
+    } catch (_rErr) {}
+
+    console.log(`[Push Token] Successfully registered token for [${cId}]`);
     return res.json({ success: true, message: "Push token registered successfully" });
   } catch (err) {
+    console.error("[Push Token Error]:", err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -1,31 +1,36 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { apiRequest } from '@/config/api';
 import { firebaseConfig } from '@/config/firebase';
 
 const DEFAULT_EAS_PROJECT_ID = 'f87c91ae-f185-4d81-a797-ad303bf0d8b9';
 
-// Configure notification behavior when app is in foreground
+// Configure notification behavior when app is in foreground (actively open)
+// Notifications are completely suppressed when the app is open; they only display when app is closed/backgrounded
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    priority: Notifications.AndroidNotificationPriority.HIGH,
+    shouldShowBanner: false,
+    shouldShowList: false,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+    priority: Notifications.AndroidNotificationPriority.DEFAULT,
   }),
 });
 
+// Configure Android notification channel safely for WhatsApp-style Heads-Up Banner
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('charging-status', {
     name: 'Charging Status & Alerts',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
+    enableVibrate: true,
+    enableLights: true,
     lightColor: '#0284C7',
-    sound: 'default',
+    showBadge: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
   }).catch(() => {});
 }
 
@@ -37,13 +42,19 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
   const cleanId = (chargerId || 'charger1').trim().toLowerCase();
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('charging-status', {
-      name: 'Charging Status & Alerts',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0284C7',
-      sound: 'default',
-    });
+    try {
+      await Notifications.setNotificationChannelAsync('charging-status', {
+        name: 'Charging Status & Alerts',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        enableVibrate: true,
+        enableLights: true,
+        lightColor: '#0284C7',
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: false,
+      });
+    } catch (_chanErr) {}
   }
 
   try {
@@ -51,7 +62,17 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowDisplayInCarPlay: true,
+          allowCriticalAlerts: false,
+          provideAppNotificationSettings: true,
+          allowProvisional: false,
+        },
+      });
       finalStatus = status;
     }
 
@@ -133,9 +154,14 @@ export async function registerForPushNotificationsAsync(userId?: string, charger
 }
 
 /**
- * Trigger local notification immediately on device (works in foreground and background)
+ * Trigger local notification on device (only when app is in background or closed)
  */
 export async function scheduleLocalNotification(title: string, body: string, data: any = {}) {
+  // If app is currently open / in foreground, suppress all notifications completely
+  if (AppState.currentState === 'active') {
+    return;
+  }
+
   try {
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') {
@@ -144,13 +170,14 @@ export async function scheduleLocalNotification(title: string, body: string, dat
     }
 
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('charging-status', {
-        name: 'Charging Status & Alerts',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#0284C7',
-        sound: 'default',
-      }).catch(() => {});
+      try {
+        await Notifications.setNotificationChannelAsync('charging-status', {
+          name: 'Charging Status & Alerts',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#0284C7',
+        });
+      } catch (_e) {}
     }
 
     await Notifications.scheduleNotificationAsync({

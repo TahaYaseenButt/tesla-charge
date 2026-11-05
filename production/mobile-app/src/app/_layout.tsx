@@ -3,6 +3,7 @@ import { LogBox } from 'react-native';
 import { Stack, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
+import { StatusBar } from 'expo-status-bar';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/config/auth';
@@ -68,6 +69,7 @@ export default function RootLayout() {
         <SimulatorProvider>
           <NotificationRegistration />
           <ThemeProvider value={DefaultTheme}>
+            <StatusBar style="dark" />
             <AnimatedSplashOverlay />
             <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

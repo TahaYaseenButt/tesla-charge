@@ -54,6 +54,7 @@ export default function ControlScreen() {
     isGunBConnected,
     hasAnyGunConnected,
     bothConnected,
+    tariffRate: liveStationTariffRate,
   } = useChargerLive(CHARGER_ID);
 
   // Active Gun selection (if both connected, user can switch between Gun A and Gun B)
@@ -109,29 +110,38 @@ export default function ControlScreen() {
   const liveVoltage = tel.voltage ? Math.round(Number(tel.voltage)) : (tel.voltageL1 ? Math.round(Number(tel.voltageL1)) : 0);
   const liveCurrent = Number(tel.currentL1 || 0);
 
+  // Effective Tariff Rate: activeTx rate -> station rate -> user auth rate -> default 125
+  const effectiveTariffRate =
+    Number(currentConnector.activeTx?.tariffRate) > 0
+      ? Number(currentConnector.activeTx.tariffRate)
+      : liveStationTariffRate && liveStationTariffRate > 0
+      ? liveStationTariffRate
+      : tariffRate && tariffRate > 0
+      ? tariffRate
+      : 125;
+
   // Session Energy (delivered strictly in the current charging session)
-  const deliveredFromTx = Number(currentConnector.activeTx?.energyDeliveredKwh) || 0;
+  const deliveredFromTx =
+    Number(currentConnector.activeTx?.energyDeliveredKwh) ||
+    (currentConnector.activeTx?.energyDeliveredWh ? Number((currentConnector.activeTx.energyDeliveredWh / 1000).toFixed(2)) : 0);
   const mStart =
-    currentConnector.activeTx?.meterStart !== undefined && currentConnector.activeTx?.meterStart !== null
+    currentConnector.activeTx?.meterStart !== undefined && currentConnector.activeTx?.meterStart !== null && Number(currentConnector.activeTx.meterStart) > 0
       ? Number(currentConnector.activeTx.meterStart)
       : null;
   const currentEnergyWh = tel.energyWh || (tel.energyKwh ? Math.round(Number(tel.energyKwh) * 1000) : null);
   const computedFromMeter =
-    mStart !== null && mStart > 0 && currentEnergyWh !== null && currentEnergyWh >= mStart
+    mStart !== null && currentEnergyWh !== null && currentEnergyWh >= mStart
       ? Math.max(0, (currentEnergyWh - mStart) / 1000)
       : 0;
-  const baseEnergy =
-    computedFromMeter > 0
-      ? computedFromMeter
-      : deliveredFromTx > 0
-      ? deliveredFromTx
-      : 0;
+  const baseEnergy = Math.max(deliveredFromTx, computedFromMeter);
   const sessionEnergyKwh = Number((baseEnergy + liveAccumulated).toFixed(2));
   // Gun Total Register (lifetime energy passed through the physical gun meter)
   const lifetimeMeterKwh = Number(tel.energyKwh || (tel.energyWh ? tel.energyWh / 1000 : 0)).toFixed(2);
 
-  // Real-time Session Cost: strictly based on the current session kWh (clean integer, no decimals)
-  const liveCost = Math.round(sessionEnergyKwh * (tariffRate || 125)).toLocaleString();
+  // Real-time Session Cost: strictly based on current session kWh and anchored to server-reported cost
+  const serverCost = Number(currentConnector.activeTx?.cost) || 0;
+  const calculatedCost = Math.round(sessionEnergyKwh * effectiveTariffRate);
+  const liveCost = Math.max(serverCost, calculatedCost).toLocaleString();
   const liveEnergy = sessionEnergyKwh;
 
   // Real-time 1-second auto-interpolator when actively charging
@@ -194,7 +204,7 @@ export default function ControlScreen() {
   useEffect(() => {
     if (!isCharging || !currentConnector.activeTx || autoStopSentRef.current) return;
 
-    const rawCost = sessionEnergyKwh * (tariffRate || 125);
+    const rawCost = sessionEnergyKwh * effectiveTariffRate;
     const tx = currentConnector.activeTx;
     const targetPriceVal = tx.targetPrice || (tx.limitMode === 'price' ? tx.limitValue : null);
     const targetKwhVal = tx.targetKwh || (tx.limitMode === 'energy' ? tx.limitValue : null);
@@ -219,7 +229,7 @@ export default function ControlScreen() {
         }
       });
     }
-  }, [isCharging, sessionEnergyKwh, tariffRate, currentConnector.activeTx, currency, activeGunId, user, CHARGER_ID]);
+  }, [isCharging, sessionEnergyKwh, effectiveTariffRate, currentConnector.activeTx, currency, activeGunId, user, CHARGER_ID]);
 
   // Execute Start Charging
   const handleStartCharging = async () => {
@@ -320,13 +330,13 @@ export default function ControlScreen() {
 
   return (
     <SwipeableTabScreen currentTab="control">
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} nestedScrollEnabled={true}>
       {/* Top Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>CHARGER CONTROL</Text>
           <Text style={styles.subtitle}>
-            Station {CHARGER_ID.toUpperCase()} &bull; {currency} {tariffRate}/kWh
+            Station {CHARGER_ID.toUpperCase()} &bull; {currency} {effectiveTariffRate}/kWh
           </Text>
         </View>
 

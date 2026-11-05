@@ -59,11 +59,25 @@ export async function saveChargerBoot(chargePointId, data) {
   }
 }
 
+// Track 3-minute power-loss watchdog timers per charger so brief internet drops (Scenario 1)
+// are cancelled on reconnect, while permanent power outages (Scenario 2) auto-finalize sessions.
+const offlinePowerLossTimers = new Map();
+
+function clearPowerLossTimer(chargePointId) {
+  const key = String(chargePointId || "charger1").toLowerCase();
+  const existing = offlinePowerLossTimers.get(key);
+  if (existing) {
+    clearTimeout(existing);
+    offlinePowerLossTimers.delete(key);
+  }
+}
+
 /**
  * Save charger heartbeat
  */
 export async function saveChargerHeartbeat(chargePointId) {
   const cId = (chargePointId || "charger1").toLowerCase();
+  clearPowerLossTimer(cId);
   const now = nowIso();
 
   try {
@@ -79,10 +93,14 @@ export async function saveChargerHeartbeat(chargePointId) {
 }
 
 /**
- * Save charger offline status
+ * Save charger offline status.
+ * Starts a 3-minute (180s) grace timer:
+ * - Scenario 1 (Inverter/router internet drops briefly and reconnects): Timer is cancelled on first packet; session continues seamlessly.
+ * - Scenario 2 (Electricity goes off during charging and does not return): After 3 minutes offline, any open 'Charging' session is finalized & saved.
  */
 export async function saveChargerOffline(chargePointId) {
   const cId = (chargePointId || "charger1").toLowerCase();
+  clearPowerLossTimer(cId);
   const now = nowIso();
 
   try {
@@ -91,8 +109,36 @@ export async function saveChargerOffline(chargePointId) {
       WHERE charge_point_id = ?
     `).run(now, cId);
 
-    console.log(`[LocalSync] Charger marked Offline: [${cId}]`);
+    console.log(`[LocalSync] Charger marked Offline: [${cId}] (starting 3-min power-loss grace window)`);
     broadcastLive("charger_offline", { chargePointId: cId, status: "Offline" });
+
+    const timer = setTimeout(async () => {
+      offlinePowerLossTimers.delete(cId);
+      try {
+        const ch = db.prepare("SELECT status FROM chargers WHERE charge_point_id = ?").get(cId);
+        if (ch && ch.status === "Online") return;
+
+        const openTxs = db.prepare(`
+          SELECT * FROM transactions
+          WHERE charge_point_id = ? AND status = 'Charging'
+        `).all(cId);
+
+        for (const tx of openTxs) {
+          const lastMeterWh =
+            Number(tx.current_energy_wh) ||
+            (Number(tx.meter_start || 0) + Number(tx.energy_delivered_wh || 0));
+          const stopTs = tx.updated_at || nowIso();
+          console.log(
+            `[PowerLoss Watchdog] Charger [${cId}] Gun ${tx.connector_id} remained offline for 3 mins during Tx #${tx.transaction_id} -> Finalizing session at ${lastMeterWh} Wh`
+          );
+          await saveStopTransaction(tx.transaction_id, cId, lastMeterWh, stopTs, "PowerLoss");
+        }
+      } catch (wErr) {
+        console.warn(`[PowerLoss Watchdog] Error checking ${cId}:`, wErr.message);
+      }
+    }, 180000);
+
+    offlinePowerLossTimers.set(cId, timer);
   } catch (err) {
     console.error(`[LocalSync Error] saveChargerOffline:`, err.message);
   }
@@ -103,10 +149,38 @@ export async function saveChargerOffline(chargePointId) {
  */
 export async function saveConnectorStatus(chargePointId, connectorId, status, errorCode, info) {
   const cId = (chargePointId || "charger1").toLowerCase();
+  clearPowerLossTimer(cId);
   const connId = Number(connectorId || 1);
   const now = nowIso();
 
   try {
+    db.prepare(`
+      UPDATE chargers SET status = 'Online', last_heartbeat = ?, updated_at = ?
+      WHERE charge_point_id = ?
+    `).run(now, now, cId);
+
+    // Scenario 2: If connector transitions to Available or Faulted while an unclosed Charging session exists
+    // (e.g., electricity went off during charging and charger rebooted without sending StopTransaction),
+    // automatically finalize and save the interrupted transaction!
+    if (connId > 0 && (status === "Available" || status === "Faulted")) {
+      const openTx = db.prepare(`
+        SELECT * FROM transactions
+        WHERE charge_point_id = ? AND connector_id = ? AND status = 'Charging'
+        ORDER BY start_time DESC LIMIT 1
+      `).get(cId, connId);
+
+      if (openTx && openTx.transaction_id) {
+        const lastMeterWh =
+          Number(openTx.current_energy_wh) ||
+          (Number(openTx.meter_start || 0) + Number(openTx.energy_delivered_wh || 0));
+        const stopTs = openTx.updated_at || now;
+        console.log(
+          `[PowerLoss Recovery] Connector ${connId} on [${cId}] reported ${status} while Tx #${openTx.transaction_id} was still Charging -> Auto-completing session at ${lastMeterWh} Wh`
+        );
+        await saveStopTransaction(openTx.transaction_id, cId, lastMeterWh, stopTs, "PowerLoss");
+      }
+    }
+
     db.prepare(`
       INSERT INTO connectors (
         charge_point_id, connector_id, status, error_code, info, updated_at
@@ -141,7 +215,13 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
   const cId = (chargePointId || "charger1").toLowerCase();
   const connId = Number(connectorId || 1);
   const txId = String(transactionId);
-  const now = timestamp ? getKarachiIso(timestamp) : nowIso();
+  let now = nowIso();
+  if (timestamp) {
+    const tMs = new Date(timestamp).getTime();
+    if (!isNaN(tMs) && Math.abs(Date.now() - tMs) < 24 * 3600 * 1000) {
+      now = getKarachiIso(timestamp);
+    }
+  }
 
   try {
     // Get tariff rate from charger config
@@ -200,10 +280,16 @@ export async function saveStartTransaction(transactionId, chargePointId, connect
  */
 export async function saveMeterValues(chargePointId, connectorId, transactionId, telemetry) {
   const cId = (chargePointId || "charger1").toLowerCase();
+  clearPowerLossTimer(cId);
   const connId = Number(connectorId || 1);
   const now = nowIso();
 
   try {
+    db.prepare(`
+      UPDATE chargers SET status = 'Online', last_heartbeat = ?, updated_at = ?
+      WHERE charge_point_id = ?
+    `).run(now, now, cId);
+
     // Resolve active transaction
     let tx = null;
     if (transactionId) {
@@ -234,6 +320,10 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
 
       liveCost = Math.round(sessionEnergyKwh * tariff);
 
+      const voltage = Number(telemetry.voltage || telemetry.voltageL1 || telemetry.voltageL2 || telemetry.voltageL3 || 0);
+      const isCharging = tx.status === 'Charging' || (telemetry.powerKw || 0) > 0 || (telemetry.currentL1 || 0) > 0;
+      const shouldLockSocStart = (!tx.soc_start || tx.soc_start === 0) && isCharging && voltage >= 100 && typeof telemetry.soc === 'number' && telemetry.soc > 0;
+
       db.prepare(`
         UPDATE transactions SET
           energy_delivered_wh = ?,
@@ -242,6 +332,10 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
           current_power_kw = ?,
           current_energy_wh = ?,
           soc_current = ?,
+          soc_start = CASE 
+            WHEN (soc_start IS NULL OR soc_start = 0) AND ? = 1 THEN ? 
+            ELSE soc_start 
+          END,
           updated_at = ?
         WHERE transaction_id = ?
       `).run(
@@ -250,6 +344,8 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
         liveCost,
         telemetry.powerKw || 0,
         telemetry.energyWh || 0,
+        telemetry.soc || null,
+        shouldLockSocStart ? 1 : 0,
         telemetry.soc || null,
         now,
         tx.transaction_id
@@ -328,7 +424,13 @@ export async function saveMeterValues(chargePointId, connectorId, transactionId,
 export async function saveStopTransaction(transactionId, chargePointId, meterStop, timestamp, reason, explicitTariff) {
   const cId = (chargePointId || "charger1").toLowerCase();
   const txId = String(transactionId);
-  const now = timestamp ? getKarachiIso(timestamp) : nowIso();
+  let now = nowIso();
+  if (timestamp) {
+    const tMs = new Date(timestamp).getTime();
+    if (!isNaN(tMs) && Math.abs(Date.now() - tMs) < 24 * 3600 * 1000) {
+      now = getKarachiIso(timestamp);
+    }
+  }
 
   try {
     const tx = db.prepare("SELECT * FROM transactions WHERE transaction_id = ?").get(txId);
@@ -347,7 +449,8 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
         finalWh = tx.energy_delivered_wh || 0;
         finalKwh = tx.energy_delivered_kwh || 0;
       }
-      finalCost = Math.round(finalKwh * tariff);
+      const lastConn = db.prepare("SELECT soc FROM connectors WHERE charge_point_id = ? AND connector_id = ?").get(cId, tx?.connector_id || 1);
+      const socStop = tx?.soc_current || lastConn?.soc || null;
 
       db.prepare(`
         UPDATE transactions SET
@@ -358,9 +461,10 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
           energy_delivered_kwh = ?,
           cost = ?,
           reason = ?,
+          soc_stop = COALESCE(?, soc_current),
           updated_at = ?
         WHERE transaction_id = ?
-      `).run(now, Number(meterStop) || 0, finalWh, finalKwh, finalCost, reason || "Normal", now, txId);
+      `).run(now, Number(meterStop) || 0, finalWh, finalKwh, finalCost, reason || "Normal", socStop, now, txId);
     }
 
     // Clear activeTx from connector and set back to Available
@@ -435,11 +539,16 @@ export function getLocalChargerLive(chargePointId) {
 
   const connectors = db.prepare("SELECT * FROM connectors WHERE charge_point_id = ? ORDER BY connector_id ASC").all(cId);
 
-  const activeTx = db.prepare(`
+  const activeTransactions = db.prepare(`
     SELECT * FROM transactions
     WHERE charge_point_id = ? AND status = 'Charging'
-    ORDER BY start_time DESC LIMIT 1
-  `).get(cId);
+    ORDER BY start_time DESC
+  `).all(cId);
+
+  const activeTxMap = new Map();
+  activeTransactions.forEach((tx) => {
+    activeTxMap.set(Number(tx.connector_id), tx);
+  });
 
   const lastCompletedTx = db.prepare(`
     SELECT * FROM transactions
@@ -464,18 +573,27 @@ export function getLocalChargerLive(chargePointId) {
     },
     connectors: connectors.map((c) => {
       const isCharging = c.status === "Charging";
-      const connTx = activeTx && activeTx.connector_id === c.connector_id ? {
-        transactionId: activeTx.transaction_id,
-        id: activeTx.transaction_id,
-        connectorId: activeTx.connector_id,
-        status: activeTx.status,
-        startTime: activeTx.start_time,
-        meterStart: activeTx.meter_start,
-        powerKw: activeTx.power_kw,
-        energyDeliveredKwh: activeTx.energy_kwh,
-        cost: activeTx.cost,
-        soc: activeTx.soc,
-        idTag: activeTx.id_tag,
+      const rawTx = c.active_tx_id
+        ? db.prepare("SELECT * FROM transactions WHERE transaction_id = ?").get(c.active_tx_id)
+        : activeTxMap.get(Number(c.connector_id));
+
+      const connTx = rawTx ? {
+        transactionId: rawTx.transaction_id,
+        id: rawTx.transaction_id,
+        connectorId: rawTx.connector_id,
+        status: rawTx.status,
+        startTime: rawTx.start_time,
+        meterStart: rawTx.meter_start,
+        powerKw: rawTx.current_power_kw || c.power_kw || 0,
+        currentPowerKw: rawTx.current_power_kw || c.power_kw || 0,
+        energyDeliveredKwh: rawTx.energy_delivered_kwh || c.energy_kwh || 0,
+        energyDeliveredWh: rawTx.energy_delivered_wh || c.energy_wh || 0,
+        cost: rawTx.cost || 0,
+        socStart: rawTx.soc_start,
+        socCurrent: rawTx.soc_current || c.soc,
+        socStop: rawTx.soc_stop,
+        idTag: rawTx.id_tag,
+        userEmail: rawTx.user_email,
       } : null;
 
       return {
@@ -483,7 +601,7 @@ export function getLocalChargerLive(chargePointId) {
         status: c.status,
         errorCode: c.error_code,
         info: c.info,
-        activeTx: isCharging ? connTx : null,
+        activeTx: (isCharging || connTx) ? connTx : null,
         telemetry: {
           powerKw: c.power_kw,
           voltage: c.voltage,
@@ -494,11 +612,48 @@ export function getLocalChargerLive(chargePointId) {
           energyKwh: c.energy_kwh,
           energyWh: c.energy_wh,
           soc: c.soc,
-          cost: activeTx && activeTx.connector_id === c.connector_id ? activeTx.cost : 0,
+          cost: connTx?.cost || 0,
         },
       };
     }),
-    activeTransaction: activeTx || null,
-    lastCompletedTx: lastCompletedTx || null,
+    activeTransaction: activeTransactions[0] ? {
+      transactionId: activeTransactions[0].transaction_id,
+      id: activeTransactions[0].transaction_id,
+      connectorId: activeTransactions[0].connector_id,
+      status: activeTransactions[0].status,
+      startTime: activeTransactions[0].start_time,
+      meterStart: activeTransactions[0].meter_start,
+      currentPowerKw: activeTransactions[0].current_power_kw,
+      energyDeliveredKwh: activeTransactions[0].energy_delivered_kwh,
+      energyDeliveredWh: activeTransactions[0].energy_delivered_wh,
+      cost: activeTransactions[0].cost,
+      socStart: activeTransactions[0].soc_start,
+      socCurrent: activeTransactions[0].soc_current,
+      socStop: activeTransactions[0].soc_stop,
+      idTag: activeTransactions[0].id_tag,
+      userEmail: activeTransactions[0].user_email,
+    } : null,
+    lastCompletedTx: lastCompletedTx ? {
+      transactionId: lastCompletedTx.transaction_id,
+      id: lastCompletedTx.transaction_id,
+      connectorId: lastCompletedTx.connector_id,
+      status: lastCompletedTx.status,
+      startTime: lastCompletedTx.start_time,
+      stopTime: lastCompletedTx.stop_time,
+      createdAt: lastCompletedTx.created_at || lastCompletedTx.start_time,
+      updatedAt: lastCompletedTx.updated_at || lastCompletedTx.stop_time,
+      meterStart: lastCompletedTx.meter_start,
+      meterStop: lastCompletedTx.meter_stop,
+      energyDeliveredKwh: lastCompletedTx.energy_delivered_kwh,
+      energyDeliveredWh: lastCompletedTx.energy_delivered_wh,
+      cost: lastCompletedTx.cost,
+      socStart: lastCompletedTx.soc_start,
+      socStop: lastCompletedTx.soc_stop,
+      socCurrent: lastCompletedTx.soc_current,
+      socGained: (lastCompletedTx.soc_start && lastCompletedTx.soc_stop && lastCompletedTx.soc_stop >= lastCompletedTx.soc_start) ? Number((lastCompletedTx.soc_stop - lastCompletedTx.soc_start).toFixed(1)) : null,
+      idTag: lastCompletedTx.id_tag,
+      userEmail: lastCompletedTx.user_email,
+      reason: lastCompletedTx.reason,
+    } : null,
   };
 }

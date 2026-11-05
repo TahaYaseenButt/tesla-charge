@@ -33,6 +33,7 @@ export function useChargerLive(chargerId: string) {
   const [lastHeartbeat, setLastHeartbeat] = useState<string | null>(null);
   const [connector1, setConnector1] = useState<LiveConnectorData>({ status: 'Available' });
   const [connector2, setConnector2] = useState<LiveConnectorData>({ status: 'Available' });
+  const [tariffRate, setTariffRate] = useState<number | null>(null);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -41,6 +42,7 @@ export function useChargerLive(chargerId: string) {
     getLocalChargerData(cleanId).then((c) => {
       if (c?.status) setIsOnline(c.status === 'Online');
       if (c?.lastHeartbeat) setLastHeartbeat(c.lastHeartbeat);
+      if (c?.tariffRate) setTariffRate(Number(c.tariffRate));
     });
     getLocalConnectorData(cleanId, '1').then((c1) => {
       if (c1?.status) setConnector1((prev) => ({ ...prev, ...c1 }));
@@ -63,10 +65,15 @@ export function useChargerLive(chargerId: string) {
       const online = statusRes.isConnected || charger.status === 'Online';
       setIsOnline(online);
       if (charger.lastHeartbeat) setLastHeartbeat(charger.lastHeartbeat);
+      if (charger.tariffRate) setTariffRate(Number(charger.tariffRate));
 
       // Connector 1
       const c1Raw = connectors.find((c: any) => c.connectorId === 1) || {};
-      const c1ActiveTx = (live.activeTransaction && live.activeTransaction.connector_id === 1) ? live.activeTransaction : null;
+      const c1ActiveTx =
+        (live.activeTransaction && (live.activeTransaction.connectorId === 1 || live.activeTransaction.connector_id === 1))
+          ? live.activeTransaction
+          : (live.activeTransactions?.['1'] || c1Raw.activeTx || null);
+
       const c1Data: LiveConnectorData = {
         status: c1Raw.status || (c1ActiveTx ? 'Charging' : 'Available'),
         telemetry: {
@@ -88,7 +95,11 @@ export function useChargerLive(chargerId: string) {
 
       // Connector 2
       const c2Raw = connectors.find((c: any) => c.connectorId === 2) || {};
-      const c2ActiveTx = (live.activeTransaction && live.activeTransaction.connector_id === 2) ? live.activeTransaction : null;
+      const c2ActiveTx =
+        (live.activeTransaction && (live.activeTransaction.connectorId === 2 || live.activeTransaction.connector_id === 2))
+          ? live.activeTransaction
+          : (live.activeTransactions?.['2'] || c2Raw.activeTx || null);
+
       const c2Data: LiveConnectorData = {
         status: c2Raw.status || (c2ActiveTx ? 'Charging' : 'Available'),
         telemetry: {
@@ -137,6 +148,7 @@ export function useChargerLive(chargerId: string) {
     hasAnyGunConnected,
     bothConnected,
     serverTimeOffset,
+    tariffRate,
     loading,
   };
 }

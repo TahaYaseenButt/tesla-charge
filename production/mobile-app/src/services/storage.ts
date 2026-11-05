@@ -50,7 +50,25 @@ export async function getLocalConnectorData(chargerId: string, connId: string): 
   if (!chargerId || !connId) return null;
   try {
     const raw = await AsyncStorage.getItem(KEYS.CONNECTOR(chargerId, connId));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Cold cache must never assume a car is actively charging or drawing power before live server confirms.
+    // Reset volatile live state so reload immediately presents the charger in a clean state without ghost cars.
+    if (parsed && (parsed.status === 'Charging' || parsed.activeTx || (parsed.telemetry?.powerKw && parsed.telemetry.powerKw > 0))) {
+      return {
+        ...parsed,
+        status: 'Available',
+        activeTx: null,
+        telemetry: {
+          ...parsed.telemetry,
+          powerKw: 0,
+          currentL1: 0,
+          voltage: 0,
+          soc: 0,
+        },
+      };
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -59,8 +77,8 @@ export async function getLocalConnectorData(chargerId: string, connId: string): 
 export async function saveLocalActiveTx(chargerId: string, tx: any): Promise<void> {
   if (!chargerId) return;
   try {
-    if (tx) {
-      await AsyncStorage.setItem(KEYS.ACTIVE_TX(chargerId), JSON.stringify(tx));
+    if (tx && tx.status === 'Charging') {
+      await AsyncStorage.setItem(KEYS.ACTIVE_TX(chargerId), JSON.stringify({ ...tx, cachedAt: Date.now() }));
     } else {
       await AsyncStorage.removeItem(KEYS.ACTIVE_TX(chargerId));
     }
@@ -73,7 +91,14 @@ export async function getLocalActiveTx(chargerId: string): Promise<any | null> {
   if (!chargerId) return null;
   try {
     const raw = await AsyncStorage.getItem(KEYS.ACTIVE_TX(chargerId));
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Active transactions are ephemeral: if cached more than 15 seconds ago, invalidate
+    if (parsed.cachedAt && Date.now() - parsed.cachedAt > 15 * 1000) {
+      await AsyncStorage.removeItem(KEYS.ACTIVE_TX(chargerId));
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -145,9 +170,14 @@ export async function mergeLocalTransaction(chargerId: string, tx: any, userId?:
     }
 
     const existing = txMap.get(newId) || {};
+    const validCreatedAt =
+      existing.createdAt && existing.createdAt !== existing.updatedAt
+        ? existing.createdAt
+        : (tx.createdAt && tx.createdAt !== tx.updatedAt ? tx.createdAt : (existing.createdAt || tx.createdAt));
     txMap.set(newId, {
       ...existing,
       ...tx,
+      ...(validCreatedAt ? { createdAt: validCreatedAt } : {}),
       id: newId,
       transactionId: tx.transactionId || existing.transactionId || newId,
     });
@@ -188,7 +218,7 @@ export async function fetchTransactionsWithCacheStrategy(
   if (!forceRefresh) {
     const cached = await getLocalTransactions(cleanId, userId);
     const syncTime = await getLastSyncTimestamp(cleanId, userId);
-    const isFresh = syncTime ? Date.now() - new Date(syncTime).getTime() < 30 * 1000 : false;
+    const isFresh = syncTime ? Date.now() - new Date(syncTime).getTime() < 3 * 1000 : false;
 
     if (cached && cached.length > 0 && isFresh) {
       return {
