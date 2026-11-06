@@ -20,6 +20,14 @@ export async function sendPushNotification(pushTokens, { title, body, data = {} 
     data,
     priority: "high",
     channelId: "charging-status",
+    badge: 1,
+    interruptionLevel: "time-sensitive",
+    android: {
+      channelId: "charging-status",
+      priority: "max",
+      sound: true,
+      vibrate: [0, 250, 250, 250],
+    },
   }));
 
   try {

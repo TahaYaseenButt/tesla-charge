@@ -5,7 +5,6 @@ import fs from "fs";
 import path from "path";
 import { sendPushNotification } from "./notificationService.js";
 import { getKarachiIso } from "../utils/time.js";
-import { db as sqliteDb } from "../database/db.js";
 
 /**
  * Fetch push tokens registered for a charger (SQLite + Firestore + RTDB fallback)
@@ -14,13 +13,14 @@ async function getSubscribedPushTokens(chargePointId) {
   const cleanId = (chargePointId || "charger1").trim().toLowerCase();
   const tokens = new Set();
 
-  // 1. Fetch from local SQLite push_tokens table
+  // 1. Fetch from local SQLite push_tokens table (optional if SQLite module exists)
   try {
-    const rows = sqliteDb.prepare("SELECT token FROM push_tokens WHERE charge_point_id = ? OR charge_point_id = 'charger1'").all(cleanId);
-    rows.forEach((r) => { if (r.token) tokens.add(r.token); });
-  } catch (sqlErr) {
-    console.warn("[Push] Error fetching tokens from SQLite:", sqlErr.message);
-  }
+    const dbMod = await import("../database/db.js").catch(() => null);
+    if (dbMod?.db) {
+      const rows = dbMod.db.prepare("SELECT token FROM push_tokens WHERE charge_point_id = ? OR charge_point_id = 'charger1'").all(cleanId);
+      rows.forEach((r) => { if (r.token) tokens.add(r.token); });
+    }
+  } catch (_sqlErr) {}
 
   // 2. Fetch from Firestore chargers/${cleanId}
   try {
