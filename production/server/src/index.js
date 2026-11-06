@@ -36,6 +36,11 @@ app.get("/monitor", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "monitor.html"));
 });
 
+// O&M Hardware Control & Diagnostics Center Route
+app.get("/om", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "om.html"));
+});
+
 // Fallback to dashboard
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));

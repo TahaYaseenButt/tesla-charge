@@ -153,6 +153,24 @@ apiRouter.get("/chargers/:chargePointId/config", async (req, res) => {
 });
 
 /**
+ * Direct API to send any OCPP 1.6 command (TriggerMessage, GetDiagnostics, SetChargingProfile, ClearCache, ChangeAvailability, etc.)
+ */
+apiRouter.post("/chargers/:chargePointId/command", async (req, res) => {
+  const { chargePointId } = req.params;
+  const { action, payload } = req.body;
+  if (!action) {
+    return res.status(400).json({ success: false, error: "Missing OCPP action name" });
+  }
+
+  try {
+    const result = await ocppServer.sendCall(chargePointId, action, payload || {});
+    return res.json({ success: true, action, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * Direct API to update tariff with tenant ownership check
  */
 apiRouter.post("/chargers/:chargePointId/tariff", async (req, res) => {

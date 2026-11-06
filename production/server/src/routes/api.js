@@ -495,6 +495,64 @@ apiRouter.post("/chargers/:chargePointId/stop", authenticateToken, async (req, r
   }
 });
 
+apiRouter.post("/chargers/:chargePointId/start", authenticateToken, async (req, res) => {
+  const { chargePointId } = req.params;
+  const connectorId = req.body.connectorId || 1;
+  const idTag = req.body.idTag || "OM_ADMIN";
+  try {
+    const result = await ocppServer.remoteStartTransaction(chargePointId.toLowerCase(), connectorId, idTag);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post("/chargers/:chargePointId/reset", authenticateToken, async (req, res) => {
+  const { chargePointId } = req.params;
+  const type = req.body.type || "Soft";
+  try {
+    const result = await ocppServer.reset(chargePointId.toLowerCase(), type);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get("/chargers/:chargePointId/config", authenticateToken, async (req, res) => {
+  const { chargePointId } = req.params;
+  try {
+    const result = await ocppServer.getConfiguration(chargePointId.toLowerCase(), []);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post("/chargers/:chargePointId/config", authenticateToken, async (req, res) => {
+  const { chargePointId } = req.params;
+  const { key, value } = req.body;
+  try {
+    const result = await ocppServer.changeConfiguration(chargePointId.toLowerCase(), key, value);
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post("/chargers/:chargePointId/command", authenticateToken, async (req, res) => {
+  const { chargePointId } = req.params;
+  const { action, payload } = req.body;
+  if (!action) {
+    return res.status(400).json({ success: false, error: "Missing OCPP action name" });
+  }
+  try {
+    const result = await ocppServer.sendCall(chargePointId.toLowerCase(), action, payload || {});
+    return res.json({ success: true, action, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // 4. TRANSACTION HISTORY
 // ==========================================

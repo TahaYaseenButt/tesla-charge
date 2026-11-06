@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tesla Charge — O&M Hardware Control & Diagnostics Center</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #111827;
+      --surface-2: #1e293b;
+      --surface-3: #334155;
+      --border: rgba(148, 163, 184, 0.16);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #0ea5e9;
+      --primary-hover: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #8b5cf6;
+      --radius: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding-bottom: 60px;
+    }
+
+    /* Top Navigation Bar */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(17, 24, 39, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0ea5e9, #2563eb);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 800;
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .nav-btn:hover {
+      background: var(--surface-3);
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 24px auto;
+      padding: 0 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Active Charger Identifier Banner */
+    .identifier-banner {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(30, 41, 59, 0.9));
+      border: 1px solid rgba(14, 165, 233, 0.4);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .id-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .id-eyebrow {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--primary);
+    }
+
+    .id-main-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .id-badge {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 24px;
+      font-weight: 900;
+      color: #fff;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      padding: 6px 16px;
+      border-radius: 10px;
+    }
+
+    .conn-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .conn-online {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .conn-offline {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    .selector-box {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .selector-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    select, input[type="text"], input[type="number"] {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      outline: none;
+    }
+
+    select:focus, input:focus {
+      border-color: var(--primary);
+    }
+
+    /* Hardware Metadata Strip */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+    }
+
+    .meta-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .meta-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .meta-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .profiles-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .profile-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: rgba(14, 165, 233, 0.14);
+      color: #38bdf8;
+      border: 1px solid rgba(14, 165, 233, 0.3);
+    }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .target-tag {
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(139, 92, 246, 0.15);
+      color: #c4b5fd;
+      border: 1px solid rgba(139, 92, 246, 0.35);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    /* Telemetry Metrics inside Connector Card */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .t-box {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+
+    .t-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .t-val {
+      font-size: 18px;
+      font-weight: 800;
+      margin-top: 2px;
+      color: #fff;
+    }
+
+    /* Buttons */
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      color: #fff;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary { background: var(--primary); }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+    .btn-success { background: var(--success); }
+    .btn-success:hover:not(:disabled) { background: #059669; }
+
+    .btn-warning { background: var(--warning); color: #0f172a; }
+    .btn-warning:hover:not(:disabled) { background: #d97706; color: #fff; }
+
+    .btn-danger { background: var(--danger); }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+
+    .btn-secondary {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover:not(:disabled) { background: var(--surface-3); }
+
+    /* Command Feedback Toast / Box */
+    .response-banner {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Tables */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(30, 41, 59, 0.45);
+    }
+
+    .badge-rw {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge-ro {
+      background: rgba(148, 163, 184, 0.12);
+      color: #94a3b8;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .key-name {
+      font-family: monospace;
+      font-weight: 700;
+      color: #38bdf8;
+      font-size: 13px;
+    }
+
+    .key-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Live Terminal */
+    .terminal {
+      background: #070a12;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      height: 300px;
+      overflow-y: auto;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .log-line {
+      padding: 3px 6px;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+
+    .log-in { color: #34d399; }
+    .log-out { color: #38bdf8; }
+    .log-warn { color: #fbbf24; }
+    .log-err { color: #f87171; }
+
+    @media (max-width: 768px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      .telemetry-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">🛠️</div>
+      <div>
+        <div class="brand-title">O&M Hardware Control & Diagnostics Center</div>
+        <div class="brand-sub">Inspect, configure, and control live OCPP & O&M charger parameters</div>
+      </div>
+    </div>
+    <div class="nav-links">
+      <span id="serverUrlBadge" style="font-size:12px; color:var(--text-muted); font-family:monospace;"></span>
+      <a href="/" class="nav-btn">🏠 Main Dashboard</a>
+      <a href="/monitor.html" class="nav-btn">🖥️ Server Diagnostics</a>
+      <button class="nav-btn" onclick="refreshAll()">🔄 Refresh Now</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- 1. ACTIVE CHARGER IDENTIFIER SELECTOR BANNER -->
+    <section class="identifier-banner">
+      <div class="id-left">
+        <div class="id-eyebrow">Currently Controlling & Monitoring Charger Identifier</div>
+        <div class="id-main-row">
+          <div class="id-badge" id="activeChargerBadge">charger1</div>
+          <div id="connectionStatusPill" class="conn-pill conn-online">
+            <span class="dot"></span>
+            <span id="connectionStatusText">Checking...</span>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
+          All Start/Stop, Unlock, Reboot, and Configuration commands below will be sent to <strong id="targetExplainId" style="color:#fff;">[charger1]</strong>.
+        </div>
+      </div>
+
+      <div class="selector-box">
+        <div>
+          <div class="selector-label">Switch Charger Identifier:</div>
+          <select id="chargerSelect" onchange="onSelectCharger(this.value)">
+            <option value="charger1">charger1 (Main 240kW OCPP)</option>
+            <option value="dc_evse">dc_evse (O&M Channel ID)</option>
+          </select>
+        </div>
+        <div>
+          <div class="selector-label">Or Type Custom ID:</div>
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="customChargerInput" placeholder="e.g. charger1" style="width:130px;" />
+            <button class="btn btn-primary" style="padding:8px 12px;" onclick="applyCustomCharger()">Set ID</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Connected Sockets List -->
+    <div class="card" style="padding:14px 20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:13px; font-weight:700;">
+          🔌 Live WebSocket Identifiers Connected to Server Right Now:
+          <span id="liveSocketsContainer" style="margin-left:8px;">Loading...</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-muted);">
+          Click any connected identifier badge to switch control to it
+        </div>
+      </div>
+    </div>
+
+    <!-- Hardware Metadata Strip -->
+    <section class="meta-grid">
+      <div class="meta-card">
+        <div class="meta-label">Charger Identifier (OCPP ID)</div>
+        <div class="meta-val" id="metaChargerId">charger1</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-label">Hardware Vendor / Model</div>
+        <div class="meta-val" id="metaVendorModel">DC_TYPE / DC_EVSE (240kW)</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-label">Controller Firmware</div>
+        <div class="meta-val" id="metaFirmware">-</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-label">Last Heartbeat & Tariff</div>
+        <div class="meta-val" id="metaHeartbeat">-</div>
+      </div>
+      <div class="meta-card" style="grid-column: span 2;">
+        <div class="meta-label">Hardware Supported Feature Profiles</div>
+        <div class="profiles-row" id="metaProfiles">
+          <span class="profile-chip">Core</span>
+          <span class="profile-chip">FirmwareManagement</span>
+          <span class="profile-chip">LocalAuthListManagement</span>
+          <span class="profile-chip">Reservation</span>
+          <span class="profile-chip">SmartCharging</span>
+          <span class="profile-chip">RemoteTrigger</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Command Execution Output Banner -->
+    <div id="cmdResponseBanner" class="response-banner"></div>
+
+    <!-- 2. LIVE CONNECTOR TELEMETRY & DIRECT CONTROLS (GUN 1 & GUN 2) -->
+    <section class="grid-2">
+      <!-- GUN A (Connector 1) -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">⚡ Gun A (Connector #1) Live Control</div>
+            <div class="card-sub">Real-time telemetry & transaction control</div>
+          </div>
+          <span class="target-tag">Target: <span class="lbl-cid">charger1</span> • Conn #1</span>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="t-box">
+            <div class="t-label">Status</div>
+            <div class="t-val" id="c1Status" style="color:#34d399;">Available</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Power Output</div>
+            <div class="t-val" id="c1Power">0.0 kW</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Battery SoC</div>
+            <div class="t-val" id="c1Soc">—</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Voltage / Current</div>
+            <div class="t-val" id="c1Vi" style="font-size:14px;">0V / 0A</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Session Energy</div>
+            <div class="t-val" id="c1Energy" style="font-size:15px;">0.00 kWh</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Active Tx ID</div>
+            <div class="t-val" id="c1Tx" style="font-size:15px;">None</div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success" onclick="startGun(1)">▶ Remote Start Gun A</button>
+          <button class="btn btn-danger" onclick="stopGun(1)">⏹ Remote Stop Gun A</button>
+          <button class="btn btn-warning" onclick="unlockGun(1)">🔓 Unlock Gun A Cable</button>
+          <button class="btn btn-secondary" onclick="triggerGunTelemetry(1)">📡 Refresh Meter (#1)</button>
+        </div>
+      </div>
+
+      <!-- GUN B (Connector 2) -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">⚡ Gun B (Connector #2) Live Control</div>
+            <div class="card-sub">Real-time telemetry & transaction control</div>
+          </div>
+          <span class="target-tag">Target: <span class="lbl-cid">charger1</span> • Conn #2</span>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="t-box">
+            <div class="t-label">Status</div>
+            <div class="t-val" id="c2Status" style="color:#34d399;">Available</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Power Output</div>
+            <div class="t-val" id="c2Power">0.0 kW</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Battery SoC</div>
+            <div class="t-val" id="c2Soc">—</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Voltage / Current</div>
+            <div class="t-val" id="c2Vi" style="font-size:14px;">0V / 0A</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Session Energy</div>
+            <div class="t-val" id="c2Energy" style="font-size:15px;">0.00 kWh</div>
+          </div>
+          <div class="t-box">
+            <div class="t-label">Active Tx ID</div>
+            <div class="t-val" id="c2Tx" style="font-size:15px;">None</div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success" onclick="startGun(2)">▶ Remote Start Gun B</button>
+          <button class="btn btn-danger" onclick="stopGun(2)">⏹ Remote Stop Gun B</button>
+          <button class="btn btn-warning" onclick="unlockGun(2)">🔓 Unlock Gun B Cable</button>
+          <button class="btn btn-secondary" onclick="triggerGunTelemetry(2)">📡 Refresh Meter (#2)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. O&M HARDWARE MAINTENANCE, REBOOT & SMART POWER LIMIT CONTROLS -->
+    <section class="grid-2">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🛠️ O&M System & Maintenance Actions</div>
+            <div class="card-sub">Reboot controller, clear cache, or trigger diagnostic log upload</div>
+          </div>
+          <span class="target-tag">Target: <span class="lbl-cid">charger1</span></span>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-warning" onclick="rebootCharger('Soft')">🔄 Soft Reboot Charger</button>
+          <button class="btn btn-danger" onclick="rebootCharger('Hard')">⚡ Hard Reboot (Full Reset)</button>
+          <button class="btn btn-primary" onclick="fetchChargerConfig()">📋 Pull Live Hardware Config</button>
+          <button class="btn btn-secondary" onclick="sendCustomOcpp('ClearCache', {})">🧹 Clear RFID Auth Cache</button>
+        </div>
+
+        <div style="border-top:1px solid var(--border); padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+          <div style="font-size:12px; font-weight:700; color:var(--text-muted);">
+            📦 Remote Diagnostic Log Upload (OCPP GetDiagnostics):
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <input type="text" id="diagUploadUrl" value="https://tesla-charge.online/api/diagnostics" style="flex:1; min-width:220px;" />
+            <button class="btn btn-primary" onclick="requestDiagnostics()">Upload Charger Logs</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Smart Charging & Availability Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🔋 Smart Charging (kW Power Limit) & Availability</div>
+            <div class="card-sub">Dynamically cap charger output power to protect solar/inverter loads</div>
+          </div>
+          <span class="target-tag">Target: <span class="lbl-cid">charger1</span></span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div>
+            <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">
+              Set Max Output Power Limit (SmartCharging Profile):
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-secondary" onclick="setPowerLimitKw(30)">Cap at 30 kW</button>
+              <button class="btn btn-secondary" onclick="setPowerLimitKw(60)">Cap at 60 kW</button>
+              <button class="btn btn-secondary" onclick="setPowerLimitKw(120)">Cap at 120 kW</button>
+              <button class="btn btn-primary" onclick="setPowerLimitKw(240)">Full 240 kW</button>
+              <button class="btn btn-secondary" onclick="sendCustomOcpp('ClearChargingProfile', {})">Clear Limit</button>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid var(--border); padding-top:12px;">
+            <div style="font-size:12px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">
+              Connector Availability Mode (Enable / Disable Guns for Maintenance):
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-success" onclick="setAvailability(0, 'Operative')">✅ Enable Entire Charger</button>
+              <button class="btn btn-danger" onclick="setAvailability(0, 'Inoperative')">🚫 Maintenance Mode (Disable All)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. LIVE HARDWARE CONFIGURATION INSPECTOR & EDITOR (GetConfiguration / ChangeConfiguration) -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">⚙️ Live Hardware Configuration Parameters (<span class="lbl-cid">charger1</span>)</div>
+          <div class="card-sub">
+            Pulled directly from charger internal flash via OCPP <code>GetConfiguration</code>. Edit any <strong>Read/Write</strong> value and click <strong>Apply</strong>.
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <input type="text" id="configSearch" placeholder="Search parameter key..." oninput="renderConfigTable()" />
+          <button class="btn btn-primary" onclick="fetchChargerConfig()">🔄 Reload from Charger</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:28%;">Parameter Key & Explanation</th>
+              <th style="width:12%;">Access</th>
+              <th style="width:28%;">Current Live Value</th>
+              <th style="width:32%;">Modify / Control Value</th>
+            </tr>
+          </thead>
+          <tbody id="configTableBody">
+            <tr>
+              <td colspan="4" style="text-align:center; color:var(--text-muted); padding:24px;">
+                Loading live hardware configuration from charger...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 5. COMPLETE REFERENCE GUIDE: WHAT CAN BE CONTROLLED & HOW -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📖 Complete Reference Guide: What You Can Control & How</div>
+          <div class="card-sub">Every supported hardware control, OCPP command, and API endpoint for your station</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Feature / Capability</th>
+              <th>What It Controls on the Charger</th>
+              <th>How to Control It (UI or API)</th>
+              <th>OCPP 1.6 Action / Key</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Start / Stop Charging</strong></td>
+              <td>Starts or stops power delivery on Gun A (Connector 1) or Gun B (Connector 2).</td>
+              <td>Use the <strong>Remote Start / Stop</strong> buttons above, Mobile App Control tab, or <code>POST /api/chargers/:id/start</code> & <code>/stop</code></td>
+              <td><code>RemoteStartTransaction</code><br><code>RemoteStopTransaction</code></td>
+            </tr>
+            <tr>
+              <td><strong>Force Unlock Charging Gun</strong></td>
+              <td>Releases the electronic lock inside Gun A or Gun B if a plug is stuck.</td>
+              <td>Click <strong>Unlock Gun A/B Cable</strong> above or <code>POST /api/chargers/:id/unlock</code> with <code>{"connectorId": 1}</code></td>
+              <td><code>UnlockConnector</code></td>
+            </tr>
+            <tr>
+              <td><strong>Soft / Hard Reboot</strong></td>
+              <td><strong>Soft:</strong> Restarts OCPP software process.<br><strong>Hard:</strong> Full physical reboot of charger controller board.</td>
+              <td>Click <strong>Soft Reboot</strong> or <strong>Hard Reboot</strong> above, or <code>POST /api/chargers/:id/reset</code> with <code>{"type": "Soft"|"Hard"}</code></td>
+              <td><code>Reset</code></td>
+            </tr>
+            <tr>
+              <td><strong>Meter Sample Speed</strong></td>
+              <td>Controls how many seconds between live kW, Voltage, Current, and SoC updates during charging (currently <code>10s</code>).</td>
+              <td>In the Configuration table above, change <code>MeterValueSampleInterval</code> (e.g. <code>5</code> or <code>10</code>) and click <strong>Apply</strong>.</td>
+              <td><code>ChangeConfiguration</code><br>(<code>MeterValueSampleInterval</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>Heartbeat & Ping Speed</strong></td>
+              <td>Controls how frequently the charger sends keepalive signals to stay Online (currently <code>30s</code>).</td>
+              <td>In the Configuration table above, edit <code>HeartbeatInterval</code> or <code>WebSocketPingInterval</code> and click <strong>Apply</strong>.</td>
+              <td><code>ChangeConfiguration</code><br>(<code>HeartbeatInterval</code>)</td>
+            </tr>
+            <tr>
+              <td><strong>Offline RFID & Plug-and-Charge</strong></td>
+              <td>Allows charging to start automatically or via RFID card even if internet drops (<code>LocalAuthorizeOffline</code>, <code>AllowOfflineTxForUnknownId</code>).</td>
+              <td>Toggle <code>true</code> / <code>false</code> on <code>AllowOfflineTxForUnknownId</code> or <code>LocalAuthorizeOffline</code> in the table above.</td>
+              <td><code>ChangeConfiguration</code></td>
+            </tr>
+            <tr>
+              <td><strong>Auto-Unlock When Car Stops</strong></td>
+              <td>Automatically unlocks the gun when the vehicle finishes or disconnects on EV side.</td>
+              <td>Set <code>UnlockConnectorOnEVSideDisconnect</code> to <code>true</code> in the Configuration table above.</td>
+              <td><code>ChangeConfiguration</code></td>
+            </tr>
+            <tr>
+              <td><strong>Smart Power Limiting (kW Cap)</strong></td>
+              <td>Caps maximum DC output power (e.g., 30kW, 60kW, 120kW, 240kW) to prevent overloading solar/grid inverters.</td>
+              <td>Click the <strong>Cap at 30/60/120/240 kW</strong> buttons in the Smart Charging panel above.</td>
+              <td><code>SetChargingProfile</code><br><code>ClearChargingProfile</code></td>
+            </tr>
+            <tr>
+              <td><strong>Remote Diagnostic Logs</strong></td>
+              <td>Commands the charger to package its internal fault & hardware logs and upload them to a server URL.</td>
+              <td>Enter target URL in <strong>Remote Diagnostic Log Upload</strong> above and click <strong>Upload Charger Logs</strong>.</td>
+              <td><code>GetDiagnostics</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 6. LIVE OCPP & O&M PACKET STREAM TERMINAL -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">💻 Live OCPP & O&M Server Packet Stream</div>
+          <div class="card-sub">Real-time WebSocket frames showing exact charger identifiers (<code>[charger1]</code>, <code>[dc_evse]</code>, etc.)</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <label style="font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="filterLogsByCharger" onchange="renderLogs()" />
+            Show only <strong class="lbl-cid" style="color:#fff;">charger1</strong> packets
+          </label>
+        </div>
+      </div>
+
+      <div class="terminal" id="terminalBox">
+        <div class="log-line">Connecting to live server packet stream...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // Automatically use current server origin if hosted on HTTP/HTTPS, or https://tesla-charge.online when opened as a local file
+    const BASE_URL = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+      ? window.location.origin
+      : 'https://tesla-charge.online';
+
+    document.getElementById('serverUrlBadge').textContent = `Server: ${BASE_URL}`;
+
+    let currentChargerId = 'charger1';
+    let cachedConfigKeys = [];
+    let cachedLogs = [];
+
+    // Human-readable descriptions for standard OCPP 1.6 configuration keys
+    const KEY_DESCRIPTIONS = {
+      AllowOfflineTxForUnknownId: 'Allow unknown RFID cards to start charging when charger is offline from server.',
+      AuthorizationCacheEnabled: 'Cache authorized RFID tags locally inside the charger for instant tap response.',
+      AuthorizeRemoteTxRequests: 'Require charger to send an Authorize check after receiving RemoteStartTransaction.',
+      ClockAlignedDataInterval: 'Interval (in seconds) for clock-aligned meter data transmissions.',
+      ConnectionTimeOut: 'Seconds to wait for driver to plug cable into vehicle after authorization before cancelling.',
+      ConnectorPhaseRotation: 'Phase rotation configuration of grid AC input.',
+      GetConfigurationMaxKeys: 'Maximum number of configuration keys returned in a single query.',
+      HeartbeatInterval: 'Interval (in seconds) between charger Heartbeat keepalive packets to server.',
+      LocalAuthorizeOffline: 'Authorize locally stored RFID cards when charger loses internet connection.',
+      LocalPreAuthorize: 'Start charging immediately for locally cached RFID cards without waiting for server round-trip.',
+      MeterValuesAlignedData: 'Electrical measurands included in periodic clock-aligned reports.',
+      MeterValuesSampledData: 'Electrical measurands sent during active charging (Current, Energy, Power, SoC, Voltage).',
+      MeterValueSampleInterval: 'How often (in seconds) live kW, SoC%, Voltage, and Current are sent during charging.',
+      NumberOfConnectors: 'Number of physical charging guns on this station (2 = Gun A & Gun B).',
+      ResetRetries: 'Number of times the charger retries a reset operation.',
+      StopTransactionOnEVSideDisconnect: 'Automatically stop the transaction if the vehicle side is unplugged.',
+      StopTransactionOnInvalidId: 'Stop an active charging session if the RFID tag is rejected by the server.',
+      StopTxnAlignedData: 'Measurands recorded in StopTransaction aligned data.',
+      StopTxnSampledData: 'Measurands recorded when a session stops.',
+      SupportedFeatureProfiles: 'Active OCPP 1.6 hardware feature modules supported by this controller.',
+      TransactionMessageAttempts: 'How many times the charger retries sending Start/StopTransaction if network is unstable.',
+      TransactionMessageRetryInterval: 'Seconds to wait between transaction message retries.',
+      UnlockConnectorOnEVSideDisconnect: 'Automatically unlock the charging gun lock when unplugged from EV side.',
+      WebSocketPingInterval: 'Seconds between WebSocket TCP ping frames to keep cellular/router NAT open.',
+      LocalAuthListEnabled: 'Enable internal flash memory list of authorized RFID cards.',
+      LocalAuthListMaxLength: 'Maximum number of RFID cards that can be stored inside the charger hardware.',
+      SendLocalListMaxLength: 'Maximum RFID cards that can be pushed in a single SendLocalList message.',
+      ReserveConnectorZeroSupported: 'Supports reserving the entire station (Connector 0) for a driver.',
+      ChargeProfileMaxStackLevel: 'Maximum stack priority depth for Smart Charging power schedules.',
+      ChargingScheduleAllowedChargingRateUnit: 'Unit used for Smart Charging limits (Power = Watts/kW, Current = Amps).',
+      ChargingScheduleMaxPeriods: 'Maximum time periods per Smart Charging profile.',
+      MaxChargingProfilesInstalled: 'Maximum number of concurrent Smart Charging profiles.',
+      SecurityProfile: 'OCPP security profile level (0 = ws, 1/2/3 = TLS/wss authentication).',
+      CpoName: 'Charge Point Operator identifier name configured inside the charger.'
+    };
+
+    function updateChargerLabels(id) {
+      currentChargerId = (id || 'charger1').trim().toLowerCase();
+      document.getElementById('activeChargerBadge').textContent = currentChargerId;
+      document.getElementById('targetExplainId').textContent = `[${currentChargerId}]`;
+      document.getElementById('metaChargerId').textContent = currentChargerId;
+      document.querySelectorAll('.lbl-cid').forEach((el) => {
+        el.textContent = currentChargerId;
+      });
+    }
+
+    function onSelectCharger(val) {
+      updateChargerLabels(val);
+      refreshAll();
+    }
+
+    function applyCustomCharger() {
+      const val = document.getElementById('customChargerInput').value.trim();
+      if (!val) return;
+      const sel = document.getElementById('chargerSelect');
+      if (!Array.from(sel.options).some((o) => o.value === val.toLowerCase())) {
+        const opt = document.createElement('option');
+        opt.value = val.toLowerCase();
+        opt.textContent = `${val.toLowerCase()} (Custom ID)`;
+        sel.appendChild(opt);
+      }
+      sel.value = val.toLowerCase();
+      updateChargerLabels(val);
+      refreshAll();
+    }
+
+    function showResponseBanner(title, data, isError = false) {
+      const box = document.getElementById('cmdResponseBanner');
+      box.style.display = 'block';
+      box.style.borderLeftColor = isError ? 'var(--danger)' : 'var(--success)';
+      const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      box.textContent = `[${new Date().toLocaleTimeString()}] ${title} (Target: [${currentChargerId}]):\n${text}`;
+    }
+
+    async function fetchStatusAndLive() {
+      try {
+        const [statusRes, liveRes, chargersRes] = await Promise.all([
+          fetch(`${BASE_URL}/api/status?chargerId=${encodeURIComponent(currentChargerId)}`).then((r) => r.json()).catch(() => null),
+          fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/live`).then((r) => r.json()).catch(() => null),
+          fetch(`${BASE_URL}/api/chargers`).then((r) => r.json()).catch(() => null),
+        ]);
+
+        // Populate dropdown with any registered chargers
+        if (chargersRes && Array.isArray(chargersRes.chargers)) {
+          const sel = document.getElementById('chargerSelect');
+          const existing = new Set(Array.from(sel.options).map((o) => o.value));
+          chargersRes.chargers.forEach((c) => {
+            const cid = String(c.chargePointId || c.id || '').toLowerCase();
+            if (cid && !existing.has(cid)) {
+              const opt = document.createElement('option');
+              opt.value = cid;
+              opt.textContent = `${cid} (${c.model || 'Station'} - ${c.status || 'Offline'})`;
+              sel.appendChild(opt);
+              existing.add(cid);
+            }
+          });
+        }
+
+        // Show live connected WebSocket identifiers
+        const connectedList = statusRes?.connectedChargers || [];
+        const liveContainer = document.getElementById('liveSocketsContainer');
+        if (connectedList.length === 0) {
+          liveContainer.innerHTML = `<span style="color:var(--danger);">No active WebSocket connections</span>`;
+        } else {
+          liveContainer.innerHTML = connectedList
+            .map(
+              (c) =>
+                `<button class="nav-btn" style="padding:4px 10px; font-family:monospace; border-color:${
+                  c.chargePointId === currentChargerId ? 'var(--primary)' : 'var(--border)'
+                };" onclick="onSelectCharger('${c.chargePointId}')">🟢 [${c.chargePointId}] (${c.readyState})</button>`
+            )
+            .join(' ');
+        }
+
+        const isWsConnected = connectedList.some(
+          (c) => String(c.chargePointId).toLowerCase() === currentChargerId
+        );
+
+        const chargerDoc = liveRes?.charger || statusRes?.live?.charger || {};
+        const isOnline = isWsConnected || String(chargerDoc.status || '').toLowerCase() === 'online';
+
+        const pill = document.getElementById('connectionStatusPill');
+        const pillText = document.getElementById('connectionStatusText');
+        if (isWsConnected) {
+          pill.className = 'conn-pill conn-online';
+          pillText.textContent = `ONLINE • Live WebSocket Connected [${currentChargerId}]`;
+        } else if (isOnline) {
+          pill.className = 'conn-pill conn-online';
+          pillText.textContent = `STANDBY • Registered (${currentChargerId})`;
+        } else {
+          pill.className = 'conn-pill conn-offline';
+          pillText.textContent = `OFFLINE • Socket Not Connected [${currentChargerId}]`;
+        }
+
+        // Update Hardware Metadata
+        document.getElementById('metaVendorModel').textContent =
+          `${chargerDoc.vendor || 'DC_TYPE'} / ${chargerDoc.hardwareModel || 'DC_EVSE'} (${chargerDoc.model || '240kW'})`;
+        document.getElementById('metaFirmware').textContent =
+          chargerDoc.firmwareVersion || 'N/A';
+        document.getElementById('metaHeartbeat').textContent =
+          `${chargerDoc.lastHeartbeat ? new Date(chargerDoc.lastHeartbeat).toLocaleTimeString() : 'N/A'} • PKR ${chargerDoc.tariffRate || 125}/kWh`;
+
+        // Update Connector 1 & Connector 2 Telemetry
+        const connectors = liveRes?.connectors || statusRes?.live?.connectors || [];
+        const activeMap = liveRes?.activeTransactions || statusRes?.live?.activeTransactions || {};
+        const c1 = connectors.find((c) => Number(c.connectorId) === 1) || {};
+        const c2 = connectors.find((c) => Number(c.connectorId) === 2) || {};
+        const tx1 = c1.activeTx || activeMap['1'] || null;
+        const tx2 = c2.activeTx || activeMap['2'] || null;
+
+        updateGunUI(1, c1, tx1);
+        updateGunUI(2, c2, tx2);
+
+        // Update logs
+        if (statusRes?.recentLogs) {
+          cachedLogs = statusRes.recentLogs;
+          renderLogs();
+        }
+      } catch (err) {
+        console.warn('Error fetching live status:', err);
+      }
+    }
+
+    function updateGunUI(gunNum, conn, tx) {
+      const prefix = gunNum === 1 ? 'c1' : 'c2';
+      const status = conn.status || (tx?.status === 'Charging' ? 'Charging' : 'Available');
+      const tel = conn.telemetry || {};
+      const power = Number(tel.powerKw || tx?.currentPowerKw || 0);
+      const soc = Number(tel.soc || tx?.soc || tx?.socCurrent || 0);
+      const volt = Number(tel.voltage || tel.voltageL1 || 0);
+      const amp = Number(tel.currentL1 || 0);
+      const kwh = Number(tx?.energyDeliveredKwh || (tx?.energyDeliveredWh ? tx.energyDeliveredWh / 1000 : 0));
+      const txId = tx?.transactionId || tx?.id || null;
+
+      const statusEl = document.getElementById(`${prefix}Status`);
+      statusEl.textContent = status;
+      statusEl.style.color =
+        status === 'Charging' ? '#38bdf8' : status === 'Preparing' ? '#fbbf24' : status === 'Faulted' ? '#f87171' : '#34d399';
+
+      document.getElementById(`${prefix}Power`).textContent = `${power.toFixed(1)} kW`;
+      document.getElementById(`${prefix}Soc`).textContent = soc > 0 ? `${Math.round(soc)}%` : '—';
+      document.getElementById(`${prefix}Vi`).textContent = `${volt.toFixed(0)}V / ${amp.toFixed(1)}A`;
+      document.getElementById(`${prefix}Energy`).textContent = `${kwh.toFixed(2)} kWh`;
+      document.getElementById(`${prefix}Tx`).textContent = txId ? `#${txId}` : 'None';
+    }
+
+    async function fetchChargerConfig() {
+      const tbody = document.getElementById('configTableBody');
+      try {
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/config`);
+        const data = await res.json();
+        if (!data.success || !data.result?.configurationKey) {
+          tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">
+            Could not fetch live configuration from [${currentChargerId}]: ${data.error || 'Charger not responding to GetConfiguration'}
+          </td></tr>`;
+          return;
+        }
+
+        cachedConfigKeys = data.result.configurationKey.filter((k) => k.key && k.key.trim() !== '');
+
+        // Update SupportedFeatureProfiles chips if present
+        const profKey = cachedConfigKeys.find((k) => k.key === 'SupportedFeatureProfiles');
+        if (profKey && profKey.value) {
+          document.getElementById('metaProfiles').innerHTML = profKey.value
+            .split(',')
+            .map((p) => `<span class="profile-chip">${p.trim()}</span>`)
+            .join('');
+        }
+
+        renderConfigTable();
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--danger); padding:20px;">
+          Error querying configuration: ${err.message}
+        </td></tr>`;
+      }
+    }
+
+    function renderConfigTable() {
+      const tbody = document.getElementById('configTableBody');
+      const query = (document.getElementById('configSearch').value || '').toLowerCase().trim();
+
+      const filtered = cachedConfigKeys.filter(
+        (item) =>
+          item.key.toLowerCase().includes(query) ||
+          (KEY_DESCRIPTIONS[item.key] || '').toLowerCase().includes(query)
+      );
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">No matching configuration keys found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered
+        .map((item) => {
+          const desc = KEY_DESCRIPTIONS[item.key] || 'Charger hardware configuration parameter.';
+          const isRo = Boolean(item.readonly);
+          const safeKey = item.key.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+          return `
+            <tr>
+              <td>
+                <div class="key-name">${item.key}</div>
+                <div class="key-desc">${desc}</div>
+              </td>
+              <td>
+                ${
+                  isRo
+                    ? `<span class="badge-ro">🔒 Read-Only</span>`
+                    : `<span class="badge-rw">✏️ Read / Write</span>`
+                }
+              </td>
+              <td style="font-family:monospace; font-weight:700; color:#f8fafc;">
+                ${item.value !== undefined && item.value !== '' ? item.value : '<span style="color:#64748b;">(empty)</span>'}
+              </td>
+              <td>
+                ${
+                  isRo
+                    ? `<span style="font-size:12px; color:var(--text-muted);">Locked by charger firmware</span>`
+                    : `<div style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" id="cfg_input_${safeKey}" value="${String(item.value || '').replace(/"/g, '&quot;')}" style="flex:1; min-width:110px;" />
+                        <button class="btn btn-primary" style="padding:7px 12px;" onclick="updateConfigKey('${item.key}', 'cfg_input_${safeKey}')">Apply</button>
+                      </div>`
+                }
+              </td>
+            </tr>
+          `;
+        })
+        .join('');
+    }
+
+    async function updateConfigKey(key, inputId) {
+      const newVal = document.getElementById(inputId).value;
+      try {
+        showResponseBanner(`Sending ChangeConfiguration (${key} = ${newVal})...`, 'Waiting for charger response...');
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value: String(newVal) }),
+        });
+        const data = await res.json();
+        showResponseBanner(`ChangeConfiguration [${key}] Result`, data, !data.success);
+        fetchChargerConfig();
+      } catch (err) {
+        showResponseBanner(`ChangeConfiguration Error`, err.message, true);
+      }
+    }
+
+    async function startGun(connectorId) {
+      try {
+        showResponseBanner(`Starting Charging on Gun #${connectorId}...`, 'Sending RemoteStartTransaction...');
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId, idTag: 'OM_ADMIN' }),
+        });
+        const data = await res.json();
+        showResponseBanner(`RemoteStartTransaction (Connector #${connectorId})`, data, !data.success);
+        setTimeout(fetchStatusAndLive, 1000);
+      } catch (err) {
+        showResponseBanner(`Start Error`, err.message, true);
+      }
+    }
+
+    async function stopGun(connectorId) {
+      try {
+        showResponseBanner(`Stopping Charging on Gun #${connectorId}...`, 'Sending RemoteStopTransaction...');
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId }),
+        });
+        const data = await res.json();
+        showResponseBanner(`RemoteStopTransaction (Connector #${connectorId})`, data, !data.success);
+        setTimeout(fetchStatusAndLive, 1000);
+      } catch (err) {
+        showResponseBanner(`Stop Error`, err.message, true);
+      }
+    }
+
+    async function unlockGun(connectorId) {
+      try {
+        showResponseBanner(`Unlocking Gun #${connectorId}...`, 'Sending UnlockConnector...');
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/unlock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ connectorId }),
+        });
+        const data = await res.json();
+        showResponseBanner(`UnlockConnector (Connector #${connectorId})`, data, !data.success);
+      } catch (err) {
+        showResponseBanner(`Unlock Error`, err.message, true);
+      }
+    }
+
+    async function rebootCharger(type) {
+      if (!confirm(`Send ${type} Reboot command to charger [${currentChargerId}]?`)) return;
+      try {
+        showResponseBanner(`Sending ${type} Reset...`, 'Waiting for charger acknowledgment...');
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type }),
+        });
+        const data = await res.json();
+        showResponseBanner(`Reset (${type}) Response`, data, !data.success);
+      } catch (err) {
+        showResponseBanner(`Reset Error`, err.message, true);
+      }
+    }
+
+    async function sendCustomOcpp(action, payload) {
+      try {
+        showResponseBanner(`Sending ${action}...`, payload);
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, payload }),
+        });
+        const data = await res.json();
+        showResponseBanner(`${action} Response`, data, !data.success);
+      } catch (err) {
+        showResponseBanner(`${action} Error`, err.message, true);
+      }
+    }
+
+    function triggerGunTelemetry(connectorId) {
+      sendCustomOcpp('TriggerMessage', {
+        requestedMessage: 'MeterValues',
+        connectorId: Number(connectorId),
+      });
+    }
+
+    function requestDiagnostics() {
+      const location = document.getElementById('diagUploadUrl').value.trim();
+      if (!location) return;
+      sendCustomOcpp('GetDiagnostics', { location, retries: 2, retryInterval: 30 });
+    }
+
+    function setPowerLimitKw(kw) {
+      const watts = Number(kw) * 1000;
+      sendCustomOcpp('SetChargingProfile', {
+        connectorId: 0,
+        csChargingProfiles: {
+          chargingProfileId: 1,
+          stackLevel: 1,
+          chargingProfilePurpose: 'ChargePointMaxProfile',
+          chargingProfileKind: 'Absolute',
+          chargingSchedule: {
+            chargingRateUnit: 'W',
+            chargingSchedulePeriod: [{ startPeriod: 0, limit: watts }],
+          },
+        },
+      });
+    }
+
+    function setAvailability(connectorId, type) {
+      sendCustomOcpp('ChangeAvailability', {
+        connectorId: Number(connectorId),
+        type,
+      });
+    }
+
+    function renderLogs() {
+      const box = document.getElementById('terminalBox');
+      const onlyCurrent = document.getElementById('filterLogsByCharger').checked;
+      const filtered = onlyCurrent
+        ? cachedLogs.filter((l) => l.toLowerCase().includes(`[${currentChargerId}]`))
+        : cachedLogs;
+
+      if (filtered.length === 0) {
+        box.innerHTML = `<div class="log-line" style="color:var(--text-muted);">No recent packets for [${currentChargerId}].</div>`;
+        return;
+      }
+
+      box.innerHTML = filtered
+        .map((line) => {
+          let cls = 'log-line';
+          if (line.includes('<-')) cls += ' log-in';
+          else if (line.includes('->')) cls += ' log-out';
+          else if (line.includes('disconnected') || line.includes('Error') || line.includes('❌')) cls += ' log-err';
+          else if (line.includes('connected')) cls += ' log-warn';
+          return `<div class="${cls}">${line.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+        })
+        .join('');
+    }
+
+    function refreshAll() {
+      fetchStatusAndLive();
+      fetchChargerConfig();
+    }
+
+    // Initial load + 3s live polling
+    refreshAll();
+    setInterval(fetchStatusAndLive, 3000);
+  </script>
+</body>
+</html>
