@@ -126,6 +126,21 @@ export class OCPPServer {
     this.connections.set(chargePointId, connEntry);
     saveChargerHeartbeat(chargePointId).catch(() => {});
 
+    // If this is the auxiliary O&M channel ([dc_evse]), send an immediate 200ms handshake
+    // so the charger's 2-second O&M connection watchdog receives a server response
+    if (chargePointId === "dc_evse" || chargePointId.includes("om")) {
+      setTimeout(() => {
+        if (ws.readyState === 1) {
+          try {
+            ws.ping();
+            const initCall = [2, "om-handshake-1", "GetConfiguration", {}];
+            ws.send(JSON.stringify(initCall));
+            this.log(`-> [${chargePointId}] Sent O&M initial handshake`);
+          } catch (_e) {}
+        }
+      }, 150);
+    }
+
     ws.on("message", async (data) => {
       connEntry.lastActivity = Date.now();
       try {
@@ -133,7 +148,8 @@ export class OCPPServer {
         const parsed = JSON.parse(text);
         await this.handleMessage(chargePointId, ws, parsed);
       } catch (err) {
-        this.log(`[Error parsing message from ${chargePointId}]: ${err.message}`);
+        const preview = data.toString().slice(0, 120);
+        this.log(`[Raw/Non-JSON message from ${chargePointId}]: ${preview} (${err.message})`);
       }
     });
 
