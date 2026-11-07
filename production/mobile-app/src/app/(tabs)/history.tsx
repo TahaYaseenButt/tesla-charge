@@ -65,6 +65,289 @@ function formatDateKey(date: Date): string {
   return getKarachiDateParts(date).dateStr;
 }
 
+export interface AbnormalityItem {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  badge: string;
+  title: string;
+  reason: string;
+}
+
+export interface SessionDiagnostics {
+  isAbnormal: boolean;
+  highestSeverity: 'normal' | 'info' | 'warning' | 'error';
+  badges: { text: string; severity: 'error' | 'warning' | 'info' }[];
+  items: AbnormalityItem[];
+  recoveredStartSoc: number | null;
+  recoveredStopSoc: number | null;
+  recoveredFromTxId: string | null;
+  siblingIds: string[];
+  clockOffsetHours: number | null;
+}
+
+function getStopReasonDescription(reason?: string | null, isCompleted?: boolean): { label: string; desc: string; isAbnormalStop: boolean } {
+  if (!isCompleted) {
+    return { label: 'In Progress', desc: 'Vehicle is currently charging', isAbnormalStop: false };
+  }
+  const r = String(reason || 'Local').trim();
+  switch (r) {
+    case 'Local':
+      return { label: 'Local Stop', desc: 'Stopped normally by user/RFID or vehicle at the charger', isAbnormalStop: false };
+    case 'Remote':
+      return { label: 'Remote Stop', desc: 'Stopped normally via Mobile App or O&M Control Center', isAbnormalStop: false };
+    case 'EVDisconnected':
+      return { label: 'EV Disconnected', desc: 'Charging ended when the charging gun was unplugged from the vehicle', isAbnormalStop: false };
+    case 'Other':
+      return { label: 'Vehicle BMS Full / Other', desc: 'Stopped automatically by the vehicle BMS (target SoC reached) or charger controller', isAbnormalStop: false };
+    case 'PowerLoss':
+      return { label: 'PowerLoss Recovery', desc: 'No normal StopTransaction received; auto-recovered by server watchdog using last meter reading', isAbnormalStop: true };
+    case 'EmergencyStop':
+      return { label: 'Emergency Stop', desc: 'Physical emergency stop button was pressed on the charger', isAbnormalStop: true };
+    case 'Reboot':
+      return { label: 'Charger Reboot', desc: 'Session interrupted by a charger firmware reboot', isAbnormalStop: true };
+    case 'DeAuthorized':
+      return { label: 'De-Authorized', desc: 'Session stopped because authorization was revoked', isAbnormalStop: true };
+    default:
+      return { label: r, desc: `Session ended with OCPP reason: ${r}`, isAbnormalStop: false };
+  }
+}
+
+function analyzeSessionAbnormalities(tx: any, allTransactions: any[], energyKwh: number): SessionDiagnostics {
+  const txIdStr = String(tx.transactionId || tx.id || '').trim();
+  const connId = Number(tx.connectorId) || 1;
+  const meterStart = typeof tx.meterStart === 'number' ? tx.meterStart : Number(tx.meterStart) || 0;
+  const meterStop = typeof tx.meterStop === 'number' ? tx.meterStop : Number(tx.meterStop) || 0;
+  const isCompleted = tx.status === 'Completed' || Boolean(tx.stopTime);
+  const reason = String(tx.reason || '').trim();
+
+  const rawStartSoc = typeof tx.socStart === 'number' ? tx.socStart : (typeof tx.soc_start === 'number' ? tx.soc_start : null);
+  const rawStopSoc =
+    typeof tx.socStop === 'number'
+      ? tx.socStop
+      : typeof tx.soc_stop === 'number'
+      ? tx.soc_stop
+      : typeof tx.socCurrent === 'number'
+      ? tx.socCurrent
+      : typeof tx.soc_current === 'number'
+      ? tx.soc_current
+      : null;
+
+  const items: AbnormalityItem[] = [];
+  const badges: { text: string; severity: 'error' | 'warning' | 'info' }[] = [];
+
+  // 1. Find sibling duplicate / retry transactions (same connector + same meterStart or same startTime)
+  const siblings = allTransactions.filter((other) => {
+    const otherId = String(other.transactionId || other.id || '').trim();
+    if (!otherId || otherId === txIdStr) return false;
+    const otherConn = Number(other.connectorId) || 1;
+    if (otherConn !== connId) return false;
+    const otherMeterStart = Number(other.meterStart) || 0;
+    if (meterStart > 0 && otherMeterStart > 0 && Math.abs(meterStart - otherMeterStart) <= 5) {
+      return true;
+    }
+    if (tx.startTime && other.startTime && tx.startTime === other.startTime) {
+      return true;
+    }
+    return false;
+  });
+
+  const siblingIds = siblings.map((s) => `#${s.transactionId || s.id}`);
+  let recoveredStartSoc: number | null = null;
+  let recoveredStopSoc: number | null = null;
+  let recoveredFromTxId: string | null = null;
+
+  // Check if any sibling has valid SoC that this transaction missed
+  if ((rawStartSoc === null || rawStartSoc === 0) && (rawStopSoc === null || rawStopSoc === 0) && siblings.length > 0) {
+    for (const sib of siblings) {
+      const sStart = typeof sib.socStart === 'number' && sib.socStart > 0 ? sib.socStart : null;
+      const sStop = typeof sib.socStop === 'number' && sib.socStop > 0 ? sib.socStop : null;
+      if (sStart !== null || sStop !== null) {
+        recoveredStartSoc = sStart;
+        recoveredStopSoc = sStop;
+        recoveredFromTxId = `#${sib.transactionId || sib.id}`;
+        break;
+      }
+    }
+  }
+
+  // 2. Check for Duplicate Retry / Multi-Session Meter Span
+  if (siblings.length > 0) {
+    // Find minimum valid positive energy among the group
+    const allInGroup = [tx, ...siblings];
+    const energies = allInGroup
+      .map((item) => {
+        const ms = Number(item.meterStart) || 0;
+        const me = Number(item.meterStop) || 0;
+        return me > ms ? (me - ms) / 1000 : Number(item.energyDeliveredKwh) || 0;
+      })
+      .filter((e) => e > 0.1);
+    const minGroupEnergy = energies.length > 0 ? Math.min(...energies) : energyKwh;
+
+    if (energyKwh > minGroupEnergy + 1.0 && reason === 'PowerLoss') {
+      // Example: #49540 (26.25 kWh) vs #49538/#49541 (13.70 kWh) + #49543 (12.54 kWh)
+      const extraKwh = (energyKwh - minGroupEnergy).toFixed(2);
+      badges.push({ text: '⚠️ Double-Counted Duplicate', severity: 'error' });
+      items.push({
+        code: 'DUPLICATE_COMBINED_METER',
+        severity: 'error',
+        badge: 'Double-Counted Retry',
+        title: `Duplicate Retry Spanned Multiple Sessions (${energyKwh.toFixed(2)} kWh vs ${minGroupEnergy.toFixed(2)} kWh)`,
+        reason: `This transaction shares the exact same starting meter (${meterStart.toLocaleString()} Wh) as ${siblingIds.join(', ')}. Because the charger re-sent StartTransaction during a slow network response, this duplicate ID stayed open in the background across the next charging session (+${extraKwh} kWh) until the PowerLoss watchdog closed it at ${meterStop.toLocaleString()} Wh. Actual single-session energy was ${minGroupEnergy.toFixed(2)} kWh.`,
+      });
+    } else if (reason === 'PowerLoss') {
+      badges.push({ text: '⚠️ Duplicate Retry (PowerLoss)', severity: 'warning' });
+      items.push({
+        code: 'DUPLICATE_POWERLOSS',
+        severity: 'warning',
+        badge: 'Duplicate Retry',
+        title: `Duplicate StartTransaction Retry (Sibling of ${siblingIds.join(', ')})`,
+        reason: `The charger transmitted multiple StartTransaction requests with the same starting meter (${meterStart.toLocaleString()} Wh) because it did not receive the server's confirmation within 5 seconds. The normal StopTransaction was matched to sibling ${siblingIds.join(', ')}, while this duplicate record was automatically closed by the server's PowerLoss watchdog.`,
+      });
+    } else {
+      badges.push({ text: 'ℹ️ Split Session Record', severity: 'info' });
+      items.push({
+        code: 'SPLIT_SESSION_PRIMARY',
+        severity: 'info',
+        badge: 'Split Record',
+        title: `Primary Session with Duplicate Retries (${siblingIds.join(', ')})`,
+        reason: `This is the primary completed session (${meterStart.toLocaleString()} → ${meterStop.toLocaleString()} Wh = ${energyKwh.toFixed(2)} kWh), but the charger also created duplicate retry record(s) ${siblingIds.join(', ')} at startup due to network retry timing.${recoveredFromTxId ? ` Live Battery SoC (${recoveredStartSoc}% → ${recoveredStopSoc}%) was recorded under sibling ${recoveredFromTxId}.` : ''}`,
+      });
+    }
+  } else if (reason === 'PowerLoss') {
+    // Standalone PowerLoss session
+    badges.push({ text: '⚡ PowerLoss Recovery', severity: 'warning' });
+    items.push({
+      code: 'STANDALONE_POWERLOSS',
+      severity: 'warning',
+      badge: 'PowerLoss Watchdog',
+      title: 'Abnormal Stop: Power Loss or Connection Drop',
+      reason: `The charger did not send a normal OCPP StopTransaction packet (caused by an AC power outage, charger reboot, or >3 minute internet disconnect). The server automatically recovered and finalized the energy delivered (${energyKwh.toFixed(2)} kWh) from the hardware meter register.`,
+    });
+  } else if (reason === 'EmergencyStop') {
+    badges.push({ text: '🚨 Emergency Stop', severity: 'error' });
+    items.push({
+      code: 'EMERGENCY_STOP',
+      severity: 'error',
+      badge: 'Emergency Stop',
+      title: 'Stopped by Physical Emergency Stop Button',
+      reason: 'The session was immediately terminated because the red Emergency Stop button on the charger cabinet was pressed.',
+    });
+  }
+
+  // 3. Check Battery SoC Abnormalities
+  if (isCompleted && energyKwh >= 0.5) {
+    if (rawStartSoc === null && rawStopSoc === null) {
+      if (recoveredFromTxId) {
+        badges.push({ text: `🔋 SoC on ${recoveredFromTxId}`, severity: 'info' });
+        items.push({
+          code: 'SOC_ON_SIBLING',
+          severity: 'info',
+          badge: 'SoC Split',
+          title: `Battery SoC Recorded on Sibling ${recoveredFromTxId} (${recoveredStartSoc}% → ${recoveredStopSoc}%)`,
+          reason: `During this session, the charger streamed live MeterValues (Battery SoC ${recoveredStartSoc}% → ${recoveredStopSoc}%) under transaction ${recoveredFromTxId}, while sending the final StopTransaction under #${txIdStr}.`,
+        });
+      } else {
+        badges.push({ text: '🔋 No BMS SoC', severity: 'info' });
+        items.push({
+          code: 'SOC_MISSING',
+          severity: 'info',
+          badge: 'Missing SoC',
+          title: 'Battery SoC Not Reported (None → None)',
+          reason: 'Although the hardware energy meter recorded power delivery, no State of Charge (SoC %) was received. This happens when using an AC/DC adapter that blocks CAN-bus BMS data or when MeterValues packets were dropped during poor cellular/Wi-Fi signal.',
+        });
+      }
+    } else if (rawStartSoc === null && rawStopSoc !== null && reason === 'PowerLoss') {
+      badges.push({ text: `🔋 Stale End SoC (${rawStopSoc}%)`, severity: 'warning' });
+      items.push({
+        code: 'SOC_LATE_STALE',
+        severity: 'warning',
+        badge: 'Stale End SoC',
+        title: `Late SoC Sampled on Auto-Close (None → ${rawStopSoc}%)`,
+        reason: `No starting SoC was recorded for this duplicate record, and when the PowerLoss watchdog auto-closed it later, it read the ${rawStopSoc}% SoC of the next vehicle connected to the gun.`,
+      });
+    } else if (rawStartSoc !== null && rawStopSoc !== null && rawStartSoc > 0 && rawStartSoc === rawStopSoc && energyKwh >= 3.0) {
+      badges.push({ text: `🔋 Frozen SoC (${rawStartSoc}%→${rawStopSoc}%)`, severity: 'warning' });
+      items.push({
+        code: 'SOC_FROZEN',
+        severity: 'warning',
+        badge: 'Frozen SoC',
+        title: `Unchanged Battery SoC (${rawStartSoc}% → ${rawStopSoc}%) Despite ${energyKwh.toFixed(2)} kWh Delivered`,
+        reason: `The charger delivered ${energyKwh.toFixed(2)} kWh (${(energyKwh * 1000).toFixed(0)} Wh) of verified energy, but the reported SoC stayed constant at ${rawStartSoc}%. This occurs when a vehicle/adapter reports a fixed placeholder SoC (such as 10%) over the pilot/CAN line, or when stale connector SoC memory was latched without live BMS updates.`,
+      });
+    } else if (rawStartSoc === 0 && rawStopSoc !== null && rawStopSoc > 5) {
+      badges.push({ text: '🔋 0% Init Handshake', severity: 'info' });
+      items.push({
+        code: 'SOC_ZERO_INIT',
+        severity: 'info',
+        badge: '0% Start SoC',
+        title: `Initial 0% SoC Sampled Before DC Voltage Ramp (0% → ${rawStopSoc}%)`,
+        reason: `At the very beginning of the session (Preparing / Cable Check phase before DC output reached >= 100V), the charger reported 0% before the vehicle's BMS transmitted its true starting battery percentage.`,
+      });
+    }
+  }
+
+  // 4. Zero Energy Completed Session
+  if (isCompleted && energyKwh === 0) {
+    badges.push({ text: '⚠️ 0 kWh Handshake Only', severity: 'warning' });
+    items.push({
+      code: 'ZERO_ENERGY',
+      severity: 'warning',
+      badge: '0 kWh Delivered',
+      title: 'Zero Energy Delivered (0.00 kWh)',
+      reason: 'The transaction started and stopped without transferring energy. This typically happens when the cable handshake fails, the vehicle rejects charging (doors unlocked / charge limit already met), or the user stops the session immediately.',
+    });
+  }
+
+  // 5. Check Charger Clock +5h Offset ("Z" tag on local PKT clock)
+  let clockOffsetHours: number | null = null;
+  if (tx.startTime && tx.createdAt) {
+    const hwMs = new Date(tx.startTime).getTime();
+    const srvMs = new Date(tx.createdAt).getTime();
+    if (!isNaN(hwMs) && !isNaN(srvMs)) {
+      const diffHours = (hwMs - srvMs) / (1000 * 3600);
+      if (Math.abs(diffHours - 5) <= 0.6) {
+        clockOffsetHours = Number(diffHours.toFixed(1));
+        items.push({
+          code: 'CLOCK_OFFSET_PKT_Z',
+          severity: 'info',
+          badge: 'Clock +5h Z-Tag',
+          title: 'Charger Internal Clock UTC/PKT Tag Offset (+5h Auto-Corrected)',
+          reason: `The charger's internal clock is set to Pakistan Standard Time (UTC+5) but appends a "Z" (UTC) suffix (${tx.startTime}). The app automatically corrects the displayed time using the server's verified Karachi timestamp.`,
+        });
+      }
+    }
+  }
+
+  let highestSeverity: 'normal' | 'info' | 'warning' | 'error' = 'normal';
+  for (const item of items) {
+    if (item.severity === 'error') {
+      highestSeverity = 'error';
+      break;
+    }
+    if (item.severity === 'warning') {
+      highestSeverity = 'warning';
+    } else if (item.severity === 'info' && highestSeverity === 'normal') {
+      highestSeverity = 'info';
+    }
+  }
+
+  // Consider session visually abnormal if there is any error, warning, or duplicate/SoC issue (excluding pure clock offset info if everything else is normal)
+  const nonClockItems = items.filter((i) => i.code !== 'CLOCK_OFFSET_PKT_Z');
+  const isAbnormal = nonClockItems.length > 0;
+
+  return {
+    isAbnormal,
+    highestSeverity,
+    badges,
+    items,
+    recoveredStartSoc,
+    recoveredStopSoc,
+    recoveredFromTxId,
+    siblingIds,
+    clockOffsetHours,
+  };
+}
+
 export default function HistoryScreen() {
   const { chargerId, user } = useAuth();
   const CHARGER_ID = (chargerId || user?.stationId || user?.defaultChargerId || 'charger1').trim().toLowerCase();
@@ -74,6 +357,7 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [dataSource, setDataSource] = useState<'local' | 'cloud'>('local');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
 
   // Today parts in Asia/Karachi
   const todayParts = useMemo(() => getKarachiDateParts(), []);
@@ -848,25 +1132,90 @@ export default function HistoryScreen() {
               : '';
 
             let durationText = '';
+            let exactDurationDetail = '';
             if (isCompleted && effectiveDiffMs > 0) {
               const mins = Math.max(1, Math.round(effectiveDiffMs / 60000));
               durationText = `${mins} min`;
+              const totalSecs = Math.round(effectiveDiffMs / 1000);
+              const dMins = Math.floor(totalSecs / 60);
+              const dSecs = totalSecs % 60;
+              exactDurationDetail = `${dMins}m ${dSecs}s`;
             } else if (!isCompleted && startDate) {
               const liveDiffMs = Math.max(0, Date.now() - startDate.getTime());
               const mins = Math.max(1, Math.round(liveDiffMs / 60000));
               durationText = `${mins} min`;
+              exactDurationDetail = `${mins}m (live)`;
             }
 
             const gunLabel = tx.connectorId === 2 ? 'Gun B' : 'Gun A';
+            const txKey = String(tx.transactionId || tx.id || '');
+            const isExpanded = expandedTxId === txKey;
+            const diagnostics = analyzeSessionAbnormalities(tx, transactions, energy);
+            const stopReasonInfo = getStopReasonDescription(tx.reason, isCompleted);
+
+            const meterStartWh = typeof tx.meterStart === 'number' ? tx.meterStart : Number(tx.meterStart) || 0;
+            const meterStopWh = typeof tx.meterStop === 'number' ? tx.meterStop : Number(tx.meterStop) || 0;
+            const meterDeltaWh = meterStopWh > meterStartWh ? meterStopWh - meterStartWh : Math.round(energy * 1000);
+
+            const fullStartStr = startDate
+              ? startDate.toLocaleString('en-PK', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })
+              : 'N/A';
+            const fullStopStr =
+              isCompleted && stopDate
+                ? stopDate.toLocaleString('en-PK', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })
+                : isCompleted
+                ? 'N/A'
+                : 'Currently Charging';
 
             return (
-              <View key={tx.id || tx.transactionId} style={styles.txCard}>
+              <TouchableOpacity
+                key={txKey}
+                activeOpacity={0.85}
+                onPress={() => setExpandedTxId(isExpanded ? null : txKey)}
+                style={[
+                  styles.txCard,
+                  diagnostics.highestSeverity === 'error' && styles.txCardError,
+                  diagnostics.highestSeverity === 'warning' && styles.txCardWarning,
+                  isExpanded && styles.txCardExpanded,
+                ]}
+              >
                 <View style={styles.txHeader}>
                   <View style={styles.txHeaderLeft}>
                     <View style={styles.gunBadge}>
                       <Text style={styles.gunBadgeText}>{gunLabel}</Text>
                     </View>
-                    <Text style={styles.txId}>#{tx.transactionId || tx.id}</Text>
+                    <Text style={styles.txId}>#{txKey}</Text>
+                    {tx.reason && isCompleted && (
+                      <View
+                        style={[
+                          styles.reasonMiniTag,
+                          stopReasonInfo.isAbnormalStop ? styles.reasonMiniTagWarn : styles.reasonMiniTagNormal,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.reasonMiniTagText,
+                            stopReasonInfo.isAbnormalStop ? styles.reasonMiniTagTextWarn : styles.reasonMiniTagTextNormal,
+                          ]}
+                        >
+                          {tx.reason}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
                   <View
@@ -894,6 +1243,38 @@ export default function HistoryScreen() {
                   </View>
                 </View>
 
+                {/* Abnormality Badges Row (if any abnormality detected) */}
+                {diagnostics.badges.length > 0 && (
+                  <View style={styles.abnormalityBadgesRow}>
+                    {diagnostics.badges.map((b, idx) => (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.abnormalityPill,
+                          b.severity === 'error'
+                            ? styles.abnormalityPillError
+                            : b.severity === 'warning'
+                            ? styles.abnormalityPillWarning
+                            : styles.abnormalityPillInfo,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.abnormalityPillText,
+                            b.severity === 'error'
+                              ? styles.abnormalityPillTextError
+                              : b.severity === 'warning'
+                              ? styles.abnormalityPillTextWarning
+                              : styles.abnormalityPillTextInfo,
+                          ]}
+                        >
+                          {b.text}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
                 {/* Energy, Cost, Battery & Time Row */}
                 <View style={styles.txBody}>
                   <View style={{ flex: 1, paddingRight: 10 }}>
@@ -907,10 +1288,10 @@ export default function HistoryScreen() {
                       </Text>
                     </View>
 
-                    {/* Battery Percentage Journey (Start -> End) */}
+                    {/* Battery Percentage Journey (Start -> End, or Recovered from Sibling) */}
                     {(() => {
-                      const startSoc = typeof tx.socStart === 'number' && tx.socStart > 0 ? tx.socStart : (typeof tx.soc_start === 'number' && tx.soc_start > 0 ? tx.soc_start : null);
-                      const stopSoc = typeof tx.socStop === 'number' && tx.socStop > 0
+                      const rawStart = typeof tx.socStart === 'number' && tx.socStart > 0 ? tx.socStart : (typeof tx.soc_start === 'number' && tx.soc_start > 0 ? tx.soc_start : null);
+                      const rawStop = typeof tx.socStop === 'number' && tx.socStop > 0
                         ? tx.socStop
                         : (typeof tx.soc_stop === 'number' && tx.soc_stop > 0
                           ? tx.soc_stop
@@ -920,16 +1301,29 @@ export default function HistoryScreen() {
                           ? tx.soc_current
                           : null);
 
+                      const startSoc = rawStart ?? diagnostics.recoveredStartSoc;
+                      const stopSoc = rawStop ?? diagnostics.recoveredStopSoc;
+                      const isRecovered = !rawStart && !rawStop && Boolean(diagnostics.recoveredFromTxId);
+
                       if (startSoc && stopSoc) {
                         const gained = stopSoc >= startSoc ? Number((stopSoc - startSoc).toFixed(1)) : 0;
                         return (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2, flexWrap: 'wrap' }}>
                             <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
-                              {startSoc}% → {stopSoc}%
+                              🔋 {startSoc}% → {stopSoc}%
                             </Text>
-                            {gained > 0 && (
+                            {gained > 0 ? (
                               <Text style={{ fontSize: 12, fontWeight: '700', color: '#16A34A' }}>
                                 +{gained}%
+                              </Text>
+                            ) : (
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#D97706' }}>
+                                (0% change)
+                              </Text>
+                            )}
+                            {isRecovered && (
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#0284C7' }}>
+                                (from {diagnostics.recoveredFromTxId})
                               </Text>
                             )}
                           </View>
@@ -940,7 +1334,7 @@ export default function HistoryScreen() {
                         return (
                           <View style={{ marginVertical: 2 }}>
                             <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
-                              {startSoc}%
+                              🔋 Start: {startSoc}%
                             </Text>
                           </View>
                         );
@@ -950,13 +1344,19 @@ export default function HistoryScreen() {
                         return (
                           <View style={{ marginVertical: 2 }}>
                             <Text style={{ fontSize: 13, fontWeight: '700', color: '#0F172A' }}>
-                              {stopSoc}%
+                              🔋 End: {stopSoc}%
                             </Text>
                           </View>
                         );
                       }
 
-                      return null;
+                      return (
+                        <View style={{ marginVertical: 2 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#94A3B8' }}>
+                            🔋 SoC: Not reported
+                          </Text>
+                        </View>
+                      );
                     })()}
 
                     <Text style={styles.txTimeSub}>
@@ -972,7 +1372,190 @@ export default function HistoryScreen() {
                     </Text>
                   </View>
                 </View>
-              </View>
+
+                {/* Tap Prompt Footer */}
+                <View style={styles.tapPromptRow}>
+                  <Text
+                    style={[
+                      styles.tapPromptText,
+                      diagnostics.isAbnormal && { color: '#B45309', fontWeight: '800' },
+                    ]}
+                  >
+                    {diagnostics.isAbnormal
+                      ? isExpanded
+                        ? '▲ Hide Session Details & Abnormality Reason'
+                        : `⚠️ ${diagnostics.items.length} Diagnostic Note(s) · Tap for Abnormality Reason ▼`
+                      : isExpanded
+                      ? '▲ Hide Session Details & Diagnostics'
+                      : '✓ Normal Session · Tap for Full Details & Diagnostics ▼'}
+                  </Text>
+                </View>
+
+                {/* Expanded Session Details & Abnormality Reason Panel */}
+                {isExpanded && (
+                  <View style={styles.expandedPanel}>
+                    {/* 1. Abnormality / Diagnostic Reasons Section */}
+                    <Text style={styles.expandedSectionTitle}>
+                      SESSION DIAGNOSTICS & ABNORMALITY ANALYSIS
+                    </Text>
+
+                    {diagnostics.items.length === 0 ? (
+                      <View style={styles.diagNormalCard}>
+                        <Text style={styles.diagNormalTitle}>
+                          ✅ Normal Charging Session — No Abnormalities
+                        </Text>
+                        <Text style={styles.diagNormalDesc}>
+                          Hardware energy meter registers ({meterStartWh.toLocaleString()} → {meterStopWh.toLocaleString()} Wh), OCPP start/stop handshake ({stopReasonInfo.label}), and session timing completed cleanly without any data discrepancy.
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={{ gap: 8, marginBottom: 12 }}>
+                        {diagnostics.items.map((item, idx) => (
+                          <View
+                            key={idx}
+                            style={[
+                              styles.diagItemCard,
+                              item.severity === 'error'
+                                ? styles.diagItemCardError
+                                : item.severity === 'warning'
+                                ? styles.diagItemCardWarning
+                                : styles.diagItemCardInfo,
+                            ]}
+                          >
+                            <View style={styles.diagItemHeader}>
+                              <Text
+                                style={[
+                                  styles.diagItemBadge,
+                                  item.severity === 'error'
+                                    ? { color: '#991B1B', backgroundColor: '#FEE2E2' }
+                                    : item.severity === 'warning'
+                                    ? { color: '#92400E', backgroundColor: '#FEF3C7' }
+                                    : { color: '#075985', backgroundColor: '#E0F2FE' },
+                                ]}
+                              >
+                                {item.badge.toUpperCase()}
+                              </Text>
+                              <Text style={styles.diagItemTitle}>{item.title}</Text>
+                            </View>
+                            <Text style={styles.diagItemReason}>{item.reason}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* 2. Stop Reason Explanation */}
+                    <View style={styles.stopReasonBox}>
+                      <Text style={styles.stopReasonBoxTitle}>
+                        STOP REASON: {stopReasonInfo.label.toUpperCase()} ({tx.reason || (isCompleted ? 'Local' : 'Active')})
+                      </Text>
+                      <Text style={styles.stopReasonBoxDesc}>{stopReasonInfo.desc}</Text>
+                    </View>
+
+                    {/* 3. Full Technical Breakdown Table */}
+                    <Text style={[styles.expandedSectionTitle, { marginTop: 12 }]}>
+                      COMPLETE TECHNICAL BREAKDOWN
+                    </Text>
+
+                    <View style={styles.techGrid}>
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Transaction ID</Text>
+                        <Text style={styles.techValue}>
+                          #{txKey}
+                          {diagnostics.siblingIds.length > 0
+                            ? ` (Siblings: ${diagnostics.siblingIds.join(', ')})`
+                            : ''}
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Connector / Gun</Text>
+                        <Text style={styles.techValue}>
+                          {gunLabel} (Connector #{tx.connectorId || 1})
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Start Time (PKT)</Text>
+                        <Text style={styles.techValue}>{fullStartStr}</Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Stop Time (PKT)</Text>
+                        <Text style={styles.techValue}>{fullStopStr}</Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Exact Duration</Text>
+                        <Text style={styles.techValue}>
+                          {exactDurationDetail || durationText || 'N/A'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Meter Start → Stop</Text>
+                        <Text style={styles.techValue}>
+                          {meterStartWh > 0 ? `${meterStartWh.toLocaleString()} Wh` : '0 Wh'} →{' '}
+                          {meterStopWh > 0 ? `${meterStopWh.toLocaleString()} Wh` : 'In Progress'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Delivered Energy</Text>
+                        <Text style={[styles.techValue, { color: '#0284C7', fontWeight: '900' }]}>
+                          {energy.toFixed(3)} kWh ({meterDeltaWh.toLocaleString()} Wh)
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Tariff & Total Cost</Text>
+                        <Text style={[styles.techValue, { color: '#0F172A', fontWeight: '900' }]}>
+                          PKR {rate}/kWh → PKR {cost.toFixed(2)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>Battery SoC (BMS)</Text>
+                        <Text style={styles.techValue}>
+                          {tx.socStart !== null && tx.socStart !== undefined
+                            ? `${tx.socStart}%`
+                            : 'None'}{' '}
+                          →{' '}
+                          {tx.socStop !== null && tx.socStop !== undefined
+                            ? `${tx.socStop}%`
+                            : tx.socCurrent !== null && tx.socCurrent !== undefined
+                            ? `${tx.socCurrent}%`
+                            : 'None'}
+                          {diagnostics.recoveredFromTxId
+                            ? ` (Recovered: ${diagnostics.recoveredStartSoc}% → ${diagnostics.recoveredStopSoc}% on ${diagnostics.recoveredFromTxId})`
+                            : ''}
+                        </Text>
+                      </View>
+
+                      {tx.currentPowerKw !== undefined && tx.currentPowerKw !== null && (
+                        <View style={styles.techRow}>
+                          <Text style={styles.techLabel}>Last Recorded Power</Text>
+                          <Text style={styles.techValue}>{Number(tx.currentPowerKw).toFixed(2)} kW</Text>
+                        </View>
+                      )}
+
+                      <View style={styles.techRow}>
+                        <Text style={styles.techLabel}>RFID / Auth ID Tag</Text>
+                        <Text style={styles.techValue}>{tx.idTag || 'AppUser'}</Text>
+                      </View>
+
+                      {tx.startTime && (
+                        <View style={[styles.techRow, { borderBottomWidth: 0 }]}>
+                          <Text style={styles.techLabel}>Raw Charger Clock</Text>
+                          <Text style={[styles.techValue, { fontSize: 10, color: '#64748B' }]}>
+                            {tx.startTime}
+                            {tx.stopTime ? ` → ${tx.stopTime}` : ''}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
             );
           })
         )}
@@ -1422,5 +2005,217 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#475569',
     marginTop: 1,
+  },
+  txCardError: {
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FFFDFD',
+  },
+  txCardWarning: {
+    borderColor: '#FCD34D',
+    backgroundColor: '#FFFEFA',
+  },
+  txCardExpanded: {
+    borderColor: '#0284C7',
+    borderWidth: 1.5,
+  },
+  reasonMiniTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  reasonMiniTagNormal: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  reasonMiniTagWarn: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  reasonMiniTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  reasonMiniTagTextNormal: {
+    color: '#64748B',
+  },
+  reasonMiniTagTextWarn: {
+    color: '#B45309',
+  },
+  abnormalityBadgesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  abnormalityPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  abnormalityPillError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  abnormalityPillWarning: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  abnormalityPillInfo: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+  },
+  abnormalityPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  abnormalityPillTextError: {
+    color: '#B91C1C',
+  },
+  abnormalityPillTextWarning: {
+    color: '#B45309',
+  },
+  abnormalityPillTextInfo: {
+    color: '#0369A1',
+  },
+  tapPromptRow: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    alignItems: 'center',
+  },
+  tapPromptText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.2,
+  },
+  expandedPanel: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  expandedSectionTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#475569',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  diagNormalCard: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  diagNormalTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#065F46',
+    marginBottom: 4,
+  },
+  diagNormalDesc: {
+    fontSize: 11,
+    color: '#047857',
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  diagItemCard: {
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+  },
+  diagItemCardError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  diagItemCardWarning: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  diagItemCardInfo: {
+    backgroundColor: '#F0F9FF',
+    borderColor: '#BAE6FD',
+  },
+  diagItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  diagItemBadge: {
+    fontSize: 9,
+    fontWeight: '900',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+    letterSpacing: 0.4,
+  },
+  diagItemTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  diagItemReason: {
+    fontSize: 11,
+    color: '#334155',
+    lineHeight: 17,
+    fontWeight: '500',
+  },
+  stopReasonBox: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    padding: 10,
+  },
+  stopReasonBoxTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 2,
+    letterSpacing: 0.3,
+  },
+  stopReasonBoxDesc: {
+    fontSize: 11,
+    color: '#475569',
+    lineHeight: 16,
+  },
+  techGrid: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  techRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    gap: 10,
+  },
+  techLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  techValue: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0F172A',
+    textAlign: 'right',
+    flex: 1,
   },
 });

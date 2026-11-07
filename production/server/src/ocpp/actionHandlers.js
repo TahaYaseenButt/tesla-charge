@@ -6,16 +6,19 @@ import {
   saveStartTransaction,
   saveStopTransaction,
   verifyRfidTag,
-  broadcastLive,
-} from "../services/localSync.js";
-import { db } from "../database/db.js";
+} from "../services/firebaseSync.js";
 import { getKarachiIso } from "../utils/time.js";
 
 // Helper to generate transaction IDs
 let nextTxId = Date.now() % 1000000;
 
+// Synchronous in-memory cache of active/recent StartTransactions per connector
+// Prevents duplicate transaction IDs when charger retries StartTransaction every 5s while Firebase is still writing
+const recentStartTxByConnector = new Map();
+
 /**
- * Evaluates session limits with predictive latency compensation.
+ * Evaluates session limits with GSM predictive latency compensation.
+ * Uses strictly '>=' (never '==') so large energy or price steps never bypass the limit.
  */
 async function enforceAutoStopIfTargetReached(chargePointId, connectorId, meterResult) {
   try {
@@ -23,21 +26,26 @@ async function enforceAutoStopIfTargetReached(chargePointId, connectorId, meterR
     const { resolvedTxId, sessionEnergyKwh, liveCost, powerKw, soc, activeTx, effectiveTariff } = meterResult;
     if (!activeTx) return;
 
-    if (activeTx.status === "Finishing" || activeTx.status === "Completed") {
+    // Skip if already in the process of stopping or finished
+    if (activeTx.isStopping || activeTx.status === "Finishing" || activeTx.status === "Completed") {
       return;
     }
 
-    const targetPrice = activeTx.target_price ? Number(activeTx.target_price) : null;
-    const targetKwh = activeTx.target_kwh ? Number(activeTx.target_kwh) : null;
-    const targetMinutes = activeTx.target_minutes ? Number(activeTx.target_minutes) : null;
+    const targetPrice = activeTx.targetPrice ? Number(activeTx.targetPrice) : null;
+    const targetKwh = activeTx.targetKwh ? Number(activeTx.targetKwh) : null;
+    const targetMinutes = activeTx.targetMinutes ? Number(activeTx.targetMinutes) : null;
+    const targetSoc = activeTx.targetSoc ? Number(activeTx.targetSoc) : null;
 
-    if (!targetPrice && !targetKwh && !targetMinutes) {
+    if (!targetPrice && !targetKwh && !targetMinutes && !targetSoc) {
       return;
     }
 
     const kw = Number(powerKw) || 0;
     const tariff = Number(effectiveTariff) || 125;
 
+    // GSM Network Latency Compensation:
+    // Lead time of 5 seconds compensates for GSM packet transit (2-3s) + OCPP RemoteStop command delivery (2-3s).
+    // At high DC power (e.g. 60-120 kW), energy and cost rise by 25-40 PKR between telemetry packets.
     const leadSeconds = 5;
     const projectedKwhLead = kw > 0 ? (kw * (leadSeconds / 3600)) : 0;
     const projectedCostLead = projectedKwhLead * tariff;
@@ -67,28 +75,39 @@ async function enforceAutoStopIfTargetReached(chargePointId, connectorId, meterR
       }
     }
 
-    // 3. Time Limit check (minutes)
-    if (!shouldStop && targetMinutes && targetMinutes > 0 && activeTx.start_time) {
-      const elapsedMinutes = (Date.now() - new Date(activeTx.start_time).getTime()) / 60000;
+    // 3. Time Limit check (Minutes)
+    if (!shouldStop && targetMinutes && targetMinutes > 0 && activeTx.startTime) {
+      const elapsedMinutes = Math.max(0, (Date.now() - new Date(activeTx.startTime).getTime()) / 60000);
       if (elapsedMinutes >= targetMinutes) {
         shouldStop = true;
-        stopReason = `Time duration limit reached: ${Math.round(elapsedMinutes)} mins >= target ${targetMinutes} mins`;
+        stopReason = `Time limit reached: ${elapsedMinutes.toFixed(1)} min >= target ${targetMinutes} min`;
+      }
+    }
+
+    // 4. Battery State of Charge Limit check (%)
+    if (!shouldStop && targetSoc && targetSoc > 0 && typeof soc === 'number' && soc > 0) {
+      if (soc >= targetSoc) {
+        shouldStop = true;
+        stopReason = `Battery SoC limit reached: ${soc}% >= target ${targetSoc}%`;
       }
     }
 
     if (shouldStop) {
       console.log(`[Safety Interlock] >>> AUTO-STOPPING: ${stopReason} on [${chargePointId}] Gun ${connectorId} (Tx #${resolvedTxId}) <<<`);
 
-      // Mark Finishing in local DB
-      db.prepare("UPDATE connectors SET status = 'Finishing', info = ? WHERE charge_point_id = ? AND connector_id = ?")
-        .run(`Stopping: ${stopReason}`, chargePointId.toLowerCase(), connectorId);
-
-      broadcastLive("connector_status", {
-        chargePointId: chargePointId.toLowerCase(),
-        connectorId,
-        status: "Finishing",
-        info: `Stopping: ${stopReason}`
-      });
+      // Set stopping flags immediately in RTDB so rapid packets do not trigger duplicate stops
+      try {
+        const { ref, update } = await import("firebase/database");
+        const { rtdb } = await import("../config/firebase.js");
+        const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
+        const stopUpdates = {};
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/isStopping`] = true;
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/status`] = "Finishing";
+        stopUpdates[`live/${safeKey(chargePointId)}/activeTx/${connectorId}/stopReason`] = stopReason;
+        stopUpdates[`live/${safeKey(chargePointId)}/connectors/${connectorId}/status`] = "Finishing";
+        stopUpdates[`live/${safeKey(chargePointId)}/connectors/${connectorId}/info`] = `Stopping: ${stopReason}`;
+        await update(ref(rtdb), stopUpdates);
+      } catch (_flagErr) {}
 
       // Dispatch RemoteStopTransaction to hardware
       const { ocppServer } = await import("./OCPPServer.js");
@@ -103,15 +122,23 @@ export const actionHandlers = {
   /**
    * Charger powers on or connects
    */
+  /**
+   * Charger powers on or connects
+   */
   async BootNotification(chargePointId, payload) {
     console.log(`[OCPP] BootNotification from ${chargePointId}:`, payload);
+    // Persist boot info asynchronously so hardware receives an instant OCPP ACK
     saveChargerBoot(chargePointId, payload).catch((err) =>
-      console.warn(`[LocalSync] saveChargerBoot warning: ${err.message}`)
+      console.warn(`[OCPP] Async saveChargerBoot warning: ${err.message}`)
     );
+
+    // Hardware sends Heartbeat, StatusNotification, and MeterValues per its own internal schedule.
+    // We avoid sending unsolicited ChangeConfiguration on boot because embedded GSM modems
+    // often restart their network stack/reboot upon receiving configuration changes.
 
     return {
       status: "Accepted",
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
       interval: parseInt(process.env.HEARTBEAT_INTERVAL || "30", 10),
     };
   },
@@ -121,10 +148,10 @@ export const actionHandlers = {
    */
   async Heartbeat(chargePointId, _payload) {
     saveChargerHeartbeat(chargePointId).catch((err) =>
-      console.warn(`[LocalSync] saveChargerHeartbeat warning: ${err.message}`)
+      console.warn(`[OCPP] Async saveChargerHeartbeat warning: ${err.message}`)
     );
     return {
-      currentTime: new Date().toISOString(),
+      currentTime: getKarachiIso(),
     };
   },
 
@@ -135,13 +162,13 @@ export const actionHandlers = {
     const { connectorId, status, errorCode, info } = payload;
     console.log(`[OCPP] StatusNotification from ${chargePointId} [Connector ${connectorId}]: ${status}`);
     saveConnectorStatus(chargePointId, connectorId, status, errorCode, info).catch((err) =>
-      console.warn(`[LocalSync] saveConnectorStatus warning: ${err.message}`)
+      console.warn(`[OCPP] Async saveConnectorStatus warning: ${err.message}`)
     );
     return {};
   },
 
   /**
-   * RFID badge / App card authorization
+   * RFID or app authorization request
    */
   async Authorize(chargePointId, payload) {
     const { idTag } = payload;
@@ -150,28 +177,49 @@ export const actionHandlers = {
 
     let parentId = idTag;
     let activeTxToStop = null;
-
     try {
-      // Find active charging session for this charger
-      activeTxToStop = db.prepare(`
-        SELECT * FROM transactions
-        WHERE charge_point_id = ? AND status = 'Charging'
-        ORDER BY start_time DESC LIMIT 1
-      `).get(chargePointId.toLowerCase());
+      const { get, ref } = await import("firebase/database");
+      const { rtdb, db } = await import("../config/firebase.js");
+      const safeKey = (id) => String(id).replace(/[.#$[\]/]/g, "_");
+      const snap = await get(ref(rtdb, `live/${safeKey(chargePointId)}/activeTx`));
+      if (snap.exists()) {
+        const activeMap = snap.val() || {};
+        for (const connKey of Object.keys(activeMap)) {
+          const act = activeMap[connKey];
+          if (act && act.transactionId) {
+            parentId = act.idTag || idTag;
+            activeTxToStop = act;
+            break;
+          }
+        }
+      }
 
-      if (activeTxToStop) {
-        parentId = activeTxToStop.id_tag || idTag;
+      // Fallback: check Firestore transactions collection for active session
+      if (!activeTxToStop) {
+        const { collection, query, where, getDocs, limit } = await import("firebase/firestore");
+        const qActive = query(
+          collection(db, "transactions"),
+          where("chargePointId", "==", chargePointId),
+          where("status", "==", "Charging"),
+          limit(1)
+        );
+        const qSnap = await getDocs(qActive);
+        if (!qSnap.empty) {
+          const tDoc = qSnap.docs[0].data();
+          activeTxToStop = { transactionId: tDoc.transactionId || qSnap.docs[0].id, ...tDoc };
+          parentId = tDoc.idTag || idTag;
+        }
       }
     } catch (_e) {}
 
     // If an authorized RFID tag was tapped while charging, trigger remote stop as fail-safe
-    if (authResult.status === "Accepted" && activeTxToStop && activeTxToStop.transaction_id) {
-      console.log(`[OCPP] Authorized RFID tag ${idTag} tapped while Tx #${activeTxToStop.transaction_id} is charging -> Dispatching remote stop`);
-      const targetConn = Number(activeTxToStop.connector_id || 1);
+    if (authResult.status === "Accepted" && activeTxToStop && activeTxToStop.transactionId) {
+      console.log(`[OCPP] Authorized RFID tag ${idTag} tapped while Tx #${activeTxToStop.transactionId} is charging -> Dispatching remote stop`);
+      const targetConn = Number(activeTxToStop.connectorId || 1);
       setTimeout(async () => {
         try {
           const { ocppServer } = await import("./OCPPServer.js");
-          await ocppServer.remoteStopTransaction(chargePointId, Number(activeTxToStop.transaction_id));
+          await ocppServer.remoteStopTransaction(chargePointId, Number(activeTxToStop.transactionId));
           setTimeout(async () => {
             try {
               await ocppServer.unlockConnector(chargePointId, targetConn);
@@ -188,16 +236,36 @@ export const actionHandlers = {
       idTagInfo: {
         status: authResult.status || "Accepted",
         parentIdTag: parentId,
-        expiryDate: getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
+        expiryDate:
+          authResult.expiryDate ||
+          getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
       },
     };
   },
 
   /**
-   * Start Transaction
+   * Charging session started
    */
   async StartTransaction(chargePointId, payload) {
     const { connectorId, idTag, meterStart, timestamp } = payload;
+    const connKey = `${String(chargePointId).toLowerCase()}_${Number(connectorId) || 1}`;
+
+    // 1. Instant 0ms Synchronous In-Memory Deduplication (blocks rapid 5s hardware retries while Firebase writes are in flight)
+    const memCached = recentStartTxByConnector.get(connKey);
+    if (memCached && Date.now() - memCached.createdAtMs < 15 * 60 * 1000) {
+      const isMeterMatch = Math.abs(Number(memCached.meterStart || 0) - Number(meterStart || 0)) <= 50;
+      const isTimeMatch = Boolean(timestamp && memCached.timestamp === timestamp);
+      if (isMeterMatch || isTimeMatch) {
+        console.log(
+          `[OCPP] Instant In-Memory Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${memCached.txId}`
+        );
+        return {
+          transactionId: Number(memCached.txId),
+          idTagInfo: { status: "Accepted" },
+        };
+      }
+    }
+
     const authResult = await verifyRfidTag(chargePointId, idTag);
 
     if (authResult.status === "Blocked") {
@@ -208,21 +276,41 @@ export const actionHandlers = {
       };
     }
 
-    // Deduplication check
-    try {
-      const active = db.prepare(`
-        SELECT * FROM transactions
-        WHERE charge_point_id = ? AND connector_id = ? AND status = 'Charging'
-        ORDER BY start_time DESC LIMIT 1
-      `).get(chargePointId.toLowerCase(), connectorId);
+    // 2. Re-check in-memory cache after async verifyRfidTag in case another retry arrived concurrently
+    const memAfterAuth = recentStartTxByConnector.get(connKey);
+    if (memAfterAuth && Date.now() - memAfterAuth.createdAtMs < 15 * 60 * 1000) {
+      const isMeterMatch = Math.abs(Number(memAfterAuth.meterStart || 0) - Number(meterStart || 0)) <= 50;
+      const isTimeMatch = Boolean(timestamp && memAfterAuth.timestamp === timestamp);
+      if (isMeterMatch || isTimeMatch) {
+        console.log(
+          `[OCPP] Post-Auth Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${memAfterAuth.txId}`
+        );
+        return {
+          transactionId: Number(memAfterAuth.txId),
+          idTagInfo: { status: "Accepted" },
+        };
+      }
+    }
 
-      if (active) {
-        const isMeterMatch = Math.abs(Number(active.meter_start || 0) - Number(meterStart || 0)) < 50;
-        const isTimeMatch = active.start_time === timestamp;
-        if (isMeterMatch || isTimeMatch) {
-          console.log(`[OCPP] Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${active.transaction_id}`);
+    // 3. Cellular RTDB Deduplication fallback (in case server restarted mid-session)
+    try {
+      const { ref, get } = await import("firebase/database");
+      const { rtdb } = await import("../config/firebase.js");
+      const connTxSnap = await get(ref(rtdb, `live/${chargePointId.toLowerCase()}/connectors/${connectorId}/activeTx`));
+      if (connTxSnap.exists()) {
+        const active = connTxSnap.val() || {};
+        const isMeterMatch = Math.abs(Number(active.meterStart || 0) - Number(meterStart || 0)) <= 50;
+        const isTimeMatch = active.startTime === timestamp;
+        if (active.transactionId && (isMeterMatch || isTimeMatch)) {
+          console.log(`[OCPP] RTDB Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${active.transactionId}`);
+          recentStartTxByConnector.set(connKey, {
+            txId: Number(active.transactionId),
+            meterStart: Number(meterStart || 0),
+            timestamp,
+            createdAtMs: Date.now(),
+          });
           return {
-            transactionId: Number(active.transaction_id),
+            transactionId: Number(active.transactionId),
             idTagInfo: { status: "Accepted" },
           };
         }
@@ -231,23 +319,33 @@ export const actionHandlers = {
 
     const txId = ++nextTxId;
 
+    // Reserve in memory immediately BEFORE awaiting Firebase writes
+    recentStartTxByConnector.set(connKey, {
+      txId,
+      meterStart: Number(meterStart || 0),
+      timestamp,
+      createdAtMs: Date.now(),
+    });
+
     console.log(
       `[OCPP] StartTransaction on ${chargePointId} [Connector ${connectorId}], TxId: ${txId}, MeterStart: ${meterStart}, Tag: ${idTag}`
     );
 
-    await saveStartTransaction(txId, chargePointId, connectorId, idTag, meterStart, timestamp);
+    // Run saveStartTransaction asynchronously so the charger receives its OCPP StartTransaction confirmation immediately (<50ms)
+    saveStartTransaction(txId, chargePointId, connectorId, idTag, meterStart, timestamp).catch((err) =>
+      console.error(`[OCPP] Async saveStartTransaction error for Tx #${txId}:`, err.message)
+    );
 
     return {
       transactionId: txId,
       idTagInfo: {
         status: "Accepted",
-        expiryDate: getKarachiIso(new Date(Date.now() + 365 * 24 * 3600 * 1000)),
       },
     };
   },
 
   /**
-   * Stop Transaction
+   * Charging session stopped
    */
   async StopTransaction(chargePointId, payload) {
     const { transactionId, meterStop, timestamp, reason } = payload;
@@ -256,17 +354,24 @@ export const actionHandlers = {
       `[OCPP] StopTransaction on ${chargePointId}, TxId: ${transactionId}, MeterStop: ${meterStop}, Reason: ${reason}`
     );
 
+    // Clear in-memory start cache for any connector matching this transactionId
+    for (const [k, v] of recentStartTxByConnector.entries()) {
+      if (k.startsWith(`${String(chargePointId).toLowerCase()}_`) && Number(v.txId) === Number(transactionId)) {
+        recentStartTxByConnector.delete(k);
+      }
+    }
+
     const result = await saveStopTransaction(
       transactionId,
       chargePointId,
       meterStop,
       timestamp,
       reason,
-      null
+      null // Uses charger's configured tariffRate from Firestore
     );
 
-    // Automatically unlock cable immediately on stop
     const targetConnId = result?.connectorId || 1;
+    recentStartTxByConnector.delete(`${String(chargePointId).toLowerCase()}_${targetConnId}`);
     setTimeout(async () => {
       try {
         const { ocppServer } = await import("./OCPPServer.js");
@@ -283,14 +388,15 @@ export const actionHandlers = {
   },
 
   /**
-   * Periodic live meter values during charging
+   * Real-time meter telemetry (Power kW, Voltage, Amps, Energy Wh, Temperature, SoC)
    */
   async MeterValues(chargePointId, payload) {
     const { connectorId, transactionId, meterValue } = payload;
+
     const telemetry = {
       powerKw: 0,
-      energyKwh: 0,
       energyWh: 0,
+      energyKwh: 0,
       voltage: 0,
       voltageL1: 0,
       voltageL2: 0,
@@ -298,11 +404,12 @@ export const actionHandlers = {
       currentL1: 0,
       currentL2: 0,
       currentL3: 0,
-      temperatureC: 0,
-      soc: 0,
+      temperatureC: null,
+      soc: null,
+      raw: meterValue,
     };
 
-    if (meterValue && meterValue.length > 0) {
+    if (Array.isArray(meterValue)) {
       for (const entry of meterValue) {
         if (!entry.sampledValue) continue;
         for (const sample of entry.sampledValue) {
@@ -343,41 +450,28 @@ export const actionHandlers = {
 
     const meterResult = await saveMeterValues(chargePointId, connectorId, transactionId, telemetry);
 
-    // Auto-stop limit evaluation
-    if (meterResult && meterResult.resolvedTxId) {
-      await enforceAutoStopIfTargetReached(chargePointId, connectorId, meterResult);
-    }
+    // Auto-Stop Safety Interlock: Multi-metric checks (Price, kWh, Time, SoC) with GSM predictive latency compensation
+    await enforceAutoStopIfTargetReached(chargePointId, connectorId || 1, meterResult);
 
     return {};
   },
 
   /**
-   * Data Transfer (Vendor-specific messages)
+   * Vendor-specific data transfer
    */
   async DataTransfer(chargePointId, payload) {
-    const { vendorId, messageId, data } = payload;
-    console.log(`[OCPP] DataTransfer from ${chargePointId} [${vendorId}/${messageId}]:`, data);
+    console.log(`[OCPP] DataTransfer from ${chargePointId}:`, payload);
     return {
       status: "Accepted",
-      data: "",
+      data: "OK",
     };
   },
 
-  /**
-   * Firmware Status Notification
-   */
-  async FirmwareStatusNotification(chargePointId, payload) {
-    const { status } = payload;
-    console.log(`[OCPP] FirmwareStatusNotification from ${chargePointId}: ${status}`);
+  async DiagnosticsStatusNotification(_chargePointId, _payload) {
     return {};
   },
 
-  /**
-   * Diagnostics Status Notification
-   */
-  async DiagnosticsStatusNotification(chargePointId, payload) {
-    const { status } = payload;
-    console.log(`[OCPP] DiagnosticsStatusNotification from ${chargePointId}: ${status}`);
+  async FirmwareStatusNotification(_chargePointId, _payload) {
     return {};
   },
 };

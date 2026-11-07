@@ -858,21 +858,24 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
 
     const connIdNum = base.connectorId ?? live?.connectorId ?? 1;
 
-    try {
-      const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connIdNum, "telemetry")));
-      if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
-        socStop = connSnap.val().soc;
-      }
-    } catch (_e) {}
-
-    try {
-      if (socStop === null) {
-        const fsConn = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(connIdNum)));
-        if (fsConn.exists() && typeof fsConn.data()?.telemetry?.soc === 'number' && fsConn.data().telemetry.soc > 0) {
-          socStop = fsConn.data().telemetry.soc;
+    // Only fall back to connector telemetry SoC if socStop is still null AND this is not a delayed PowerLoss recovery
+    if (socStop === null && reason !== "PowerLoss") {
+      try {
+        const connSnap = await get(ref(rtdb, livePath(chargePointId, "connectors", connIdNum, "telemetry")));
+        if (connSnap.exists() && typeof connSnap.val()?.soc === 'number' && connSnap.val().soc > 0) {
+          socStop = connSnap.val().soc;
         }
-      }
-    } catch (_e) {}
+      } catch (_e) {}
+
+      try {
+        if (socStop === null) {
+          const fsConn = await getDoc(doc(db, "chargers", chargePointId, "connectors", String(connIdNum)));
+          if (fsConn.exists() && typeof fsConn.data()?.telemetry?.soc === 'number' && fsConn.data().telemetry.soc > 0) {
+            socStop = fsConn.data().telemetry.soc;
+          }
+        }
+      } catch (_e) {}
+    }
 
     const socGained = typeof socStart === 'number' && socStart > 0 && typeof socStop === 'number' && socStop >= socStart
       ? Number((socStop - socStart).toFixed(1))
@@ -896,7 +899,7 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
 
     await setDoc(txRef, finalFields, { merge: true });
 
-    // Publish the finished session to RTDB and clear the live session
+    // Publish the finished session to RTDB and clear the live session + reset stale connector SoC/power
     const completed = {
       id: String(transactionId),
       transactionId: Number(transactionId),
@@ -918,6 +921,9 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
       [livePath(chargePointId, "connectors", targetConnKey, "activeTx")]: null,
       [livePath(chargePointId, "connectors", targetConnKey, "status")]: "Available",
       [livePath(chargePointId, "connectors", targetConnKey, "info")]: "",
+      [livePath(chargePointId, "connectors", targetConnKey, "telemetry", "soc")]: null,
+      [livePath(chargePointId, "connectors", targetConnKey, "telemetry", "powerKw")]: 0,
+      [livePath(chargePointId, "connectors", targetConnKey, "telemetry", "current")]: 0,
     });
 
     await setDoc(
@@ -925,6 +931,12 @@ export async function saveStopTransaction(transactionId, chargePointId, meterSto
       {
         status: "Available",
         activeTx: deleteField(),
+        telemetry: {
+          soc: null,
+          powerKw: 0,
+          current: 0,
+          updatedAt: nowIso(),
+        },
         updatedAt: nowIso(),
       },
       { merge: true }

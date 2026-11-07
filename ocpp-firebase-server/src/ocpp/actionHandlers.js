@@ -12,6 +12,10 @@ import { getKarachiIso } from "../utils/time.js";
 // Helper to generate transaction IDs
 let nextTxId = Date.now() % 1000000;
 
+// Synchronous in-memory cache of active/recent StartTransactions per connector
+// Prevents duplicate transaction IDs when charger retries StartTransaction every 5s while Firebase is still writing
+const recentStartTxByConnector = new Map();
+
 /**
  * Evaluates session limits with GSM predictive latency compensation.
  * Uses strictly '>=' (never '==') so large energy or price steps never bypass the limit.
@@ -244,6 +248,24 @@ export const actionHandlers = {
    */
   async StartTransaction(chargePointId, payload) {
     const { connectorId, idTag, meterStart, timestamp } = payload;
+    const connKey = `${String(chargePointId).toLowerCase()}_${Number(connectorId) || 1}`;
+
+    // 1. Instant 0ms Synchronous In-Memory Deduplication (blocks rapid 5s hardware retries while Firebase writes are in flight)
+    const memCached = recentStartTxByConnector.get(connKey);
+    if (memCached && Date.now() - memCached.createdAtMs < 15 * 60 * 1000) {
+      const isMeterMatch = Math.abs(Number(memCached.meterStart || 0) - Number(meterStart || 0)) <= 50;
+      const isTimeMatch = Boolean(timestamp && memCached.timestamp === timestamp);
+      if (isMeterMatch || isTimeMatch) {
+        console.log(
+          `[OCPP] Instant In-Memory Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${memCached.txId}`
+        );
+        return {
+          transactionId: Number(memCached.txId),
+          idTagInfo: { status: "Accepted" },
+        };
+      }
+    }
+
     const authResult = await verifyRfidTag(chargePointId, idTag);
 
     if (authResult.status === "Blocked") {
@@ -254,17 +276,39 @@ export const actionHandlers = {
       };
     }
 
-    // Cellular Deduplication: Check if this connector already has an active session with identical meterStart or timestamp
+    // 2. Re-check in-memory cache after async verifyRfidTag in case another retry arrived concurrently
+    const memAfterAuth = recentStartTxByConnector.get(connKey);
+    if (memAfterAuth && Date.now() - memAfterAuth.createdAtMs < 15 * 60 * 1000) {
+      const isMeterMatch = Math.abs(Number(memAfterAuth.meterStart || 0) - Number(meterStart || 0)) <= 50;
+      const isTimeMatch = Boolean(timestamp && memAfterAuth.timestamp === timestamp);
+      if (isMeterMatch || isTimeMatch) {
+        console.log(
+          `[OCPP] Post-Auth Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${memAfterAuth.txId}`
+        );
+        return {
+          transactionId: Number(memAfterAuth.txId),
+          idTagInfo: { status: "Accepted" },
+        };
+      }
+    }
+
+    // 3. Cellular RTDB Deduplication fallback (in case server restarted mid-session)
     try {
-      const { getDatabase, ref, get } = await import("firebase/database");
+      const { ref, get } = await import("firebase/database");
       const { rtdb } = await import("../config/firebase.js");
       const connTxSnap = await get(ref(rtdb, `live/${chargePointId.toLowerCase()}/connectors/${connectorId}/activeTx`));
       if (connTxSnap.exists()) {
         const active = connTxSnap.val() || {};
-        const isMeterMatch = Math.abs(Number(active.meterStart || 0) - Number(meterStart || 0)) < 50;
+        const isMeterMatch = Math.abs(Number(active.meterStart || 0) - Number(meterStart || 0)) <= 50;
         const isTimeMatch = active.startTime === timestamp;
         if (active.transactionId && (isMeterMatch || isTimeMatch)) {
-          console.log(`[OCPP] Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${active.transactionId}`);
+          console.log(`[OCPP] RTDB Deduplicated StartTransaction retry for ${chargePointId} [Connector ${connectorId}] -> Reusing TxId #${active.transactionId}`);
+          recentStartTxByConnector.set(connKey, {
+            txId: Number(active.transactionId),
+            meterStart: Number(meterStart || 0),
+            timestamp,
+            createdAtMs: Date.now(),
+          });
           return {
             transactionId: Number(active.transactionId),
             idTagInfo: { status: "Accepted" },
@@ -275,11 +319,22 @@ export const actionHandlers = {
 
     const txId = ++nextTxId;
 
+    // Reserve in memory immediately BEFORE awaiting Firebase writes
+    recentStartTxByConnector.set(connKey, {
+      txId,
+      meterStart: Number(meterStart || 0),
+      timestamp,
+      createdAtMs: Date.now(),
+    });
+
     console.log(
       `[OCPP] StartTransaction on ${chargePointId} [Connector ${connectorId}], TxId: ${txId}, MeterStart: ${meterStart}, Tag: ${idTag}`
     );
 
-    await saveStartTransaction(txId, chargePointId, connectorId, idTag, meterStart, timestamp);
+    // Run saveStartTransaction asynchronously so the charger receives its OCPP StartTransaction confirmation immediately (<50ms)
+    saveStartTransaction(txId, chargePointId, connectorId, idTag, meterStart, timestamp).catch((err) =>
+      console.error(`[OCPP] Async saveStartTransaction error for Tx #${txId}:`, err.message)
+    );
 
     return {
       transactionId: txId,
@@ -294,11 +349,17 @@ export const actionHandlers = {
    */
   async StopTransaction(chargePointId, payload) {
     const { transactionId, meterStop, timestamp, reason } = payload;
-    const pricePerKwh = parseFloat(process.env.PRICE_PER_KWH || "0.30");
 
     console.log(
       `[OCPP] StopTransaction on ${chargePointId}, TxId: ${transactionId}, MeterStop: ${meterStop}, Reason: ${reason}`
     );
+
+    // Clear in-memory start cache for any connector matching this transactionId
+    for (const [k, v] of recentStartTxByConnector.entries()) {
+      if (k.startsWith(`${String(chargePointId).toLowerCase()}_`) && Number(v.txId) === Number(transactionId)) {
+        recentStartTxByConnector.delete(k);
+      }
+    }
 
     const result = await saveStopTransaction(
       transactionId,
@@ -309,8 +370,8 @@ export const actionHandlers = {
       null // Uses charger's configured tariffRate from Firestore
     );
 
-    // Automatically unlock cable immediately on stop (no payment required)
     const targetConnId = result?.connectorId || 1;
+    recentStartTxByConnector.delete(`${String(chargePointId).toLowerCase()}_${targetConnId}`);
     setTimeout(async () => {
       try {
         const { ocppServer } = await import("./OCPPServer.js");
