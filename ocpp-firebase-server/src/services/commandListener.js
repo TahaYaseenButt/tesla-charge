@@ -218,6 +218,15 @@ export function startCommandListener() {
                 data.requestedMessage || "MeterValues",
                 connectorId || 1
               );
+            } else if (action === "SystemUpdate") {
+              const { exec } = await import("child_process");
+              const { promisify } = await import("util");
+              const execAsync = promisify(exec);
+              const { stdout, stderr } = await execAsync("git pull origin main", { timeout: 30000 });
+              result = { status: "Accepted", gitOutput: (stdout || stderr || "").trim() };
+              setTimeout(() => {
+                exec("pm2 restart all || kill -SIGTERM " + process.pid, () => {});
+              }, 1200);
             } else {
               throw new Error(`Unsupported command action: ${action}`);
             }

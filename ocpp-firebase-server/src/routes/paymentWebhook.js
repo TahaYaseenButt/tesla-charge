@@ -795,6 +795,37 @@ apiRouter.post("/notifications/register-token", async (req, res) => {
   }
 });
 
+/**
+ * 13. Remote Server Git Pull & PM2 Restart Endpoint
+ * Allows updating the physical Linux server remotely via HTTP POST https://tesla-charge.online/api/system/update
+ */
+apiRouter.post("/system/update", async (_req, res) => {
+  try {
+    const { exec } = await import("child_process");
+    const { promisify } = await import("util");
+    const execAsync = promisify(exec);
+
+    const { stdout: pullOut, stderr: pullErr } = await execAsync("git pull origin main", {
+      timeout: 30000,
+    });
+
+    res.json({
+      success: true,
+      message: "Git pull completed. Restarting PM2 process in 1 second...",
+      gitOutput: (pullOut || pullErr || "").trim(),
+      timestamp: getKarachiIso(),
+    });
+
+    setTimeout(() => {
+      exec("pm2 restart all || kill -SIGTERM " + process.pid, () => {});
+    }, 1000);
+  } catch (err) {
+    console.error("[System Update] Remote update error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 
 
 
