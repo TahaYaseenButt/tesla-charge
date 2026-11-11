@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import { actionHandlers } from "./actionHandlers.js";
-import { saveChargerOffline, saveChargerHeartbeat } from "../services/localSync.js";
+import { saveChargerOffline, saveChargerHeartbeat } from "../services/firebaseSync.js";
 import { getKarachiIso, getKarachiTimeString } from "../utils/time.js";
 import crypto from "crypto";
 
@@ -146,10 +146,21 @@ export class OCPPServer {
       try {
         const text = data.toString();
         const parsed = JSON.parse(text);
-        await this.handleMessage(chargePointId, ws, parsed);
+        await this.handleMessage(chargePointId, ws, parsed, text);
       } catch (err) {
-        const preview = data.toString().slice(0, 120);
-        this.log(`[Raw/Non-JSON message from ${chargePointId}]: ${preview} (${err.message})`);
+        const rawText = data.toString();
+        const hexPreview = Buffer.isBuffer(data) ? data.toString("hex").slice(0, 200) : "";
+        const preview = rawText.slice(0, 300);
+        this.log(`[Raw/Non-JSON message from ${chargePointId}]: ${preview} | HEX: ${hexPreview}`);
+        try {
+          const { ref, update } = await import("firebase/database");
+          const { rtdb } = await import("../config/firebase.js");
+          await update(ref(rtdb, `live/${chargePointId}`), {
+            lastRawMessage: preview,
+            lastRawHex: hexPreview,
+            lastRawAt: getKarachiIso(),
+          });
+        } catch (_e) {}
       }
     });
 
@@ -175,9 +186,19 @@ export class OCPPServer {
     });
   }
 
-  async handleMessage(chargePointId, ws, message) {
+  async handleMessage(chargePointId, ws, message, rawText = "") {
     if (!Array.isArray(message)) {
-      this.log(`[${chargePointId}] Invalid message format: not an array`);
+      const jsonDump = rawText || JSON.stringify(message);
+      this.log(`[${chargePointId}] Non-array JSON payload: ${jsonDump}`);
+      try {
+        const { ref, update } = await import("firebase/database");
+        const { rtdb } = await import("../config/firebase.js");
+        await update(ref(rtdb, `live/${chargePointId}`), {
+          lastRawJson: message,
+          lastRawMessage: jsonDump,
+          lastRawAt: getKarachiIso(),
+        });
+      } catch (_e) {}
       return;
     }
 
@@ -379,13 +400,6 @@ export class OCPPServer {
       }
     }
     return list;
-  }
-
-  /**
-   * Get recent log entries
-   */
-  getLogs(count = 30) {
-    return this.logs.slice(0, count);
   }
 }
 
