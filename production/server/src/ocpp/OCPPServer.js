@@ -75,15 +75,19 @@ export class OCPPServer {
 
       const proto = request.headers["sec-websocket-protocol"] || "none";
       const agent = request.headers["user-agent"] || "unknown";
-      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}] (URL: ${request.url}, Protocol: ${proto}, Agent: ${agent})`);
+      const clientIp =
+        request.headers["cf-connecting-ip"] ||
+        request.headers["x-forwarded-for"] ||
+        request.socket.remoteAddress;
+      this.log(`Incoming connection request from IP: ${clientIp} (local: ${request.socket.remoteAddress}) for charger: [${chargePointId}] (URL: ${request.url}, Protocol: ${proto}, Agent: ${agent})`);
 
       this.wss.handleUpgrade(request, socket, head, (ws) => {
-        this.wss.emit("connection", ws, request, chargePointId);
+        this.wss.emit("connection", ws, request, chargePointId, clientIp);
       });
     });
 
-    this.wss.on("connection", (ws, request, chargePointId) => {
-      this.handleConnection(ws, chargePointId);
+    this.wss.on("connection", (ws, request, chargePointId, clientIp) => {
+      this.handleConnection(ws, chargePointId, clientIp);
     });
 
     // Periodic Ping/Pong heartbeat to keep NAT firewalls / Cloudflare alive and detect genuinely dead sockets
@@ -111,12 +115,13 @@ export class OCPPServer {
     this.log(`OCPP 1.6-J WebSocket Server ready and listening.`);
   }
 
-  handleConnection(ws, chargePointId) {
-    this.log(`Charger connected: [${chargePointId}]`);
+  handleConnection(ws, chargePointId, clientIp = "unknown") {
+    this.log(`Charger connected: [${chargePointId}] (IP: ${clientIp})`);
 
     const now = Date.now();
     const connEntry = {
       ws,
+      clientIp,
       lastActivity: now,
       pendingCalls: new Map(),
       connectedAt: getKarachiIso(),
@@ -513,6 +518,7 @@ export class OCPPServer {
       if (conn.ws && conn.ws.readyState === 1) {
         list.push({
           chargePointId: id,
+          clientIp: conn.clientIp || "unknown",
           connectedAt: conn.connectedAt,
           readyState: "Connected",
         });

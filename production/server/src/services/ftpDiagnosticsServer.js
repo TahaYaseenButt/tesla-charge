@@ -154,19 +154,21 @@ export function startFtpDiagnosticsServer(ocppServer) {
           const spaceIdx = line.indexOf(" ");
           const cmd = (spaceIdx === -1 ? line : line.slice(0, spaceIdx)).toUpperCase();
           const arg = spaceIdx === -1 ? "" : line.slice(spaceIdx + 1).trim();
+          log(`<- ${cmd} ${arg}`);
 
           switch (cmd) {
             case "USER":
               reply(331, "User name okay, need password (or anonymous).");
               break;
             case "PASS":
+            case "ACCT":
               reply(230, "User logged in, proceed.");
               break;
             case "SYST":
               reply(215, "UNIX Type: L8");
               break;
             case "FEAT":
-              socket.write("211-Features:\r\n PASV\r\n UTF8\r\n SIZE\r\n211 End\r\n");
+              socket.write("211-Features:\r\n EPSV\r\n PASV\r\n UTF8\r\n SIZE\r\n211 End\r\n");
               break;
             case "OPTS":
               reply(200, "OPTS OK");
@@ -181,6 +183,7 @@ export function startFtpDiagnosticsServer(ocppServer) {
               reply(250, `Directory changed to ${currentDir}`);
               break;
             case "CDUP":
+            case "XCUP":
               currentDir = "/";
               reply(250, "Directory changed to /");
               break;
@@ -195,8 +198,23 @@ export function startFtpDiagnosticsServer(ocppServer) {
             case "STRU":
             case "NOOP":
             case "ALLO":
+            case "REIN":
               reply(200, "OK");
               break;
+            case "EPSV": {
+              if (dataServer) {
+                try { dataServer.close(); } catch (_e) {}
+              }
+              dataServer = net.createServer((dSock) => {
+                registerDataSocket(dSock);
+              });
+              dataServer.listen(0, "0.0.0.0", () => {
+                const port = dataServer.address().port;
+                log(`-> 229 Entering Extended Passive Mode (|||${port}|)`);
+                reply(229, `Entering Extended Passive Mode (|||${port}|)`);
+              });
+              break;
+            }
             case "PASV": {
               if (dataServer) {
                 try { dataServer.close(); } catch (_e) {}
@@ -208,12 +226,14 @@ export function startFtpDiagnosticsServer(ocppServer) {
                 const port = dataServer.address().port;
                 const localIp = (socket.localAddress || "").replace(/^::ffff:/, "");
                 const ip =
-                  localIp && localIp !== "127.0.0.1" && localIp !== "::1" && localIp !== "0.0.0.0"
+                  process.env.FTP_PASV_IP ||
+                  (localIp && localIp !== "127.0.0.1" && localIp !== "::1" && localIp !== "0.0.0.0"
                     ? localIp
-                    : getLocalLanIp();
+                    : getLocalLanIp());
                 const ipParts = ip.split(".").map((n) => parseInt(n, 10) || 0);
                 const p1 = (port >> 8) & 0xff;
                 const p2 = port & 0xff;
+                log(`-> 227 Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
                 reply(227, `Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
               });
               break;
@@ -286,7 +306,7 @@ export function startFtpDiagnosticsServer(ocppServer) {
               socket.end();
               break;
             default:
-              reply(202, "Command acknowledged.");
+              reply(502, "Command not implemented.");
               break;
           }
         }
@@ -319,3 +339,4 @@ export function startFtpDiagnosticsServer(ocppServer) {
     createFtpServer(21);
   }
 }
+

@@ -467,11 +467,33 @@ export const actionHandlers = {
     };
   },
 
-  async DiagnosticsStatusNotification(_chargePointId, _payload) {
+  async DiagnosticsStatusNotification(chargePointId, payload) {
+    console.log(`[OCPP] DiagnosticsStatusNotification from ${chargePointId}:`, payload);
+    try {
+      const { ocppServer } = await import("./OCPPServer.js");
+      ocppServer.log(`<- [${chargePointId}] DiagnosticsStatusNotification: ${JSON.stringify(payload)}`);
+      const { ref, update } = await import("firebase/database");
+      const { rtdb } = await import("../config/firebase.js");
+      await update(ref(rtdb, `live/${chargePointId.toLowerCase()}`), {
+        diagnosticsStatus: payload?.status || "Unknown",
+        diagnosticsStatusUpdatedAt: getKarachiIso(),
+      });
+    } catch (_e) {}
     return {};
   },
 
-  async FirmwareStatusNotification(_chargePointId, _payload) {
+  async FirmwareStatusNotification(chargePointId, payload) {
+    console.log(`[OCPP] FirmwareStatusNotification from ${chargePointId}:`, payload);
+    try {
+      const { ocppServer } = await import("./OCPPServer.js");
+      ocppServer.log(`<- [${chargePointId}] FirmwareStatusNotification: ${JSON.stringify(payload)}`);
+      const { ref, update } = await import("firebase/database");
+      const { rtdb } = await import("../config/firebase.js");
+      await update(ref(rtdb, `live/${chargePointId.toLowerCase()}`), {
+        firmwareStatus: payload?.status || "Unknown",
+        firmwareStatusUpdatedAt: getKarachiIso(),
+      });
+    } catch (_e) {}
     return {};
   },
 };
