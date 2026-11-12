@@ -914,6 +914,42 @@ const handleHttpDiagnosticUpload = async (req, res) => {
 apiRouter.put("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 apiRouter.post("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 
+/**
+ * GET /api/om/raw - View captured raw O&M messages (IN & OUT)
+ */
+apiRouter.get("/om/raw", (_req, res) => {
+  return res.json({
+    success: true,
+    connectedChargers: ocppServer.getConnectedChargers(),
+    omMessages: ocppServer.omMessages || [],
+    recentLogs: ocppServer.logs.slice(0, 30),
+  });
+});
+
+/**
+ * POST /api/om/raw - Send a raw JSON message (or batch of messages) to dc_evse O&M channel
+ */
+apiRouter.post("/om/raw", async (req, res) => {
+  try {
+    const { chargePointId = "dc_evse", payload, waitMs = 2000 } = req.body;
+    const result = await ocppServer.sendRawJson(chargePointId, payload, Number(waitMs));
+    return res.json({
+      success: true,
+      ...result,
+      omMessages: ocppServer.omMessages.slice(0, 20),
+      recentLogs: ocppServer.logs.slice(0, 20),
+    });
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      error: err.message,
+      connectedChargers: ocppServer.getConnectedChargers(),
+      omMessages: ocppServer.omMessages || [],
+    });
+  }
+});
+
+
 
 
 

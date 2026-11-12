@@ -9,6 +9,8 @@ export class OCPPServer {
     // Map of active connections: chargePointId -> { ws, pendingCalls: Map }
     this.connections = new Map();
     this.logs = [];
+    this.omMessages = [];
+    this.rawListeners = new Set();
   }
 
   log(msg) {
@@ -126,16 +128,15 @@ export class OCPPServer {
     this.connections.set(chargePointId, connEntry);
     saveChargerHeartbeat(chargePointId).catch(() => {});
 
-    // If this is the auxiliary O&M channel ([dc_evse]), send an immediate 200ms handshake
-    // so the charger's 2-second O&M connection watchdog receives a server response
+    // If this is the auxiliary O&M channel ([dc_evse]), send an O&M JSON handshake
     if (chargePointId === "dc_evse" || chargePointId.includes("om")) {
       setTimeout(() => {
         if (ws.readyState === 1) {
           try {
             ws.ping();
-            const initCall = [2, "om-handshake-1", "GetConfiguration", {}];
-            ws.send(JSON.stringify(initCall));
-            this.log(`-> [${chargePointId}] Sent O&M initial handshake`);
+            const initOm = { type: 1, connectStatus: 1 };
+            ws.send(JSON.stringify(initOm));
+            this.log(`-> [${chargePointId}] Sent O&M JSON handshake: ${JSON.stringify(initOm)}`);
           } catch (_e) {}
         }
       }, 150);
@@ -190,6 +191,28 @@ export class OCPPServer {
     if (!Array.isArray(message)) {
       const jsonDump = rawText || JSON.stringify(message);
       this.log(`[${chargePointId}] Non-array JSON payload: ${jsonDump}`);
+      const entry = {
+        direction: "IN",
+        chargePointId,
+        payload: message,
+        raw: jsonDump,
+        timestamp: getKarachiIso(),
+      };
+      this.omMessages.unshift(entry);
+      if (this.omMessages.length > 100) this.omMessages.pop();
+      for (const listener of this.rawListeners) {
+        try { listener(entry); } catch (_e) {}
+      }
+
+      // Auto-acknowledge and probe O&M messages on dc_evse if not already probing
+      if ((chargePointId === "dc_evse" || chargePointId.includes("om")) && message && typeof message === "object") {
+        const conn = this.connections.get(chargePointId);
+        if (conn && !conn.probedOm && ws.readyState === 1) {
+          conn.probedOm = true;
+          this.probeOmProtocol(chargePointId, ws, message).catch(() => {});
+        }
+      }
+
       try {
         const { ref, update } = await import("firebase/database");
         const { rtdb } = await import("../config/firebase.js");
@@ -383,6 +406,67 @@ export class OCPPServer {
   async getConfiguration(chargePointId, keys = []) {
     const payload = keys.length ? { key: keys } : {};
     return await this.sendCall(chargePointId, "GetConfiguration", payload);
+  }
+
+  /**
+   * Automatically probe O&M protocol types (0..30) on dc_evse to discover supported telemetry & controls
+   */
+  async probeOmProtocol(chargePointId, ws, initialMsg) {
+    try {
+      // Acknowledge initial message immediately
+      const ack = { type: initialMsg.type || 1, connectStatus: 1, status: 0, result: 1 };
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify(ack));
+        this.log(`-> [${chargePointId}] Auto-ACK O&M: ${JSON.stringify(ack)}`);
+      }
+
+      // Sweep types 1..25 spaced 150ms apart to discover all supported O&M query/control types
+      for (let t = 1; t <= 25; t++) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (ws.readyState !== 1) break;
+        const probeMsg = { type: t, gun: 1, gunNo: 1, cmd: 0 };
+        ws.send(JSON.stringify(probeMsg));
+      }
+      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 1..25)`);
+    } catch (err) {
+      this.log(`[${chargePointId}] O&M probe error: ${err.message}`);
+    }
+  }
+
+  /**
+   * Send raw JSON object/string to an O&M WebSocket (like dc_evse) and collect replies
+   */
+  async sendRawJson(chargePointId = "dc_evse", payload = {}, waitMs = 2000) {
+    const conn = this.connections.get(chargePointId);
+    if (!conn || conn.ws.readyState !== 1) {
+      throw new Error(`Charger [${chargePointId}] is not currently connected.`);
+    }
+    const replies = [];
+    const listener = (entry) => {
+      if (entry.chargePointId === chargePointId) {
+        replies.push(entry);
+      }
+    };
+    this.rawListeners.add(listener);
+    const jsonStr = typeof payload === "string" ? payload : JSON.stringify(payload);
+    this.log(`-> [${chargePointId}] Sent O&M JSON: ${jsonStr}`);
+    this.omMessages.unshift({
+      direction: "OUT",
+      chargePointId,
+      payload,
+      raw: jsonStr,
+      timestamp: getKarachiIso(),
+    });
+    if (this.omMessages.length > 100) this.omMessages.pop();
+    conn.ws.send(jsonStr);
+
+    await new Promise((r) => setTimeout(r, waitMs));
+    this.rawListeners.delete(listener);
+    return {
+      sent: payload,
+      replies,
+      socketAlive: conn.ws.readyState === 1,
+    };
   }
 
   /**
