@@ -10,6 +10,7 @@ import { getKarachiIso } from "./utils/time.js";
 import { ocppServer } from "./ocpp/OCPPServer.js";
 import { apiRouter } from "./routes/paymentWebhook.js";
 import { startCommandListener } from "./services/commandListener.js";
+import { startFtpDiagnosticsServer } from "./services/ftpDiagnosticsServer.js";
 
 dotenv.config();
 
@@ -49,6 +50,9 @@ ocppServer.attach(server);
 
 // Start listening for remote commands from the React Mobile App via Firestore
 startCommandListener();
+
+// Start built-in FTP Diagnostics Server (port 2121 and port 21 if available) for OCPP 1.6 GetDiagnostics
+startFtpDiagnosticsServer(ocppServer);
 
 // Start Server
 server.listen(PORT, "0.0.0.0", () => {

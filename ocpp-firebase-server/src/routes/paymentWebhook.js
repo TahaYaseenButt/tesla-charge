@@ -825,6 +825,67 @@ apiRouter.post("/system/update", async (_req, res) => {
   }
 });
 
+/**
+ * 14. OCPP Diagnostics Log Files List, Inspect, and HTTP PUT/POST Upload Receiver
+ */
+apiRouter.get("/diagnostics/files", async (_req, res) => {
+  try {
+    const { listDiagnosticFiles } = await import("../services/ftpDiagnosticsServer.js");
+    const files = listDiagnosticFiles();
+    return res.json({ success: true, count: files.length, files });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get("/diagnostics/inspect/:fileName", async (req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { DIAGNOSTICS_DIR, inspectDiagnosticArchive } = await import("../services/ftpDiagnosticsServer.js");
+    const safeName = pathMod.default.basename(req.params.fileName || "");
+    const fullPath = pathMod.default.join(DIAGNOSTICS_DIR, safeName);
+    if (!fsMod.default.existsSync(fullPath)) {
+      return res.status(404).json({ success: false, error: "File not found" });
+    }
+    const info = await inspectDiagnosticArchive(fullPath);
+    return res.json({ success: true, fileName: safeName, ...info });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+const handleHttpDiagnosticUpload = async (req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+    const rawName = req.params.fileName || req.query.file || `diag_${Date.now()}.tar.bz2`;
+    const safeName = pathMod.default.basename(String(rawName)).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const destPath = pathMod.default.join(DIAGNOSTICS_DIR, safeName);
+    const writeStream = fsMod.default.createWriteStream(destPath);
+    let totalBytes = 0;
+
+    req.on("data", (chunk) => {
+      totalBytes += chunk.length;
+    });
+    req.pipe(writeStream);
+    writeStream.on("finish", () => {
+      ocppServer.log(`[HTTP Diagnostics] ✅ Uploaded diagnostic file: ${safeName} (${totalBytes} bytes)`);
+      res.status(200).json({ success: true, fileName: safeName, sizeBytes: totalBytes });
+    });
+    writeStream.on("error", (err) => {
+      res.status(500).json({ success: false, error: err.message });
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+apiRouter.put("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
+apiRouter.post("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
+
+
 
 
 

@@ -552,7 +552,8 @@
         <div>
           <div class="selector-label">Switch Charger Identifier:</div>
           <select id="chargerSelect" onchange="onSelectCharger(this.value)">
-            <option value="charger1">charger1 (Main 240kW OCPP)</option>
+            <option value="charger1">charger1 (Main 240kW DC OCPP)</option>
+            <option value="charger11">charger11 (Single-Phase AC 32A)</option>
             <option value="dc_evse">dc_evse (O&M Channel ID)</option>
           </select>
         </div>
@@ -724,14 +725,35 @@
           <button class="btn btn-secondary" onclick="sendCustomOcpp('ClearCache', {})">🧹 Clear RFID Auth Cache</button>
         </div>
 
-        <div style="border-top:1px solid var(--border); padding-top:12px; display:flex; flex-direction:column; gap:8px;">
-          <div style="font-size:12px; font-weight:700; color:var(--text-muted);">
-            📦 Remote Diagnostic Log Upload (OCPP GetDiagnostics):
+        <div style="border-top:1px solid var(--border); padding-top:12px; display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <div style="font-size:12px; font-weight:700; color:var(--text-muted);">
+              📦 Remote Diagnostic Log Upload (OCPP 1.6 <code>GetDiagnostics</code>):
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="setDiagPreset('ftp-local')">FTP LAN (Port 21)</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="setDiagPreset('ftp-2121')">FTP Built-in (:2121)</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="setDiagPreset('factory-ftp')">Factory Cloud FTP</button>
+              <button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="setDiagPreset('http')">HTTP Upload</button>
+            </div>
           </div>
+
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <input type="text" id="diagUploadUrl" value="https://tesla-charge.online/api/diagnostics" style="flex:1; min-width:220px;" />
-            <button class="btn btn-primary" onclick="requestDiagnostics()">Upload Charger Logs</button>
+            <input type="text" id="diagUploadUrl" value="ftp://admin:vp123@www.boy.tw.cn/DiagonosticsLog/" placeholder="ftp://192.168.0.131/ or ftp://user:pass@host/path/" style="flex:1; min-width:220px;" />
+            <button class="btn btn-primary" onclick="requestDiagnostics()">📥 Request Charger Logs</button>
           </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:11px; color:var(--text-muted);">
+            <span>Start UTC (Optional):</span>
+            <input type="text" id="diagStartTime" placeholder="2026-11-10T00:00:00Z" style="width:165px; padding:5px 8px; font-size:11px;" />
+            <span>Stop UTC (Optional):</span>
+            <input type="text" id="diagStopTime" placeholder="2026-11-12T23:59:59Z" style="width:165px; padding:5px 8px; font-size:11px;" />
+            <button class="btn btn-secondary" style="padding:5px 10px; font-size:11px;" onclick="loadDiagnosticFiles()">🔄 Check Uploaded Files</button>
+          </div>
+
+          <div id="diagResultBox" style="display:none; background:rgba(15,23,42,0.9); border:1px solid var(--border); border-left:4px solid var(--primary); border-radius:8px; padding:10px; font-family:monospace; font-size:11px; white-space:pre-wrap; color:#e2e8f0;"></div>
+
+          <div id="diagFilesList" style="font-size:11px; color:var(--text-muted);"></div>
         </div>
       </div>
 
@@ -1369,10 +1391,91 @@
       });
     }
 
-    function requestDiagnostics() {
+    function setDiagPreset(mode) {
+      const el = document.getElementById('diagUploadUrl');
+      const host = window.location.hostname === 'localhost' ? '192.168.0.131' : window.location.hostname;
+      if (mode === 'ftp-local') {
+        el.value = `ftp://${host}/`;
+      } else if (mode === 'ftp-2121') {
+        el.value = `ftp://${host}:2121/`;
+      } else if (mode === 'factory-ftp') {
+        el.value = 'ftp://admin:vp123@www.boy.tw.cn/DiagonosticsLog/';
+      } else if (mode === 'http') {
+        el.value = `${BASE_URL}/api/diagnostics/upload/`;
+      }
+    }
+
+    async function requestDiagnostics() {
       const location = document.getElementById('diagUploadUrl').value.trim();
       if (!location) return;
-      sendCustomOcpp('GetDiagnostics', { location, retries: 2, retryInterval: 30 });
+      const startTime = document.getElementById('diagStartTime')?.value.trim();
+      const stopTime = document.getElementById('diagStopTime')?.value.trim();
+      const payload = { location, retries: 2, retryInterval: 30 };
+      if (startTime) payload.startTime = startTime;
+      if (stopTime) payload.stopTime = stopTime;
+
+      const box = document.getElementById('diagResultBox');
+      if (box) {
+        box.style.display = 'block';
+        box.textContent = `⏳ Sending GetDiagnostics to [${currentChargerId}] -> ${location}...`;
+      }
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/chargers/${encodeURIComponent(currentChargerId)}/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'GetDiagnostics', payload }),
+        });
+        const data = await res.json();
+        showResponseBanner('GetDiagnostics Response', data, !data.success);
+        if (box) {
+          const fn = data?.result?.fileName;
+          box.textContent = fn
+            ? `✅ Charger accepted GetDiagnostics!\nArchive Filename: ${fn}\nUploading to: ${location} (takes 1-2 minutes)...`
+            : `ℹ️ Charger Response: ${JSON.stringify(data?.result || data)}`;
+        }
+        setTimeout(loadDiagnosticFiles, 5000);
+      } catch (err) {
+        if (box) box.textContent = `❌ GetDiagnostics Error: ${err.message}`;
+      }
+    }
+
+    async function loadDiagnosticFiles() {
+      const listEl = document.getElementById('diagFilesList');
+      if (!listEl) return;
+      try {
+        const res = await fetch(`${BASE_URL}/api/diagnostics/files`);
+        const data = await res.json();
+        const files = data?.files || [];
+        if (files.length === 0) {
+          listEl.innerHTML = 'No local diagnostic archives uploaded to this server yet.';
+          return;
+        }
+        listEl.innerHTML = `<div style="margin-top:4px; font-weight:700; color:#e2e8f0;">📂 Uploaded Diagnostic Archives (${files.length}):</div>` +
+          files.map(f => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; margin-top:4px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;">
+              <span>📄 <strong>${f.fileName}</strong> (${f.sizeKB} KB) — ${f.uploadedAt}</span>
+              <span style="display:flex; gap:6px;">
+                <button class="btn btn-secondary" style="padding:3px 8px; font-size:10px;" onclick="inspectDiagFile('${f.fileName}')">🔍 Read Log</button>
+                <a href="${f.downloadUrl}" download class="btn btn-primary" style="padding:3px 8px; font-size:10px; text-decoration:none;">⬇️ Download</a>
+              </span>
+            </div>
+          `).join('');
+      } catch (_e) {}
+    }
+
+    async function inspectDiagFile(fileName) {
+      const box = document.getElementById('diagResultBox');
+      if (!box) return;
+      box.style.display = 'block';
+      box.textContent = `⏳ Reading archive ${fileName}...`;
+      try {
+        const res = await fetch(`${BASE_URL}/api/diagnostics/inspect/${encodeURIComponent(fileName)}`);
+        const data = await res.json();
+        box.textContent = `📦 Archive: ${fileName}\nFiles Inside: ${(data.files || []).join(', ') || 'N/A'}\n\n--- LOG PREVIEW ---\n${data.sampleText || '(Binary archive - click Download to open in 7-Zip/Archive Utility)'}`;
+      } catch (err) {
+        box.textContent = `❌ Failed to inspect ${fileName}: ${err.message}`;
+      }
     }
 
     function showSmartPowerBanner(text, isError = false) {

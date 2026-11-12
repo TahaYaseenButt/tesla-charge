@@ -4,27 +4,23 @@ process.env.TZ = "Asia/Karachi";
 import express from "express";
 import http from "http";
 import path from "path";
-import cors from "cors";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { getKarachiIso } from "./utils/time.js";
 import { ocppServer } from "./ocpp/OCPPServer.js";
-import { apiRouter } from "./routes/api.js";
-import { initDatabase } from "./database/db.js";
+import { apiRouter } from "./routes/paymentWebhook.js";
+import { startCommandListener } from "./services/commandListener.js";
+import { startFtpDiagnosticsServer } from "./services/ftpDiagnosticsServer.js";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize SQLite Database schema
-initDatabase();
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -52,27 +48,33 @@ const server = http.createServer(app);
 // Attach OCPP 1.6-J WebSocket Server
 ocppServer.attach(server);
 
+// Start listening for remote commands from the React Mobile App via Firestore
+startCommandListener();
+
+// Start built-in FTP Diagnostics Server (port 2121 and port 21 if available) for OCPP 1.6 GetDiagnostics
+startFtpDiagnosticsServer(ocppServer);
+
 // Start Server
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`====================================================`);
-  console.log(`⚡ T-Charge Standalone OCPP 1.6-J Server is RUNNING!`);
+  console.log(`⚡ T-Charge OCPP 1.6-J Firebase Server is RUNNING!`);
   console.log(`📡 Local Port:         http://0.0.0.0:${PORT}`);
   console.log(`🌐 Dashboard:          http://localhost:${PORT}`);
   console.log(`🔌 Internet OCPP URL:  wss://tesla-charge.online/api/ocpp/version/1.6`);
   console.log(`🔌 Local LAN OCPP URL: ws://192.168.0.131:${PORT}/api/ocpp/version/1.6`);
   console.log(`🕒 Karachi Time (PKT): ${getKarachiIso()}`);
-  console.log(`💾 Local Database:     SQLite (WAL Mode) - data/tcharge.db`);
-  console.log(`🚀 Mode:               Direct Self-Hosted (Zero Cloud/Firebase)`);
+  console.log(`🔥 Firebase Project:   fir-85543`);
   console.log(`====================================================`);
 });
 
-// Graceful Shutdown
+// Graceful Docker / OS Shutdown
 const handleShutdown = (signal) => {
   console.log(`\n[Server] Caught ${signal}, starting graceful shutdown...`);
   server.close(() => {
     console.log("[Server] HTTP and WebSocket listeners closed cleanly.");
     process.exit(0);
   });
+  // Force exit if hanging sockets don't close after 5 seconds
   setTimeout(() => {
     console.warn("[Server] Forced exit after timeout.");
     process.exit(0);
@@ -81,3 +83,4 @@ const handleShutdown = (signal) => {
 
 process.on("SIGTERM", () => handleShutdown("SIGTERM"));
 process.on("SIGINT", () => handleShutdown("SIGINT"));
+
