@@ -203,10 +203,10 @@ export class OCPPServer {
         try { listener(entry); } catch (_e) {}
       }
 
-      // Handle O&M protocol messages from dc_evse and sync directly to charger1
+      // Handle O&M protocol messages from dc_evse (keep separate from charger1)
       if ((chargePointId === "dc_evse" || chargePointId.includes("om")) && message && typeof message === "object") {
         this.handleOmMessage(chargePointId, ws, message).catch((e) => {
-          this.log(`[${chargePointId}] O&M sync error: ${e.message}`);
+          this.log(`[${chargePointId}] O&M handler error: ${e.message}`);
         });
       }
 
@@ -398,43 +398,18 @@ export class OCPPServer {
   }
 
   /**
-   * Get charger internal configuration keys (via OCPP or synced O&M type 15 dump)
+   * Get charger internal configuration keys
    */
   async getConfiguration(chargePointId, keys = []) {
-    const conn = this.connections.get(chargePointId);
-    if (conn && conn.ws && conn.ws.readyState === 1 && chargePointId !== "dc_evse") {
-      const payload = keys.length ? { key: keys } : {};
-      return await this.sendCall(chargePointId, "GetConfiguration", payload);
-    }
-
-    // Fallback to O&M type 14/15 configuration dump for dc_evse / charger1
-    const omConn = this.connections.get("dc_evse");
-    if (omConn && omConn.ws && omConn.ws.readyState === 1) {
-      try {
-        omConn.ws.send(JSON.stringify({ type: 14 }));
-      } catch (_e) {}
-    }
-
-    if (this.lastOmConfigs && this.lastOmConfigs.length > 0) {
+    if (chargePointId === "dc_evse" && this.lastOmConfigs && this.lastOmConfigs.length > 0) {
       return { configurationKey: this.lastOmConfigs, unknownKey: [], source: "om_type_15" };
     }
-
-    try {
-      const { ref, get } = await import("firebase/database");
-      const { rtdb } = await import("../config/firebase.js");
-      const snap = await get(ref(rtdb, `live/charger1/configurationList`));
-      if (snap.exists() && Array.isArray(snap.val())) {
-        this.lastOmConfigs = snap.val();
-        return { configurationKey: snap.val(), unknownKey: [], source: "om_type_15_cached" };
-      }
-    } catch (_e) {}
-
     const payload = keys.length ? { key: keys } : {};
     return await this.sendCall(chargePointId, "GetConfiguration", payload);
   }
 
   /**
-   * Poll valid O&M telemetry commands (16=Firmware, 12=GunStatus, 14=Configs) and sync to charger1
+   * Poll valid O&M telemetry commands (16=Firmware, 12=GunStatus, 14=Configs) on dc_evse
    */
   async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
@@ -456,19 +431,15 @@ export class OCPPServer {
   }
 
   /**
-   * Process incoming O&M JSON messages (type 1, 13, 15, 17) from dc_evse and sync to charger1
+   * Process incoming O&M JSON messages (type 1, 13, 15, 17) for dc_evse only (no bridging to charger1)
    */
   async handleOmMessage(chargePointId, ws, message) {
     const { ref, update } = await import("firebase/database");
-    const { doc, setDoc } = await import("firebase/firestore");
-    const { rtdb, db } = await import("../config/firebase.js");
-    const { saveChargerHeartbeat, updateConnectorStatus } = await import("../services/firebaseSync.js");
+    const { rtdb } = await import("../config/firebase.js");
+    const { saveChargerHeartbeat } = await import("../services/firebaseSync.js");
 
-    // Mark both dc_evse and charger1 as Online
     await saveChargerHeartbeat(chargePointId);
-    await saveChargerHeartbeat("charger1");
 
-    // Refresh O&M watchdog with type 16
     if (ws.readyState === 1 && (message.type === 1 || message.type === 13)) {
       ws.send(JSON.stringify({ type: 16 }));
       setTimeout(() => {
@@ -476,67 +447,17 @@ export class OCPPServer {
       }, 600);
     }
 
-    const mapGunStatus = (code) => {
-      const n = Number(code);
-      if (n === 0) return "Available";
-      if (n === 1) return "Preparing";
-      if (n === 2) return "Charging";
-      if (n === 3) return "Finishing";
-      if (n === 4 || n === 5) return "Faulted";
-      return "Available";
-    };
-
-    if (message.type === 13) {
-      const s1 = mapGunStatus(message.status1);
-      const s2 = mapGunStatus(message.status2);
-      await updateConnectorStatus("charger1", 1, s1, "NoError", "Synced via O&M");
-      await updateConnectorStatus("charger1", 2, s2, "NoError", "Synced via O&M");
-      this.log(`[O&M -> charger1] Synced Gun Status: Gun 1=${s1}, Gun 2=${s2}`);
-    } else if (message.type === 17) {
-      const fw = `CTRL:${message.CONTROL_VERSION || "-"} | OCPP:${message.OCPP_VERSION || "-"} | HMI:${message.HMI_VERSION || "-"} | CCS:${message.CCS_VERSION || "-"}`;
-      await update(ref(rtdb, `live/charger1`), {
-        firmwareVersion: fw,
-        omVersions: message,
-        status: "Online",
-        lastHeartbeat: getKarachiIso(),
-      });
-      await setDoc(doc(db, "chargers", "charger1"), {
-        firmwareVersion: fw,
-        omVersions: message,
-        status: "Online",
-        lastHeartbeat: getKarachiIso(),
-      }, { merge: true });
-      this.log(`[O&M -> charger1] Synced Firmware Versions: ${fw}`);
-    } else if (message.type === 15 && message.configs) {
+    if (message.type === 15 && message.configs) {
       let parsedConfigs = [];
       try {
         parsedConfigs = typeof message.configs === "string" ? JSON.parse(message.configs) : message.configs;
       } catch (_e) {}
       if (Array.isArray(parsedConfigs) && parsedConfigs.length > 0) {
         this.lastOmConfigs = parsedConfigs;
-        const configMap = {};
-        for (const item of parsedConfigs) {
-          if (item && item.key) {
-            configMap[item.key] = {
-              value: item.value ?? "",
-              readonly: Boolean(item.readonly),
-            };
-          }
-        }
-        await update(ref(rtdb, `live/charger1`), {
-          configuration: configMap,
+        await update(ref(rtdb, `live/${chargePointId}`), {
           configurationList: parsedConfigs,
           configurationUpdatedAt: getKarachiIso(),
-          status: "Online",
-          lastHeartbeat: getKarachiIso(),
         });
-        await setDoc(doc(db, "chargers", "charger1"), {
-          configuration: configMap,
-          configurationUpdatedAt: getKarachiIso(),
-          status: "Online",
-          lastHeartbeat: getKarachiIso(),
-        }, { merge: true });
-        this.log(`[O&M -> charger1] Synced ${parsedConfigs.length} configuration parameters to charger1`);
       }
     }
   }
