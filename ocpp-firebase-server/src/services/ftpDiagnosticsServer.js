@@ -222,7 +222,8 @@ export function startFtpDiagnosticsServer(ocppServer) {
               dataServer = net.createServer((dSock) => {
                 registerDataSocket(dSock);
               });
-              dataServer.listen(0, "0.0.0.0", () => {
+              const preferredPasvPort = parseInt(process.env.FTP_PASV_PORT || "2122", 10);
+              const sendPasvReply = () => {
                 const port = dataServer.address().port;
                 const localIp = (socket.localAddress || "").replace(/^::ffff:/, "");
                 const ip =
@@ -235,7 +236,11 @@ export function startFtpDiagnosticsServer(ocppServer) {
                 const p2 = port & 0xff;
                 log(`-> 227 Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
                 reply(227, `Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
+              };
+              dataServer.once("error", () => {
+                dataServer.listen(0, "0.0.0.0", sendPasvReply);
               });
+              dataServer.listen(preferredPasvPort, "0.0.0.0", sendPasvReply);
               break;
             }
             case "PORT": {
