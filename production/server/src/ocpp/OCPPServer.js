@@ -128,12 +128,14 @@ export class OCPPServer {
     this.connections.set(chargePointId, connEntry);
     saveChargerHeartbeat(chargePointId).catch(() => {});
 
-    // If this is the auxiliary O&M channel ([dc_evse]), send a WS ping to keep the socket active
+    // If this is the auxiliary O&M channel ([dc_evse]), immediately send type 17 handshake & run discovery sweep
     if (chargePointId === "dc_evse" || chargePointId.includes("om")) {
       setTimeout(() => {
         if (ws.readyState === 1) {
           try {
             ws.ping();
+            connEntry.probedOm = true;
+            this.probeOmProtocol(chargePointId, ws, { type: 17 }).catch(() => {});
           } catch (_e) {}
         }
       }, 150);
@@ -411,30 +413,31 @@ export class OCPPServer {
   }
 
   /**
-   * Automatically probe O&M protocol types (1..60) on dc_evse to discover supported telemetry & controls
+   * Automatically probe O&M protocol types on dc_evse to discover supported telemetry & controls
    */
   async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
-      this.log(`-> [${chargePointId}] Starting fast O&M discovery sweep (types 1..60, 120ms interval)...`);
-      // Send known-good type 17 first to reset watchdog
+      this.log(`-> [${chargePointId}] Starting O&M discovery sweep (17..50 then 2..16, 150ms interval)...`);
+      // Send known-good type 17 immediately to satisfy 2s connection watchdog
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 17 }));
       }
-      for (let t = 1; t <= 60; t++) {
-        await new Promise((r) => setTimeout(r, 120));
+      const order = [];
+      for (let t = 18; t <= 50; t++) order.push(t);
+      for (let t = 2; t <= 16; t++) order.push(t);
+
+      for (let i = 0; i < order.length; i++) {
+        const t = order[i];
+        await new Promise((r) => setTimeout(r, 150));
         if (ws.readyState !== 1) {
-          this.log(`[${chargePointId}] Socket closed at O&M probe type=${t}`);
+          this.log(`[${chargePointId}] Socket closed at O&M probe type=${t} (step ${i + 1}/${order.length})`);
           break;
         }
-        // Refresh watchdog with type 17 every 20 steps (2.4s)
-        if (t % 20 === 0) {
-          ws.send(JSON.stringify({ type: 17 }));
-        }
-        const probeMsg = { type: t, gun: 1, gunId: 1, gunNo: 1, status: 1, cmd: 1 };
+        const probeMsg = { type: t, gun: 1, gunNo: 1, cmd: 0 };
         this.lastProbedOmType = t;
         ws.send(JSON.stringify(probeMsg));
       }
-      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 1..60)`);
+      this.log(`-> [${chargePointId}] Completed O&M discovery sweep`);
     } catch (err) {
       this.log(`[${chargePointId}] O&M probe error: ${err.message}`);
     }
