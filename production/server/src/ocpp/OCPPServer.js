@@ -66,6 +66,12 @@ export class OCPPServer {
         }
       }
       chargePointId = (chargePointId || "charger1").toLowerCase();
+      if (chargePointId.startsWith("1.6") && chargePointId.length > 3) {
+        chargePointId = chargePointId.slice(3);
+      }
+      if (chargePointId === "dc_evse" && pathname.toLowerCase().includes("/om/")) {
+        chargePointId = "charger1_om";
+      }
 
       const proto = request.headers["sec-websocket-protocol"] || "none";
       const agent = request.headers["user-agent"] || "unknown";
@@ -414,17 +420,17 @@ export class OCPPServer {
   async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
       if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 17 }));
+      }
+      await new Promise((r) => setTimeout(r, 3500));
+      if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 16 }));
       }
-      await new Promise((r) => setTimeout(r, 800));
-      if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 12 }));
-      }
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 1000));
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 14 }));
       }
-      this.log(`-> [${chargePointId}] Requested O&M telemetry (types 16, 12, 14)`);
+      this.log(`-> [${chargePointId}] Requested O&M telemetry (types 17, 16, 14)`);
     } catch (err) {
       this.log(`[${chargePointId}] O&M poll error: ${err.message}`);
     }
