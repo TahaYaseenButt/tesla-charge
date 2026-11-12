@@ -250,7 +250,7 @@ apiRouter.get("/status", async (req, res) => {
   const loadAvg = os.loadavg();
 
   const targetChargerId = String(req.query.chargerId || "charger1").toLowerCase();
-  const conn = ocppServer.connections.get(targetChargerId);
+  const conn = ocppServer.connections.get(targetChargerId) || (targetChargerId === "charger1" ? ocppServer.connections.get("dc_evse") : null);
   const isConnected = Boolean(conn && conn.ws && conn.ws.readyState === 1);
   const live = await getChargerLiveState(targetChargerId);
 
