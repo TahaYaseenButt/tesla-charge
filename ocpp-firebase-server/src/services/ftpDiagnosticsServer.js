@@ -2,7 +2,8 @@ import net from "net";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { exec } from "child_process";
+import dns from "dns";
+import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
 import { getKarachiIso } from "../utils/time.js";
@@ -12,6 +13,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const DIAGNOSTICS_DIR = path.join(__dirname, "..", "public", "diagnostics");
+
+export const publicFtpState = {
+  ctrlHost: null,
+  ctrlIp: null,
+  ctrlPort: null,
+  dataHost: null,
+  dataIp: null,
+  dataPort: null,
+  ftpUrl: null,
+  ftpIpUrl: null,
+  updatedAt: null,
+};
 
 // Ensure diagnostics directory exists
 if (!fs.existsSync(DIAGNOSTICS_DIR)) {
@@ -28,6 +41,33 @@ function getLocalLanIp() {
     }
   }
   return "127.0.0.1";
+}
+
+function isPrivateIp(ip = "") {
+  const clean = String(ip).replace(/^::ffff:/, "");
+  return (
+    clean === "::1" ||
+    clean.startsWith("127.") ||
+    clean.startsWith("10.") ||
+    clean.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(clean)
+  );
+}
+
+// Public WAN IP used in PASV replies for chargers connecting from the internet (4G etc.)
+let detectedPublicIp = process.env.FTP_PASV_IP || null;
+async function detectPublicIp() {
+  if (process.env.FTP_PASV_IP) return;
+  try {
+    const res = await fetch("https://api.ipify.org");
+    const ip = (await res.text()).trim();
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) detectedPublicIp = ip;
+  } catch (_e) {}
+}
+export function getPublicFtpUrl() {
+  if (process.env.FTP_PUBLIC_URL) return process.env.FTP_PUBLIC_URL;
+  if (detectedPublicIp) return `ftp://anonymous:anonymous@${detectedPublicIp}/`;
+  return null;
 }
 
 /**
@@ -96,12 +136,29 @@ export function listDiagnosticFiles() {
  */
 export function startFtpDiagnosticsServer(ocppServer) {
   const preferredPort = parseInt(process.env.FTP_PORT || "2121", 10);
+  const preferredPasvPort = parseInt(process.env.FTP_PASV_PORT || "2122", 10);
   const tryPort21 = process.env.FTP_TRY_PORT_21 !== "false";
+
+  let activeDataSocketHandler = null;
+
+  // Persistent shared Passive Data Server on port 2122 so SSH tunnel & NAT forwards never hit a closed port
+  const sharedPasvServer = net.createServer((dSock) => {
+    if (activeDataSocketHandler) {
+      activeDataSocketHandler(dSock);
+    } else {
+      dSock.destroy();
+    }
+  });
+  sharedPasvServer.on("error", (err) => {
+    console.warn(`[FTP Diagnostics] Shared PASV port ${preferredPasvPort} notice: ${err.message}`);
+  });
+  sharedPasvServer.listen(preferredPasvPort, "0.0.0.0", () => {
+    console.log(`📂 FTP Passive Data Listener ready on port ${preferredPasvPort}`);
+  });
 
   const createFtpServer = (listenPort) => {
     const server = net.createServer((socket) => {
       let currentDir = "/";
-      let dataServer = null;
       let dataSocket = null;
       let pendingDataCallback = null;
 
@@ -129,6 +186,8 @@ export function startFtpDiagnosticsServer(ocppServer) {
         }
       };
 
+      activeDataSocketHandler = registerDataSocket;
+
       const waitForDataSocket = (cb) => {
         if (dataSocket) {
           const s = dataSocket;
@@ -139,7 +198,11 @@ export function startFtpDiagnosticsServer(ocppServer) {
         }
       };
 
-      log(`Incoming FTP connection from ${socket.remoteAddress}`);
+      const isTunnelConn =
+        (socket.remoteAddress || "").includes("127.0.0.1") ||
+        (socket.remoteAddress || "") === "::1";
+
+      log(`Incoming FTP connection from ${socket.remoteAddress} (tunnel=${isTunnelConn})`);
       reply(220, "Tesla-Charge OCPP Diagnostics FTP Server Ready");
 
       let buffer = "";
@@ -202,45 +265,28 @@ export function startFtpDiagnosticsServer(ocppServer) {
               reply(200, "OK");
               break;
             case "EPSV": {
-              if (dataServer) {
-                try { dataServer.close(); } catch (_e) {}
-              }
-              dataServer = net.createServer((dSock) => {
-                registerDataSocket(dSock);
-              });
-              dataServer.listen(0, "0.0.0.0", () => {
-                const port = dataServer.address().port;
-                log(`-> 229 Entering Extended Passive Mode (|||${port}|)`);
-                reply(229, `Entering Extended Passive Mode (|||${port}|)`);
-              });
+              activeDataSocketHandler = registerDataSocket;
+              const pasvPort = isTunnelConn && publicFtpState.dataPort ? publicFtpState.dataPort : preferredPasvPort;
+              log(`-> 229 Entering Extended Passive Mode (|||${pasvPort}|)`);
+              reply(229, `Entering Extended Passive Mode (|||${pasvPort}|)`);
               break;
             }
             case "PASV": {
-              if (dataServer) {
-                try { dataServer.close(); } catch (_e) {}
-              }
-              dataServer = net.createServer((dSock) => {
-                registerDataSocket(dSock);
-              });
-              const preferredPasvPort = parseInt(process.env.FTP_PASV_PORT || "2122", 10);
-              const sendPasvReply = () => {
-                const port = dataServer.address().port;
-                const localIp = (socket.localAddress || "").replace(/^::ffff:/, "");
-                const ip =
-                  process.env.FTP_PASV_IP ||
-                  (localIp && localIp !== "127.0.0.1" && localIp !== "::1" && localIp !== "0.0.0.0"
-                    ? localIp
-                    : getLocalLanIp());
-                const ipParts = ip.split(".").map((n) => parseInt(n, 10) || 0);
-                const p1 = (port >> 8) & 0xff;
-                const p2 = port & 0xff;
-                log(`-> 227 Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
-                reply(227, `Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
-              };
-              dataServer.once("error", () => {
-                dataServer.listen(0, "0.0.0.0", sendPasvReply);
-              });
-              dataServer.listen(preferredPasvPort, "0.0.0.0", sendPasvReply);
+              activeDataSocketHandler = registerDataSocket;
+              const pasvPort = isTunnelConn && publicFtpState.dataPort ? publicFtpState.dataPort : preferredPasvPort;
+              const localIp = (socket.localAddress || "").replace(/^::ffff:/, "");
+              const clientIsPublic = !isPrivateIp(socket.remoteAddress);
+              const ip =
+                (isTunnelConn && publicFtpState.dataIp) ||
+                (clientIsPublic && detectedPublicIp) ||
+                (localIp && localIp !== "127.0.0.1" && localIp !== "::1" && localIp !== "0.0.0.0"
+                  ? localIp
+                  : getLocalLanIp());
+              const ipParts = ip.split(".").map((n) => parseInt(n, 10) || 0);
+              const p1 = (pasvPort >> 8) & 0xff;
+              const p2 = pasvPort & 0xff;
+              log(`-> 227 Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
+              reply(227, `Entering Passive Mode (${ipParts[0]},${ipParts[1]},${ipParts[2]},${ipParts[3]},${p1},${p2})`);
               break;
             }
             case "PORT": {
@@ -317,11 +363,7 @@ export function startFtpDiagnosticsServer(ocppServer) {
         }
       });
 
-      socket.on("close", () => {
-        if (dataServer) {
-          try { dataServer.close(); } catch (_e) {}
-        }
-      });
+      socket.on("close", () => {});
       socket.on("error", () => {});
     });
 
@@ -342,6 +384,77 @@ export function startFtpDiagnosticsServer(ocppServer) {
   createFtpServer(preferredPort);
   if (tryPort21 && preferredPort !== 21) {
     createFtpServer(21);
+  }
+
+  // Launch persistent Public Internet TCP Tunnels for worldwide 4G chargers (Control 2121 + Passive Data 2122)
+  const spawnTunnel = (localPort, role) => {
+    const start = () => {
+      const proc = spawn(
+        "ssh",
+        [
+          "-p",
+          "443",
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "ServerAliveInterval=25",
+          "-o",
+          "ExitOnForwardFailure=yes",
+          "-T",
+          `-R0:localhost:${localPort}`,
+          "tcp@a.pinggy.io",
+        ],
+        { stdio: ["pipe", "pipe", "pipe"] }
+      );
+
+      let buf = "";
+      proc.stdout.on("data", async (chunk) => {
+        buf += chunk.toString("utf8");
+        const m = buf.match(/tcp:\/\/([^:\s]+):(\d+)/);
+        if (m) {
+          const host = m[1];
+          const port = parseInt(m[2], 10);
+          buf = "";
+          let ip = host;
+          try {
+            const res = await dns.promises.lookup(host, { family: 4 });
+            if (res && res.address) ip = res.address;
+          } catch (_e) {}
+
+          if (role === "ctrl") {
+            publicFtpState.ctrlHost = host;
+            publicFtpState.ctrlIp = ip;
+            publicFtpState.ctrlPort = port;
+            publicFtpState.ftpUrl = `ftp://anonymous:anonymous@${host}:${port}/`;
+            publicFtpState.ftpIpUrl = `ftp://${ip}:${port}/`;
+            publicFtpState.updatedAt = getKarachiIso();
+            console.log(`🌍 Worldwide FTP Control Tunnel ready: ${publicFtpState.ftpUrl} (${publicFtpState.ftpIpUrl})`);
+          } else {
+            publicFtpState.dataHost = host;
+            publicFtpState.dataIp = ip;
+            publicFtpState.dataPort = port;
+            publicFtpState.updatedAt = getKarachiIso();
+            console.log(`🌍 Worldwide FTP Passive Data Tunnel ready: ${ip}:${port} -> localhost:${localPort}`);
+          }
+        }
+      });
+
+      proc.on("close", () => {
+        setTimeout(start, 5000);
+      });
+      proc.on("error", () => {});
+    };
+    start();
+  };
+
+  detectPublicIp().then(() => {
+    console.log(`🌍 FTP public URL for worldwide chargers: ${getPublicFtpUrl() || "(unknown)"} (router must forward TCP 21->2121 and 2122->2122)`);
+  });
+
+  // Optional temporary tunnels (expire after 60 min, random ports) - opt-in only
+  if (process.env.FTP_PUBLIC_TUNNEL === "true") {
+    spawnTunnel(preferredPort, "ctrl");
+    spawnTunnel(preferredPasvPort, "data");
   }
 }
 

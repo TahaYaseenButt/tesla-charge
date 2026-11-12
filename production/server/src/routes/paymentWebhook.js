@@ -915,6 +915,71 @@ apiRouter.put("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 apiRouter.post("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 
 /**
+ * GET /api/diagnostics/status - Public FTP URL + per-charger diagnostics status
+ */
+apiRouter.get("/diagnostics/status", async (_req, res) => {
+  try {
+    const { getPublicFtpUrl, listDiagnosticFiles } = await import("../services/ftpDiagnosticsServer.js");
+    const chargers = ocppServer
+      .getConnectedChargers()
+      .filter((c) => c.chargePointId !== "dc_evse" && !c.chargePointId.includes("om"));
+    const statuses = {};
+    for (const c of chargers) {
+      try {
+        const snap = await get(ref(rtdb, `live/${c.chargePointId}`));
+        const v = snap.exists() ? snap.val() : {};
+        statuses[c.chargePointId] = {
+          diagnosticsStatus: v.diagnosticsStatus || null,
+          updatedAt: v.diagnosticsStatusUpdatedAt || null,
+        };
+      } catch (_e) {}
+    }
+    return res.json({ success: true, ftpUrl: getPublicFtpUrl(), statuses, files: listDiagnosticFiles() });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/diagnostics/request-all - Send GetDiagnostics to every connected OCPP charger
+ * Body (optional): { location, chargerIds: [], hoursBack: 72 }
+ */
+apiRouter.post("/diagnostics/request-all", async (req, res) => {
+  try {
+    const { getPublicFtpUrl } = await import("../services/ftpDiagnosticsServer.js");
+    const location = req.body?.location || getPublicFtpUrl();
+    if (!location) {
+      return res.status(400).json({ success: false, error: "No FTP location configured (set FTP_PUBLIC_URL or pass location)" });
+    }
+    const hoursBack = Number(req.body?.hoursBack || 72);
+    const stopTime = new Date().toISOString();
+    const startTime = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString();
+    let targets = ocppServer
+      .getConnectedChargers()
+      .map((c) => c.chargePointId)
+      .filter((id) => id !== "dc_evse" && !id.includes("om"));
+    if (Array.isArray(req.body?.chargerIds) && req.body.chargerIds.length) {
+      const wanted = req.body.chargerIds.map((s) => String(s).toLowerCase());
+      targets = targets.filter((id) => wanted.includes(id));
+    }
+
+    const results = await Promise.all(
+      targets.map(async (id) => {
+        try {
+          const r = await ocppServer.sendCall(id, "GetDiagnostics", { location, startTime, stopTime });
+          return { chargePointId: id, success: true, fileName: r?.fileName || null };
+        } catch (e) {
+          return { chargePointId: id, success: false, error: e.message };
+        }
+      })
+    );
+    return res.json({ success: true, location, startTime, stopTime, results });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/om/raw - View captured raw O&M messages (IN & OUT)
  */
 apiRouter.get("/om/raw", (_req, res) => {
