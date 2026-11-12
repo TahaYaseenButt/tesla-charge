@@ -69,7 +69,7 @@ export class OCPPServer {
 
       const proto = request.headers["sec-websocket-protocol"] || "none";
       const agent = request.headers["user-agent"] || "unknown";
-      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}] (Protocol: ${proto}, Agent: ${agent})`);
+      this.log(`Incoming connection request from IP: ${request.socket.remoteAddress} for charger: [${chargePointId}] (URL: ${request.url}, Protocol: ${proto}, Agent: ${agent})`);
 
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.wss.emit("connection", ws, request, chargePointId);
@@ -128,15 +128,12 @@ export class OCPPServer {
     this.connections.set(chargePointId, connEntry);
     saveChargerHeartbeat(chargePointId).catch(() => {});
 
-    // If this is the auxiliary O&M channel ([dc_evse]), send an O&M JSON handshake
+    // If this is the auxiliary O&M channel ([dc_evse]), send a WS ping to keep the socket active
     if (chargePointId === "dc_evse" || chargePointId.includes("om")) {
       setTimeout(() => {
         if (ws.readyState === 1) {
           try {
             ws.ping();
-            const initOm = { type: 1, connectStatus: 1 };
-            ws.send(JSON.stringify(initOm));
-            this.log(`-> [${chargePointId}] Sent O&M JSON handshake: ${JSON.stringify(initOm)}`);
           } catch (_e) {}
         }
       }, 150);
