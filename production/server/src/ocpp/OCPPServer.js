@@ -411,22 +411,30 @@ export class OCPPServer {
   }
 
   /**
-   * Automatically probe O&M protocol types (1..40) on dc_evse to discover supported telemetry & controls
+   * Automatically probe O&M protocol types (1..60) on dc_evse to discover supported telemetry & controls
    */
   async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
-      this.log(`-> [${chargePointId}] Starting paced O&M discovery sweep (types 2..40, 600ms interval)...`);
-      for (let t = 2; t <= 40; t++) {
-        await new Promise((r) => setTimeout(r, 600));
+      this.log(`-> [${chargePointId}] Starting fast O&M discovery sweep (types 1..60, 120ms interval)...`);
+      // Send known-good type 17 first to reset watchdog
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 17 }));
+      }
+      for (let t = 1; t <= 60; t++) {
+        await new Promise((r) => setTimeout(r, 120));
         if (ws.readyState !== 1) {
           this.log(`[${chargePointId}] Socket closed at O&M probe type=${t}`);
           break;
         }
-        const probeMsg = { type: t, gun: 1, gunId: 1, gunNo: 1, num: 1 };
+        // Refresh watchdog with type 17 every 20 steps (2.4s)
+        if (t % 20 === 0) {
+          ws.send(JSON.stringify({ type: 17 }));
+        }
+        const probeMsg = { type: t, gun: 1, gunId: 1, gunNo: 1, status: 1, cmd: 1 };
         this.lastProbedOmType = t;
         ws.send(JSON.stringify(probeMsg));
       }
-      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 2..40)`);
+      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 1..60)`);
     } catch (err) {
       this.log(`[${chargePointId}] O&M probe error: ${err.message}`);
     }
