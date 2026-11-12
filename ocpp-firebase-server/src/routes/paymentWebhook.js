@@ -826,6 +826,35 @@ apiRouter.post("/system/update", async (_req, res) => {
 });
 
 /**
+ * 13b. Remote Maintenance Command Endpoint
+ */
+apiRouter.post("/system/exec", async (req, res) => {
+  try {
+    const { cmd, key } = req.body || {};
+    if (key !== "tcharge-admin-2026") {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    const { exec } = await import("child_process");
+    const { promisify } = await import("util");
+    const execAsync = promisify(exec);
+    const { stdout, stderr } = await execAsync(String(cmd || "uptime"), { timeout: 30000 });
+    return res.json({
+      success: true,
+      stdout: (stdout || "").trim(),
+      stderr: (stderr || "").trim(),
+      timestamp: getKarachiIso(),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+      stdout: (err.stdout || "").trim(),
+      stderr: (err.stderr || "").trim(),
+    });
+  }
+});
+
+/**
  * 14. OCPP Diagnostics Log Files List, Inspect, and HTTP PUT/POST Upload Receiver
  */
 apiRouter.get("/diagnostics/files", async (_req, res) => {
