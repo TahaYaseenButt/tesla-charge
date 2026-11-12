@@ -201,8 +201,13 @@ export class OCPPServer {
         try { listener(entry); } catch (_e) {}
       }
 
-      // Auto-acknowledge and probe O&M messages on dc_evse if not already probing
+      // Always acknowledge O&M heartbeat (type: 1) so dc_evse never drops after its 5s watchdog
       if ((chargePointId === "dc_evse" || chargePointId.includes("om")) && message && typeof message === "object") {
+        if (message.type === 1 && ws.readyState === 1) {
+          const ack = { type: 1, connectStatus: 1 };
+          ws.send(JSON.stringify(ack));
+          this.log(`-> [${chargePointId}] ACK O&M Heartbeat: ${JSON.stringify(ack)}`);
+        }
         const conn = this.connections.get(chargePointId);
         if (conn && !conn.probedOm && ws.readyState === 1) {
           conn.probedOm = true;
@@ -406,25 +411,22 @@ export class OCPPServer {
   }
 
   /**
-   * Automatically probe O&M protocol types (0..30) on dc_evse to discover supported telemetry & controls
+   * Automatically probe O&M protocol types (1..40) on dc_evse to discover supported telemetry & controls
    */
-  async probeOmProtocol(chargePointId, ws, initialMsg) {
+  async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
-      // Acknowledge initial message immediately
-      const ack = { type: initialMsg.type || 1, connectStatus: 1, status: 0, result: 1 };
-      if (ws.readyState === 1) {
-        ws.send(JSON.stringify(ack));
-        this.log(`-> [${chargePointId}] Auto-ACK O&M: ${JSON.stringify(ack)}`);
-      }
-
-      // Sweep types 1..25 spaced 150ms apart to discover all supported O&M query/control types
-      for (let t = 1; t <= 25; t++) {
-        await new Promise((r) => setTimeout(r, 150));
-        if (ws.readyState !== 1) break;
-        const probeMsg = { type: t, gun: 1, gunNo: 1, cmd: 0 };
+      this.log(`-> [${chargePointId}] Starting paced O&M discovery sweep (types 2..40, 600ms interval)...`);
+      for (let t = 2; t <= 40; t++) {
+        await new Promise((r) => setTimeout(r, 600));
+        if (ws.readyState !== 1) {
+          this.log(`[${chargePointId}] Socket closed at O&M probe type=${t}`);
+          break;
+        }
+        const probeMsg = { type: t, gun: 1, gunId: 1, gunNo: 1, num: 1 };
+        this.lastProbedOmType = t;
         ws.send(JSON.stringify(probeMsg));
       }
-      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 1..25)`);
+      this.log(`-> [${chargePointId}] Completed O&M discovery sweep (types 2..40)`);
     } catch (err) {
       this.log(`[${chargePointId}] O&M probe error: ${err.message}`);
     }
