@@ -736,6 +736,46 @@
       </div>
     </section>
 
+    <!-- Real-Time Live Logs Streaming Console -->
+    <section class="card" id="liveConsoleCard">
+      <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <h2 class="card-title">
+            <span class="card-title-icon">⚡</span> Real-Time Live Logs Console
+          </h2>
+          <span id="streamStatusBadge" class="status-badge status-online" style="font-size: 11px;">
+            <span class="status-dot"></span> LIVE CONNECTED
+          </span>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="liveChargerFilter" style="font-size: 12px; color: var(--text-muted);">Charger:</label>
+            <select id="liveChargerFilter" class="input-field" style="padding: 6px 12px; font-size: 12px; width: auto;" onchange="switchLiveStreamFilter(this.value)">
+              <option value="ALL">🚀 All Chargers</option>
+            </select>
+          </div>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer;">
+            <input type="checkbox" id="autoScrollCheck" checked> Auto-Scroll
+          </label>
+          <button id="btnPauseStream" class="btn btn-secondary" onclick="toggleStreamPause()" style="padding: 6px 12px; font-size: 12px;">
+            ⏸ Pause
+          </button>
+          <button class="btn btn-secondary" onclick="clearLiveConsole()" style="padding: 6px 12px; font-size: 12px;">
+            🗑 Clear
+          </button>
+          <button class="btn btn-primary" onclick="downloadLiveLog()" style="padding: 6px 14px; font-size: 12px;">
+            📥 Download Live Log (.txt)
+          </button>
+        </div>
+      </div>
+
+      <div style="padding: 0 20px 20px 20px;">
+        <div id="liveTerminal" class="log-terminal" style="height: 320px; overflow-y: auto; background: #070d19; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 12.5px; line-height: 1.6; color: #cbd5e1;">
+          <div style="color: var(--text-muted);">Connecting to live OCPP WebSocket stream...</div>
+        </div>
+      </div>
+    </section>
+
     <!-- Diagnostics Controller -->
     <section class="card">
       <div class="card-header">
@@ -1013,9 +1053,14 @@
                     <span style="font-weight: 700; color: ${diagStatus === 'Uploading' ? '#f59e0b' : diagStatus === 'Uploaded' ? '#10b981' : '#06b6d4'};">${diagStatus}</span>
                   </div>
                 </div>
-                <button class="btn btn-secondary" onclick="requestLogsForCharger('${c.chargePointId}')" style="font-size: 12px; padding: 8px 12px;">
-                  📥 Request Logs Now
-                </button>
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                  <button class="btn btn-primary" onclick="focusLiveStreamFor('${c.chargePointId}')" style="font-size: 12px; padding: 8px 10px; flex: 1;">
+                    ⚡ Live Stream
+                  </button>
+                  <button class="btn btn-secondary" onclick="requestLogsForCharger('${c.chargePointId}')" style="font-size: 12px; padding: 8px 10px; flex: 1;">
+                    📦 Request Dump
+                  </button>
+                </div>
               </div>
             `;
           });
@@ -1026,6 +1071,20 @@
           select.innerHTML = selectHtml;
           if (prevVal && select.querySelector(`option[value="${prevVal}"]`)) {
             select.value = prevVal;
+          }
+
+          // Also populate liveChargerFilter select
+          const liveFilter = document.getElementById("liveChargerFilter");
+          if (liveFilter) {
+            const prevLiveVal = liveFilter.value || "ALL";
+            let liveOptions = '<option value="ALL">🚀 All Chargers</option>';
+            chargers.forEach(c => {
+              liveOptions += `<option value="${c.chargePointId}">⚡ ${c.chargePointId}</option>`;
+            });
+            liveFilter.innerHTML = liveOptions;
+            if (prevLiveVal && liveFilter.querySelector(`option[value="${prevLiveVal}"]`)) {
+              liveFilter.value = prevLiveVal;
+            }
           }
         }
 
@@ -1258,11 +1317,175 @@
       document.getElementById("inspectorModal").classList.remove("active");
     }
 
+    // --- Real-Time Live Logs Streaming Engine ---
+    let liveEventSource = null;
+    let isStreamPaused = false;
+    let currentLiveTarget = "ALL";
+    let liveCapturedLogs = [];
+
+    function connectLiveStream(target = "ALL") {
+      currentLiveTarget = target;
+      if (liveEventSource) {
+        liveEventSource.close();
+        liveEventSource = null;
+      }
+
+      const badge = document.getElementById("streamStatusBadge");
+      if (badge) {
+        badge.className = "status-badge";
+        badge.innerHTML = '<span class="spinner" style="width: 8px; height: 8px; margin-right: 4px;"></span> CONNECTING...';
+      }
+
+      const terminal = document.getElementById("liveTerminal");
+      if (terminal) {
+        if (target === "ALL") {
+          terminal.innerHTML = '<div style="color: var(--text-muted);">Subscribing to live traffic from ALL chargers...</div>';
+        } else {
+          terminal.innerHTML = `<div style="color: var(--text-muted);">Subscribing to live traffic from <b>${escapeHtml(target)}</b>...</div>`;
+        }
+      }
+
+      const url = `/api/diagnostics/stream?charger=${encodeURIComponent(target === "ALL" ? "" : target)}`;
+      liveEventSource = new EventSource(url);
+
+      liveEventSource.onopen = () => {
+        if (badge) {
+          badge.className = "status-badge status-online";
+          badge.innerHTML = '<span class="status-dot"></span> LIVE CONNECTED';
+        }
+      };
+
+      liveEventSource.onmessage = (event) => {
+        if (isStreamPaused) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.text) {
+            appendLiveLogLine(data.text);
+          }
+        } catch (_) {}
+      };
+
+      liveEventSource.onerror = () => {
+        if (badge) {
+          badge.className = "status-badge";
+          badge.innerHTML = '<span class="status-dot" style="background: #ef4444;"></span> RECONNECTING...';
+        }
+      };
+    }
+
+    function appendLiveLogLine(rawText) {
+      liveCapturedLogs.push(rawText);
+      if (liveCapturedLogs.length > 500) liveCapturedLogs.shift();
+
+      const terminal = document.getElementById("liveTerminal");
+      if (!terminal) return;
+      const autoScroll = document.getElementById("autoScrollCheck")?.checked;
+
+      // Colorize line
+      let color = "#cbd5e1";
+      let icon = "•";
+      if (rawText.includes("MeterValues")) {
+        color = "#38bdf8";
+        icon = "⚡";
+      } else if (rawText.includes("Heartbeat")) {
+        color = "#34d399";
+        icon = "💓";
+      } else if (rawText.includes("DiagnosticsStatusNotification") || rawText.includes("GetDiagnostics")) {
+        color = "#fbbf24";
+        icon = "📦";
+      } else if (rawText.includes("StatusNotification")) {
+        color = "#a78bfa";
+        icon = "🔌";
+      } else if (rawText.includes("CALLERROR") || rawText.includes("Error") || rawText.includes("failed")) {
+        color = "#f87171";
+        icon = "❌";
+      } else if (rawText.includes("CALLRESULT")) {
+        color = "#94a3b8";
+        icon = "✔";
+      }
+
+      const div = document.createElement("div");
+      div.style.padding = "3px 0";
+      div.style.color = color;
+      div.style.wordBreak = "break-all";
+      div.innerHTML = `<span style="opacity: 0.6; margin-right: 6px;">${icon}</span>${escapeHtml(rawText)}`;
+
+      // Remove initial placeholder text if present
+      if (terminal.children.length === 1 && terminal.children[0].textContent.includes("Subscribing")) {
+        terminal.innerHTML = "";
+      }
+
+      terminal.appendChild(div);
+
+      // Keep max 300 lines in DOM to prevent browser lag
+      while (terminal.children.length > 300) {
+        terminal.removeChild(terminal.firstChild);
+      }
+
+      if (autoScroll) {
+        terminal.scrollTop = terminal.scrollHeight;
+      }
+    }
+
+    function toggleStreamPause() {
+      isStreamPaused = !isStreamPaused;
+      const btn = document.getElementById("btnPauseStream");
+      if (btn) {
+        if (isStreamPaused) {
+          btn.innerHTML = "▶ Resume";
+          btn.className = "btn btn-primary";
+        } else {
+          btn.innerHTML = "⏸ Pause";
+          btn.className = "btn btn-secondary";
+        }
+      }
+    }
+
+    function clearLiveConsole() {
+      const terminal = document.getElementById("liveTerminal");
+      if (terminal) {
+        terminal.innerHTML = '<div style="color: var(--text-muted);">Console cleared. Waiting for next live OCPP message...</div>';
+      }
+      liveCapturedLogs = [];
+    }
+
+    function downloadLiveLog() {
+      const target = currentLiveTarget || "ALL";
+      window.location.href = `/api/diagnostics/live-download?charger=${encodeURIComponent(target === "ALL" ? "" : target)}`;
+    }
+
+    function focusLiveStreamFor(chargerId) {
+      const filterSelect = document.getElementById("liveChargerFilter");
+      if (filterSelect) {
+        filterSelect.value = chargerId;
+      }
+      switchLiveStreamFilter(chargerId);
+
+      const card = document.getElementById("liveConsoleCard");
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "start" });
+        card.style.transition = "box-shadow 0.4s ease";
+        card.style.boxShadow = "0 0 25px rgba(6, 182, 212, 0.5)";
+        setTimeout(() => {
+          card.style.boxShadow = "";
+        }, 1500);
+      }
+    }
+
+    function switchLiveStreamFilter(val) {
+      connectLiveStream(val);
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     // --- Init ---
     function initDashboard() {
       setTimePreset(48);
       fetchDiagnosticsStatus();
       setInterval(fetchDiagnosticsStatus, 3500);
+      connectLiveStream("ALL");
     }
 
     // Start

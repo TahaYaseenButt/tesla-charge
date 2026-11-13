@@ -904,6 +904,60 @@ apiRouter.post("/diagnostics/login", (req, res) => {
   return res.status(401).json({ success: false, error: "Invalid Admin Username or Password" });
 });
 
+// Real-Time Server-Sent Events (SSE) Live Log Stream for a specific charger or all chargers
+apiRouter.get("/diagnostics/stream", (req, res) => {
+  const target = req.query.charger ? String(req.query.charger).trim() : "";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  // Send initial history buffer
+  const initialLogs = ocppServer.logs
+    .filter((l) => !target || target === "ALL" || l.includes(`[${target}]`))
+    .slice(0, 40)
+    .reverse();
+
+  for (const logText of initialLogs) {
+    res.write(`data: ${JSON.stringify({ type: "log", text: logText, timestamp: getKarachiIso() })}\n\n`);
+  }
+
+  const onLog = (event) => {
+    if (!target || target === "ALL" || event.raw?.includes(`[${target}]`) || event.text?.includes(`[${target}]`)) {
+      res.write(`data: ${JSON.stringify({ type: "log", text: event.text, timestamp: event.timestamp })}\n\n`);
+    }
+  };
+
+  ocppServer.addLogListener(onLog);
+
+  // Keep-alive heartbeat every 15s to keep connection alive through cloudflare/nginx
+  const heartbeatTimer = setInterval(() => {
+    res.write(": keepalive\n\n");
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(heartbeatTimer);
+    ocppServer.removeLogListener(onLog);
+  });
+});
+
+// Download captured in-memory live logs as .txt file for a specific charger
+apiRouter.get("/diagnostics/live-download", (req, res) => {
+  const target = req.query.charger ? String(req.query.charger).trim() : "all";
+  const filtered = ocppServer.logs
+    .filter((l) => !target || target === "all" || target === "ALL" || l.includes(`[${target}]`))
+    .slice(0, 300)
+    .reverse()
+    .join("\n");
+
+  const fileName = `live_traffic_${target}_${getKarachiDateString()}.txt`;
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  return res.send(filtered || `[No live traffic recorded yet for charger: ${target}]`);
+});
+
 // List all downloaded diagnostic files on local server
 apiRouter.get("/diagnostics/files", async (_req, res) => {
   try {

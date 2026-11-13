@@ -11,13 +11,27 @@ export class OCPPServer {
     this.logs = [];
     this.omMessages = [];
     this.rawListeners = new Set();
+    this.logListeners = new Set();
   }
 
   log(msg) {
     const entry = `[${getKarachiTimeString()}] ${msg}`;
     console.log(entry);
     this.logs.unshift(entry);
-    if (this.logs.length > 50) this.logs.pop();
+    if (this.logs.length > 300) this.logs.pop();
+    for (const listener of this.logListeners) {
+      try {
+        listener({ timestamp: getKarachiIso(), text: entry, raw: msg });
+      } catch (_) {}
+    }
+  }
+
+  addLogListener(fn) {
+    this.logListeners.add(fn);
+  }
+
+  removeLogListener(fn) {
+    this.logListeners.delete(fn);
   }
 
   /**
@@ -238,7 +252,33 @@ export class OCPPServer {
     // Case 2: CALL from Charger -> Server: [2, "<uniqueId>", "<action>", { ... }]
     if (messageType === 2) {
       const [, uniqueId, action, payload] = message;
-      this.log(`<- [${chargePointId}] CALL: ${action}`);
+
+      let detail = "";
+      if (action === "MeterValues") {
+        try {
+          const sample = payload?.meterValue?.[0]?.sampledValue || [];
+          const kw = sample.find((s) => s.measurand === "Power.Active.Import")?.value;
+          const soc = sample.find((s) => s.measurand === "SoC")?.value;
+          const volt = sample.find((s) => s.measurand === "Voltage")?.value;
+          const curr = sample.find((s) => s.measurand === "Current.Import")?.value;
+          const p = [];
+          if (kw) p.push(`${(Number(kw) / 1000).toFixed(1)} kW`);
+          if (soc) p.push(`SoC ${soc}%`);
+          if (volt) p.push(`${Number(volt).toFixed(0)}V`);
+          if (curr) p.push(`${Number(curr).toFixed(1)}A`);
+          if (p.length) detail = ` (${p.join(", ")})`;
+        } catch (_) {}
+      } else if (action === "DiagnosticsStatusNotification") {
+        detail = ` [Upload: ${payload?.status || "Unknown"}]`;
+      } else if (action === "StatusNotification") {
+        detail = ` [Connector ${payload?.connectorId} -> ${payload?.status}]`;
+      } else if (action === "StartTransaction") {
+        detail = ` [Connector ${payload?.connectorId}, Tag: ${payload?.idTag}]`;
+      } else if (action === "StopTransaction") {
+        detail = ` [Tx: ${payload?.transactionId}, MeterStop: ${payload?.meterStop}]`;
+      }
+
+      this.log(`<- [${chargePointId}] CALL: ${action}${detail}`);
 
       try {
         const handler = actionHandlers[action];
