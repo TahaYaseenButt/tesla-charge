@@ -5,7 +5,7 @@ import { updateTransactionPayment, getChargerLiveState, getLocalServerTransactio
 import { db, rtdb } from "../config/firebase.js";
 import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, limit } from "firebase/firestore";
 import { ref, get, set } from "firebase/database";
-import { getKarachiIso } from "../utils/time.js";
+import { getKarachiIso, getClockStatus, syncTrueInternetTime } from "../utils/time.js";
 
 export const apiRouter = express.Router();
 
@@ -363,6 +363,33 @@ apiRouter.get("/system/metrics", (_req, res) => {
       connectedChargers: ocppServer.getConnectedChargers(),
       recentLogsCount: ocppServer.logs.length,
     },
+    timeSync: getClockStatus(),
+  });
+});
+
+/**
+ * Real-Time Atomic Clock Synchronization Status Endpoint
+ */
+apiRouter.get("/system/time", (_req, res) => {
+  const clock = getClockStatus();
+  return res.json({
+    success: true,
+    ...clock,
+    connectedChargers: ocppServer.getConnectedChargers(),
+  });
+});
+
+/**
+ * Force Trigger Immediate Internet Time Re-Sync
+ */
+apiRouter.post("/system/time/sync", async (_req, res) => {
+  const result = await syncTrueInternetTime();
+  const clock = getClockStatus();
+  return res.json({
+    success: result.success,
+    result,
+    ...clock,
+    connectedChargers: ocppServer.getConnectedChargers(),
   });
 });
 
