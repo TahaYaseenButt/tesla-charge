@@ -130,6 +130,15 @@ export class OCPPServer {
   }
 
   handleConnection(ws, chargePointId, clientIp = "unknown") {
+    // Cleanly terminate any stale previous socket for this charger to avoid ghost-connection conflicts
+    const existing = this.connections.get(chargePointId);
+    if (existing && existing.ws && existing.ws !== ws) {
+      this.log(`[Reconnection] Cleanly closing previous socket for [${chargePointId}] (prior IP: ${existing.clientIp})`);
+      try {
+        existing.ws.terminate();
+      } catch (_) {}
+    }
+
     this.log(`Charger connected: [${chargePointId}] (IP: ${clientIp})`);
 
     const now = Date.now();
