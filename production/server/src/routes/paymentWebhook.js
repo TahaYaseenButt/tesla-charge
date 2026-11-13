@@ -5,7 +5,7 @@ import { updateTransactionPayment, getChargerLiveState, getLocalServerTransactio
 import { db, rtdb } from "../config/firebase.js";
 import { collection, getDocs, doc, getDoc, setDoc, query, orderBy, limit } from "firebase/firestore";
 import { ref, get, set } from "firebase/database";
-import { getKarachiIso, getClockStatus, syncTrueInternetTime } from "../utils/time.js";
+import { getKarachiIso, getKarachiDateString, getClockStatus, syncTrueInternetTime } from "../utils/time.js";
 
 export const apiRouter = express.Router();
 
