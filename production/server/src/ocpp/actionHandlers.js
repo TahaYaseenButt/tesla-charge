@@ -478,6 +478,19 @@ export const actionHandlers = {
         diagnosticsStatus: payload?.status || "Unknown",
         diagnosticsStatusUpdatedAt: getKarachiIso(),
       });
+
+      // If status is "Uploaded", auto-sync from remote FTP to local server
+      if (payload?.status === "Uploaded") {
+        setTimeout(async () => {
+          try {
+            const { syncRemoteFtpFiles } = await import("../services/ftpDiagnosticsServer.js");
+            const syncRes = await syncRemoteFtpFiles();
+            console.log(`[Auto-Sync Diagnostics] Result for [${chargePointId}]:`, syncRes);
+          } catch (syncErr) {
+            console.warn(`[Auto-Sync Diagnostics Error]:`, syncErr.message);
+          }
+        }, 1500);
+      }
     } catch (_e) {}
     return {};
   },

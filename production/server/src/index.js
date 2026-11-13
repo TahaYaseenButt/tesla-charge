@@ -37,6 +37,11 @@ app.get("/om", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "om.html"));
 });
 
+// Dedicated Diagnostics & O&M Log Center Dashboard
+app.get(["/diagnostics", "/logs"], (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "diagnostics.html"));
+});
+
 // Fallback to dashboard
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));

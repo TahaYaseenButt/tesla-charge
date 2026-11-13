@@ -857,6 +857,27 @@ apiRouter.post("/system/exec", async (req, res) => {
 /**
  * 14. OCPP Diagnostics Log Files List, Inspect, and HTTP PUT/POST Upload Receiver
  */
+/**
+ * 14. OCPP Diagnostics Dashboard API Suite
+ */
+
+// Simple Admin Authentication for Diagnostics Dashboard
+apiRouter.post("/diagnostics/login", (req, res) => {
+  const { username, password } = req.body || {};
+  if (
+    (username === "admin" && (password === "tesla-admin-2026" || password === "tesla2026" || password === "admin123")) ||
+    (username === "tesla" && password === "tesla2026")
+  ) {
+    return res.json({
+      success: true,
+      user: { username, role: "admin" },
+      token: "diag-admin-" + Date.now(),
+    });
+  }
+  return res.status(401).json({ success: false, error: "Invalid Admin Username or Password" });
+});
+
+// List all downloaded diagnostic files on local server
 apiRouter.get("/diagnostics/files", async (_req, res) => {
   try {
     const { listDiagnosticFiles } = await import("../services/ftpDiagnosticsServer.js");
@@ -867,6 +888,7 @@ apiRouter.get("/diagnostics/files", async (_req, res) => {
   }
 });
 
+// Inspect a diagnostic archive: list inner files & read contents of any inner file
 apiRouter.get("/diagnostics/inspect/:fileName", async (req, res) => {
   try {
     const pathMod = await import("path");
@@ -877,8 +899,86 @@ apiRouter.get("/diagnostics/inspect/:fileName", async (req, res) => {
     if (!fsMod.default.existsSync(fullPath)) {
       return res.status(404).json({ success: false, error: "File not found" });
     }
-    const info = await inspectDiagnosticArchive(fullPath);
+    const subfile = req.query.subfile ? String(req.query.subfile).trim() : null;
+    const info = await inspectDiagnosticArchive(fullPath, subfile);
     return res.json({ success: true, fileName: safeName, ...info });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Download an individual diagnostic file archive
+apiRouter.get("/diagnostics/download/:fileName", async (req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+    const safeName = pathMod.default.basename(req.params.fileName || "");
+    const fullPath = pathMod.default.join(DIAGNOSTICS_DIR, safeName);
+    if (!fsMod.default.existsSync(fullPath)) {
+      return res.status(404).json({ success: false, error: "File not found" });
+    }
+    return res.download(fullPath, safeName);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Download all diagnostic files combined in a single .zip or .tar.gz archive
+apiRouter.get("/diagnostics/download-all", async (_req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { spawn } = await import("child_process");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+
+    const files = fsMod.default
+      .readdirSync(DIAGNOSTICS_DIR)
+      .filter((f) => !f.startsWith(".") && fsMod.default.statSync(pathMod.default.join(DIAGNOSTICS_DIR, f)).isFile());
+
+    if (!files.length) {
+      return res.status(404).json({ success: false, error: "No diagnostic files found on server." });
+    }
+
+    const archiveName = `all_charger_logs_${new Date().toISOString().slice(0, 10)}.tar.gz`;
+    res.setHeader("Content-Disposition", `attachment; filename="${archiveName}"`);
+    res.setHeader("Content-Type", "application/gzip");
+
+    const tarProc = spawn("tar", ["-czf", "-", "-C", DIAGNOSTICS_DIR, ...files]);
+    tarProc.stdout.pipe(res);
+    tarProc.on("error", (e) => {
+      if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete a diagnostic file
+apiRouter.delete("/diagnostics/files/:fileName", async (req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+    const safeName = pathMod.default.basename(req.params.fileName || "");
+    const fullPath = pathMod.default.join(DIAGNOSTICS_DIR, safeName);
+    if (fsMod.default.existsSync(fullPath)) {
+      fsMod.default.unlinkSync(fullPath);
+      return res.json({ success: true, message: `Deleted ${safeName}` });
+    }
+    return res.status(404).json({ success: false, error: "File not found" });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Actively sync logs from remote FTP server to local server storage
+apiRouter.post("/diagnostics/sync", async (_req, res) => {
+  try {
+    const { syncRemoteFtpFiles, listDiagnosticFiles } = await import("../services/ftpDiagnosticsServer.js");
+    const syncResult = await syncRemoteFtpFiles();
+    const files = listDiagnosticFiles();
+    return res.json({ success: true, syncResult, count: files.length, files });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -915,7 +1015,7 @@ apiRouter.put("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 apiRouter.post("/diagnostics/upload/:fileName?", handleHttpDiagnosticUpload);
 
 /**
- * GET /api/diagnostics/status - Public FTP URL + per-charger diagnostics status
+ * GET /api/diagnostics/status - Public FTP URL + connected chargers live state + files
  */
 apiRouter.get("/diagnostics/status", async (_req, res) => {
   try {
@@ -931,36 +1031,67 @@ apiRouter.get("/diagnostics/status", async (_req, res) => {
         statuses[c.chargePointId] = {
           diagnosticsStatus: v.diagnosticsStatus || null,
           updatedAt: v.diagnosticsStatusUpdatedAt || null,
+          clientIp: c.clientIp || "unknown",
+          connectedAt: c.connectedAt,
+          hardwareModel: v?.charger?.hardwareModel || "DC_EVSE 240kW",
         };
       } catch (_e) {}
     }
-    return res.json({ success: true, ftpUrl: getPublicFtpUrl(), statuses, files: listDiagnosticFiles() });
+    return res.json({
+      success: true,
+      ftpUrl: getPublicFtpUrl(),
+      statuses,
+      connectedChargers: chargers,
+      files: listDiagnosticFiles(),
+      timestamp: getKarachiIso(),
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
 /**
- * POST /api/diagnostics/request-all - Send GetDiagnostics to every connected OCPP charger
- * Body (optional): { location, chargerIds: [], hoursBack: 72 }
+ * POST /api/diagnostics/request - Trigger GetDiagnostics on one, multiple, or ALL connected chargers
+ * Body options:
+ * - chargerIds: ["charger1"] or null for all
+ * - startTime: ISO string
+ * - stopTime: ISO string
+ * - hoursBack: number (default 48)
+ * - location: custom FTP url or defaults to FTP_PUBLIC_URL
  */
-apiRouter.post("/diagnostics/request-all", async (req, res) => {
+apiRouter.post("/diagnostics/request", async (req, res) => {
   try {
     const { getPublicFtpUrl } = await import("../services/ftpDiagnosticsServer.js");
     const location = req.body?.location || getPublicFtpUrl();
     if (!location) {
-      return res.status(400).json({ success: false, error: "No FTP location configured (set FTP_PUBLIC_URL or pass location)" });
+      return res.status(400).json({
+        success: false,
+        error: "No FTP upload URL configured. Please set FTP_PUBLIC_URL in .env or provide location.",
+      });
     }
-    const hoursBack = Number(req.body?.hoursBack || 72);
-    const stopTime = new Date().toISOString();
-    const startTime = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString();
+
+    let startTime = req.body?.startTime;
+    let stopTime = req.body?.stopTime || new Date().toISOString();
+    if (!startTime) {
+      const hoursBack = Number(req.body?.hoursBack || 48);
+      startTime = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString();
+    }
+
     let targets = ocppServer
       .getConnectedChargers()
       .map((c) => c.chargePointId)
       .filter((id) => id !== "dc_evse" && !id.includes("om"));
+
     if (Array.isArray(req.body?.chargerIds) && req.body.chargerIds.length) {
       const wanted = req.body.chargerIds.map((s) => String(s).toLowerCase());
       targets = targets.filter((id) => wanted.includes(id));
+    }
+
+    if (!targets.length) {
+      return res.status(400).json({
+        success: false,
+        error: "No active chargers available to request diagnostics from.",
+      });
     }
 
     const results = await Promise.all(
@@ -973,10 +1104,23 @@ apiRouter.post("/diagnostics/request-all", async (req, res) => {
         }
       })
     );
-    return res.json({ success: true, location, startTime, stopTime, results });
+
+    return res.json({
+      success: true,
+      location,
+      startTime,
+      stopTime,
+      results,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// Backward compatible alias
+apiRouter.post("/diagnostics/request-all", (req, res, next) => {
+  req.url = "/diagnostics/request";
+  apiRouter.handle(req, res, next);
 });
 
 /**

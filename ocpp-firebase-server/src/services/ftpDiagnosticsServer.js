@@ -71,34 +71,106 @@ export function getPublicFtpUrl() {
 }
 
 /**
- * Automatically attempts to list or extract text previews from a .tar.bz2 / .tar.gz / .log file
+ * Automatically attempts to list or extract text previews from a .tar.bz2 / .tar.gz / .log file.
+ * If subfile is specified, extracts and returns that specific file inside the archive.
  */
-export async function inspectDiagnosticArchive(filePath) {
+export async function inspectDiagnosticArchive(filePath, subfile = null) {
   try {
     const ext = path.extname(filePath).toLowerCase();
-    if (filePath.endsWith(".tar.bz2") || filePath.endsWith(".tbz2")) {
-      const { stdout: listOut } = await execAsync(`tar -tjf "${filePath}" 2>/dev/null | head -n 50`);
-      const files = listOut.split("\n").map((s) => s.trim()).filter(Boolean);
-      let sampleText = "";
-      if (files.length > 0) {
+    const isTarBz2 = filePath.endsWith(".tar.bz2") || filePath.endsWith(".tbz2");
+    const isTarGz = filePath.endsWith(".tar.gz") || filePath.endsWith(".tgz");
+
+    if (isTarBz2 || isTarGz) {
+      const listFlag = isTarBz2 ? "-tjf" : "-tzf";
+      const extractFlag = isTarBz2 ? "-xjf" : "-xzf";
+      const { stdout: listOut } = await execAsync(`tar ${listFlag} "${filePath}" 2>/dev/null`);
+      const files = listOut
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s && !s.endsWith("/"));
+
+      let content = "";
+      const target = subfile || files.find((f) => f.endsWith(".log") || f.endsWith(".txt")) || files[0];
+      if (target) {
         try {
-          const { stdout: contentOut } = await execAsync(
-            `tar -xjf "${filePath}" -O 2>/dev/null | strings | tail -n 120`
+          const { stdout: fileContent } = await execAsync(
+            `tar ${extractFlag} "${filePath}" -O "${target}" 2>/dev/null | head -n 3500`
           );
-          sampleText = contentOut;
+          content = fileContent;
         } catch (_e) {}
       }
-      return { files, sampleText };
-    } else if (filePath.endsWith(".tar.gz") || filePath.endsWith(".tgz")) {
-      const { stdout: listOut } = await execAsync(`tar -tzf "${filePath}" 2>/dev/null | head -n 50`);
-      const files = listOut.split("\n").map((s) => s.trim()).filter(Boolean);
-      return { files, sampleText: "" };
+      return { files, currentFile: target, content };
     } else if (ext === ".log" || ext === ".txt" || ext === ".csv") {
-      const content = fs.readFileSync(filePath, "utf8").slice(-8000);
-      return { files: [path.basename(filePath)], sampleText: content };
+      const content = fs.readFileSync(filePath, "utf8").slice(-150000);
+      return { files: [path.basename(filePath)], currentFile: path.basename(filePath), content };
     }
   } catch (_err) {}
-  return { files: [], sampleText: "" };
+  return { files: [], currentFile: null, content: "" };
+}
+
+/**
+ * Actively syncs diagnostic log files from remote FTP (e.g. InfinityFree / public FTP) into DIAGNOSTICS_DIR
+ */
+export async function syncRemoteFtpFiles() {
+  const ftpUrl = process.env.FTP_PUBLIC_URL;
+  if (!ftpUrl) {
+    return { success: false, error: "No FTP_PUBLIC_URL configured in .env" };
+  }
+
+  try {
+    const parsed = new URL(ftpUrl);
+    const user = decodeURIComponent(parsed.username || "");
+    const pass = decodeURIComponent(parsed.password || "");
+    const host = parsed.hostname;
+    const port = parsed.port || "21";
+    const remotePath = (parsed.pathname || "/htdocs/").replace(/^\/|\/$/g, "");
+
+    const pyScript = `
+import ftplib, os, sys
+try:
+    ftp = ftplib.FTP(timeout=20)
+    ftp.connect("${host}", int("${port}"))
+    ftp.login("${user}", "${pass}")
+    path = "${remotePath}"
+    if path:
+        ftp.cwd(path)
+    files = []
+    ftp.retrlines("NLST", files.append)
+    dest_dir = "${DIAGNOSTICS_DIR}"
+    os.makedirs(dest_dir, exist_ok=True)
+    synced = []
+    for f in files:
+        if f.endswith((".tar.bz2", ".tbz2", ".tar.gz", ".tgz", ".log", ".txt")):
+            dest = os.path.join(dest_dir, f)
+            if not os.path.exists(dest) or os.path.getsize(dest) == 0:
+                with open(dest, "wb") as lf:
+                    ftp.retrbinary(f"RETR {f}", lf.write)
+                synced.append(f)
+    ftp.quit()
+    print("SYNCED:" + ",".join(synced))
+except Exception as e:
+    print("ERROR:" + str(e), file=sys.stderr)
+    sys.exit(1)
+`;
+
+    const { stdout, stderr } = await execAsync(
+      `python3 -c '${pyScript.replace(/'/g, "'\\''")}'`,
+      { timeout: 35000 }
+    );
+    const syncedLine = stdout.split("\n").find((l) => l.startsWith("SYNCED:"));
+    const syncedFiles = syncedLine
+      ? syncedLine.replace("SYNCED:", "").split(",").filter(Boolean)
+      : [];
+
+    return {
+      success: true,
+      syncedCount: syncedFiles.length,
+      syncedFiles,
+      message: syncedFiles.length ? `Downloaded ${syncedFiles.length} file(s)` : "Up to date",
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 /**
