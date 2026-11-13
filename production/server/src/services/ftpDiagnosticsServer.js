@@ -90,11 +90,15 @@ export async function inspectDiagnosticArchive(filePath, subfile = null) {
         .filter((s) => s && !s.endsWith("/"));
 
       let content = "";
-      const target = subfile || files.find((f) => f.endsWith(".log") || f.endsWith(".txt")) || files[0];
+      const target =
+        subfile ||
+        files.find((f) => f === "ccs_evse.log") ||
+        files.find((f) => f.endsWith(".log") || f.endsWith(".txt")) ||
+        files[0];
       if (target) {
         try {
           const { stdout: fileContent } = await execAsync(
-            `tar ${extractFlag} "${filePath}" -O "${target}" 2>/dev/null | head -n 3500`
+            `tar ${extractFlag} "${filePath}" -O "${target}" 2>/dev/null | head -n 10000`
           );
           content = fileContent;
         } catch (_e) {}

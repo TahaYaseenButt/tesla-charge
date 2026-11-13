@@ -839,7 +839,10 @@
         <h2 class="card-title">
           <span class="card-title-icon">📁</span> Retrieved Log Packages on Server
         </h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <a href="/api/diagnostics/latest-ccs-evse" class="btn btn-primary" style="font-size: 13px; padding: 8px 16px;">
+            <span>⚡ Download Latest ccs_evse.log</span>
+          </a>
           <a href="/api/diagnostics/download-all" class="btn btn-secondary" style="font-size: 13px; padding: 8px 16px;">
             <span>📦 Download All (.tar.gz)</span>
           </a>
@@ -1123,12 +1126,15 @@
             <td class="mono-cell">${f.sizeKB} KB</td>
             <td style="color: var(--text-muted); font-size: 13px;">${f.uploadedAt || "Just now"}</td>
             <td style="text-align: right;">
-              <div style="display: inline-flex; gap: 8px;">
-                <button class="btn btn-secondary" onclick="openInspector('${f.fileName}', '${f.sizeKB} KB')" style="padding: 6px 14px; font-size: 12px;">
-                  👁️ Inspect Log
+              <div style="display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;">
+                <button class="btn btn-primary" onclick="openInspector('${f.fileName}', '${f.sizeKB} KB', 'ccs_evse.log')" style="padding: 6px 12px; font-size: 12px;">
+                  👁️ View ccs_evse.log
                 </button>
-                <a href="${f.downloadUrl}" class="btn btn-primary" download style="padding: 6px 14px; font-size: 12px;">
-                  📥 Download
+                <a href="/api/diagnostics/extract-file/${encodeURIComponent(f.fileName)}/ccs_evse.log" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" title="Direct download of extracted ccs_evse.log">
+                  📥 ccs_evse.log
+                </a>
+                <a href="${f.downloadUrl}" class="btn btn-secondary" download style="padding: 6px 10px; font-size: 12px;" title="Download complete .tar.bz2 package">
+                  📦 .tar.bz2
                 </a>
                 <button class="btn btn-danger" onclick="deleteFile('${f.fileName}')" style="padding: 6px 10px; font-size: 12px;">
                   🗑️
@@ -1212,18 +1218,20 @@
     }
 
     // --- In-Browser Inspector ---
-    async function openInspector(fileName, metaStr) {
+    async function openInspector(fileName, metaStr, defaultSubfile = "ccs_evse.log") {
       activeArchiveName = fileName;
       document.getElementById("modalArchiveName").textContent = fileName;
       document.getElementById("modalArchiveMeta").textContent = metaStr;
-      document.getElementById("btnDownloadArchive").href = `/diagnostics/${encodeURIComponent(fileName)}`;
+      document.getElementById("btnDownloadArchive").href = `/api/diagnostics/extract-file/${encodeURIComponent(fileName)}/${encodeURIComponent(defaultSubfile)}`;
+      document.getElementById("btnDownloadArchive").textContent = `📥 Download ${defaultSubfile}`;
       document.getElementById("inspectorModal").classList.add("active");
 
       document.getElementById("modalFilesList").innerHTML = `<div style="padding: 16px; color: var(--text-muted);">Extracting archive contents...</div>`;
       document.getElementById("logTerminal").textContent = "Loading file preview...";
 
       try {
-        const res = await fetch(`/api/diagnostics/inspect/${encodeURIComponent(fileName)}`);
+        const target = defaultSubfile || "ccs_evse.log";
+        const res = await fetch(`/api/diagnostics/inspect/${encodeURIComponent(fileName)}?subfile=${encodeURIComponent(target)}`);
         const data = await res.json();
         
         if (data.success && data.files && data.files.length) {
@@ -1256,6 +1264,8 @@
       }
 
       document.getElementById("currentSubfileName").textContent = subfile;
+      document.getElementById("btnDownloadArchive").href = `/api/diagnostics/extract-file/${encodeURIComponent(activeArchiveName)}/${encodeURIComponent(subfile)}`;
+      document.getElementById("btnDownloadArchive").textContent = `📥 Download ${subfile}`;
       document.getElementById("logTerminal").textContent = `Loading ${subfile}...`;
 
       try {
@@ -1286,22 +1296,24 @@
       const filtered = q ? lines.filter(l => l.toLowerCase().includes(q)) : lines;
 
       let html = '';
-      filtered.slice(0, 2000).forEach(l => {
+      filtered.slice(0, 3500).forEach(l => {
+        // Strip ANSI escape codes
+        const clean = l.replace(/\x1b\[[0-9;]*m/g, "").replace(/\u001b\[[0-9;]*m/g, "");
         let cls = "log-line";
-        const low = l.toLowerCase();
-        if (low.includes("error") || low.includes("fail") || low.includes("fault")) cls += " error";
-        else if (low.includes("warn") || low.includes("timeout")) cls += " warn";
-        else if (low.includes("din") || low.includes("slac")) cls += " din";
-        else if (low.includes("can") || low.includes("mcu")) cls += " can";
-        else if (low.includes("success") || low.includes("completed") || low.includes("currentdemand")) cls += " success";
+        const low = clean.toLowerCase();
+        if (low.includes("error") || low.includes("fail") || low.includes("fault") || low.includes("e/")) cls += " error";
+        else if (low.includes("warn") || low.includes("timeout") || low.includes("w/")) cls += " warn";
+        else if (low.includes("din") || low.includes("slac") || low.includes("gb2cc")) cls += " din";
+        else if (low.includes("can") || low.includes("mcu") || low.includes("27930")) cls += " can";
+        else if (low.includes("success") || low.includes("completed") || low.includes("soft version")) cls += " success";
 
         // Escape HTML
-        const safe = l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safe = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         html += `<span class="${cls}">${safe}</span>`;
       });
 
-      if (filtered.length > 2000) {
-        html += `<div style="color: var(--amber-yellow); padding: 10px 0; font-weight: 700;">[Showing first 2,000 lines of ${filtered.length} matched lines]</div>`;
+      if (filtered.length > 3500) {
+        html += `<div style="color: var(--amber-yellow); padding: 10px 0; font-weight: 700;">[Showing first 3,500 lines of ${filtered.length} matched lines]</div>`;
       }
 
       terminal.innerHTML = html || '<span style="color: var(--text-dim);">No lines matching filter.</span>';

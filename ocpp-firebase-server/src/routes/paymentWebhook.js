@@ -1005,6 +1005,77 @@ apiRouter.get("/diagnostics/download/:fileName", async (req, res) => {
   }
 });
 
+// Directly download or stream ccs_evse.log (or any subfile) extracted from an archive
+apiRouter.get("/diagnostics/extract-file/:fileName/:subfile?", async (req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { spawn } = await import("child_process");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+
+    const safeArchiveName = pathMod.default.basename(req.params.fileName || "");
+    const targetSubfile = pathMod.default.basename(req.params.subfile || "ccs_evse.log");
+    const fullPath = pathMod.default.join(DIAGNOSTICS_DIR, safeArchiveName);
+
+    if (!fsMod.default.existsSync(fullPath)) {
+      return res.status(404).json({ success: false, error: "Archive file not found" });
+    }
+
+    const isTarBz2 = safeArchiveName.endsWith(".tar.bz2") || safeArchiveName.endsWith(".tbz2");
+    const extractFlag = isTarBz2 ? "-xjf" : "-xzf";
+
+    res.setHeader("Content-Disposition", `attachment; filename="${targetSubfile}"`);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+
+    const tarProc = spawn("tar", [extractFlag, fullPath, "-O", targetSubfile]);
+    tarProc.stdout.pipe(res);
+    tarProc.stderr.on("data", (d) => {
+      console.warn(`[Diagnostics Extract] tar stderr: ${d.toString()}`);
+    });
+    tarProc.on("error", (e) => {
+      if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Download the latest ccs_evse.log from the newest diagnostic package on server
+apiRouter.get("/diagnostics/latest-ccs-evse", async (_req, res) => {
+  try {
+    const pathMod = await import("path");
+    const fsMod = await import("fs");
+    const { spawn } = await import("child_process");
+    const { DIAGNOSTICS_DIR } = await import("../services/ftpDiagnosticsServer.js");
+
+    const files = fsMod.default
+      .readdirSync(DIAGNOSTICS_DIR)
+      .filter((f) => (f.endsWith(".tar.bz2") || f.endsWith(".tar.gz")) && !f.startsWith("."))
+      .map((f) => {
+        const full = pathMod.default.join(DIAGNOSTICS_DIR, f);
+        return { name: f, mtime: fsMod.default.statSync(full).mtime.getTime() };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    if (!files.length) {
+      return res.status(404).json({ success: false, error: "No diagnostic archives available yet." });
+    }
+
+    const newest = files[0].name;
+    const fullPath = pathMod.default.join(DIAGNOSTICS_DIR, newest);
+    const isTarBz2 = newest.endsWith(".tar.bz2") || newest.endsWith(".tbz2");
+    const extractFlag = isTarBz2 ? "-xjf" : "-xzf";
+
+    res.setHeader("Content-Disposition", `attachment; filename="latest_ccs_evse.log"`);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+
+    const tarProc = spawn("tar", [extractFlag, fullPath, "-O", "ccs_evse.log"]);
+    tarProc.stdout.pipe(res);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Download all diagnostic files combined in a single .zip or .tar.gz archive
 apiRouter.get("/diagnostics/download-all", async (_req, res) => {
   try {
