@@ -83,9 +83,6 @@ export class OCPPServer {
       if (chargePointId.startsWith("1.6") && chargePointId.length > 3) {
         chargePointId = chargePointId.slice(3);
       }
-      if (chargePointId === "hafeez") {
-        chargePointId = "charger1";
-      }
       if (chargePointId === "dc_evse" && pathname.toLowerCase().includes("/om/")) {
         chargePointId = "charger1_om";
       }
@@ -503,11 +500,6 @@ export class OCPPServer {
 
     await saveChargerHeartbeat(chargePointId);
 
-    // Keep primary charger1 status in sync when hardware communicates via dc_evse / hafeez
-    if (chargePointId === "dc_evse" || chargePointId === "hafeez") {
-      await saveChargerHeartbeat("charger1").catch(() => {});
-    }
-
     if (ws.readyState === 1) {
       if (message.type === 1) {
         // Acknowledge connection status ping immediately to prevent client timeout disconnects
@@ -517,11 +509,11 @@ export class OCPPServer {
         } catch (_e) {}
       }
 
-      // If guns status received (type 13: { type: 13, gunCount: 2, status1: 0, status2: 0 }), update RTDB
+      // If guns status received (type 13: { type: 13, gunCount: 2, status1: 0, status2: 0 }), update RTDB for this charger
       if (message.type === 13) {
         try {
           const gunMap = (s) => (s === 1 ? "Charging" : s === 2 ? "Faulted" : "Available");
-          await update(ref(rtdb, `live/charger1`), {
+          await update(ref(rtdb, `live/${chargePointId}`), {
             gun1Status: gunMap(message.status1),
             gun2Status: gunMap(message.status2),
             gunCount: message.gunCount || 2,
