@@ -75,13 +75,16 @@ export class OCPPServer {
 
       if (!chargePointId && parts.length > 0) {
         const lastPart = parts[parts.length - 1];
-        if (lastPart !== "1.6" && lastPart !== "ocpp" && lastPart !== "version") {
+        if (lastPart !== "1.6" && lastPart !== "ocpp" && lastPart !== "version" && lastPart !== "versi") {
           chargePointId = lastPart;
         }
       }
       chargePointId = (chargePointId || "charger1").toLowerCase();
       if (chargePointId.startsWith("1.6") && chargePointId.length > 3) {
         chargePointId = chargePointId.slice(3);
+      }
+      if (chargePointId === "hafeez") {
+        chargePointId = "charger1";
       }
       if (chargePointId === "dc_evse" && pathname.toLowerCase().includes("/om/")) {
         chargePointId = "charger1_om";
@@ -500,11 +503,44 @@ export class OCPPServer {
 
     await saveChargerHeartbeat(chargePointId);
 
-    if (ws.readyState === 1 && (message.type === 1 || message.type === 13)) {
-      ws.send(JSON.stringify({ type: 16 }));
-      setTimeout(() => {
-        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 14 }));
-      }, 600);
+    // Keep primary charger1 status in sync when hardware communicates via dc_evse / hafeez
+    if (chargePointId === "dc_evse" || chargePointId === "hafeez") {
+      await saveChargerHeartbeat("charger1").catch(() => {});
+    }
+
+    if (ws.readyState === 1) {
+      if (message.type === 1) {
+        // Acknowledge connection status ping immediately to prevent client timeout disconnects
+        try {
+          ws.send(JSON.stringify({ type: 1, connectStatus: 1, result: 0 }));
+          ws.send(JSON.stringify({ type: 2, result: 0 }));
+        } catch (_e) {}
+      }
+
+      // If guns status received (type 13: { type: 13, gunCount: 2, status1: 0, status2: 0 }), update RTDB
+      if (message.type === 13) {
+        try {
+          const gunMap = (s) => (s === 1 ? "Charging" : s === 2 ? "Faulted" : "Available");
+          await update(ref(rtdb, `live/charger1`), {
+            gun1Status: gunMap(message.status1),
+            gun2Status: gunMap(message.status2),
+            gunCount: message.gunCount || 2,
+            lastOmTelemetryAt: getKarachiIso(),
+          });
+        } catch (_e) {}
+      }
+
+      // Request firmware & configs only once per connection (avoid flooding with 16/14 on every ping)
+      const conn = this.connections.get(chargePointId);
+      if (conn && !conn.probedOm) {
+        conn.probedOm = true;
+        setTimeout(() => {
+          if (ws.readyState === 1) ws.send(JSON.stringify({ type: 16 }));
+        }, 500);
+        setTimeout(() => {
+          if (ws.readyState === 1) ws.send(JSON.stringify({ type: 14 }));
+        }, 1500);
+      }
     }
 
     if (message.type === 15 && message.configs) {
