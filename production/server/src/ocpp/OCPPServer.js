@@ -83,6 +83,9 @@ export class OCPPServer {
       if (chargePointId.startsWith("1.6") && chargePointId.length > 3) {
         chargePointId = chargePointId.slice(3);
       }
+      if (chargePointId.startsWith("versi") && chargePointId.length > 5) {
+        chargePointId = chargePointId.slice(5);
+      }
       if (chargePointId === "dc_evse" && pathname.toLowerCase().includes("/om/")) {
         chargePointId = "charger1_om";
       }
@@ -212,6 +215,9 @@ export class OCPPServer {
         }
         this.connections.delete(chargePointId);
         saveChargerOffline(chargePointId);
+        if (chargePointId === "dc_evse" && !this.connections.has("hafeez")) {
+          saveChargerOffline("hafeez");
+        }
       }
     });
 
@@ -461,7 +467,7 @@ export class OCPPServer {
    * Get charger internal configuration keys
    */
   async getConfiguration(chargePointId, keys = []) {
-    if (chargePointId === "dc_evse" && this.lastOmConfigs && this.lastOmConfigs.length > 0) {
+    if ((chargePointId === "dc_evse" || (chargePointId === "hafeez" && !this.connections.has("hafeez"))) && this.lastOmConfigs && this.lastOmConfigs.length > 0) {
       return { configurationKey: this.lastOmConfigs, unknownKey: [], source: "om_type_15" };
     }
     const payload = keys.length ? { key: keys } : {};
@@ -469,56 +475,86 @@ export class OCPPServer {
   }
 
   /**
-   * Poll valid O&M telemetry commands (16=Firmware, 12=GunStatus, 14=Configs) on dc_evse
+   * Poll valid O&M telemetry commands (17=Watchdog/Version, 12=GunStatus, 16=Firmware, 14=Configs) on dc_evse
    */
   async probeOmProtocol(chargePointId, ws, _initialMsg) {
     try {
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 17 }));
       }
-      await new Promise((r) => setTimeout(r, 3500));
+      await new Promise((r) => setTimeout(r, 800));
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 12 }));
+      }
+      await new Promise((r) => setTimeout(r, 1200));
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 16 }));
       }
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1200));
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 14 }));
       }
-      this.log(`-> [${chargePointId}] Requested O&M telemetry (types 17, 16, 14)`);
+      this.log(`-> [${chargePointId}] Requested O&M telemetry (types 17, 12, 16, 14)`);
     } catch (err) {
       this.log(`[${chargePointId}] O&M poll error: ${err.message}`);
     }
   }
 
   /**
-   * Process incoming O&M JSON messages (type 1, 13, 15, 17) for dc_evse only (no bridging to charger1)
+   * Process incoming O&M JSON messages (type 1, 13, 15, 17) for dc_evse and sync to hafeez (keep charger1 strictly separate)
    */
   async handleOmMessage(chargePointId, ws, message) {
     const { ref, update } = await import("firebase/database");
     const { rtdb } = await import("../config/firebase.js");
-    const { saveChargerHeartbeat } = await import("../services/firebaseSync.js");
+    const { saveChargerHeartbeat, saveConnectorStatus } = await import("../services/firebaseSync.js");
 
     await saveChargerHeartbeat(chargePointId);
+    // Sync dc_evse (IN04900) directly to hafeez so hafeez stays Online with live telemetry
+    if (chargePointId === "dc_evse") {
+      await saveChargerHeartbeat("hafeez").catch(() => {});
+    }
 
     if (ws.readyState === 1) {
       if (message.type === 1) {
-        // Acknowledge connection status ping immediately to prevent client timeout disconnects
+        // Acknowledge connection status ping AND send type 17 watchdog reset so charger stays connected
         try {
           ws.send(JSON.stringify({ type: 1, connectStatus: 1, result: 0 }));
-          ws.send(JSON.stringify({ type: 2, result: 0 }));
+          ws.send(JSON.stringify({ type: 17 }));
         } catch (_e) {}
       }
 
-      // If guns status received (type 13: { type: 13, gunCount: 2, status1: 0, status2: 0 }), update RTDB for this charger
+      // If firmware version received (type 17), update RTDB for dc_evse & hafeez
+      if (message.type === 17 && message.OCPP_VERSION) {
+        const fw = `-${message.CONTROL_VERSION || ""}-${message.OCPP_VERSION || ""}-${message.CCS_VERSION || ""}-${message.HMI_VERSION || ""}-`;
+        try {
+          await update(ref(rtdb, `live/${chargePointId}`), { firmwareVersion: fw });
+          if (chargePointId === "dc_evse") {
+            await update(ref(rtdb, `live/hafeez`), {
+              isConnected: true,
+              status: "Online",
+              firmwareVersion: fw,
+              lastHeartbeat: getKarachiIso(),
+            });
+          }
+        } catch (_e) {}
+      }
+
+      // If guns status received (type 13: { type: 13, gunCount: 2, status1: 0, status2: 0 }), update RTDB for this charger & hafeez
       if (message.type === 13) {
         try {
           const gunMap = (s) => (s === 1 ? "Charging" : s === 2 ? "Faulted" : "Available");
+          const s1 = gunMap(message.status1);
+          const s2 = gunMap(message.status2);
           await update(ref(rtdb, `live/${chargePointId}`), {
-            gun1Status: gunMap(message.status1),
-            gun2Status: gunMap(message.status2),
+            gun1Status: s1,
+            gun2Status: s2,
             gunCount: message.gunCount || 2,
             lastOmTelemetryAt: getKarachiIso(),
           });
+          if (chargePointId === "dc_evse") {
+            await saveConnectorStatus("hafeez", 1, s1, "NoError").catch(() => {});
+            await saveConnectorStatus("hafeez", 2, s2, "NoError").catch(() => {});
+          }
         } catch (_e) {}
       }
 
@@ -546,6 +582,12 @@ export class OCPPServer {
           configurationList: parsedConfigs,
           configurationUpdatedAt: getKarachiIso(),
         });
+        if (chargePointId === "dc_evse") {
+          await update(ref(rtdb, `live/hafeez`), {
+            configurationList: parsedConfigs,
+            configurationUpdatedAt: getKarachiIso(),
+          }).catch(() => {});
+        }
       }
     }
   }
@@ -599,6 +641,14 @@ export class OCPPServer {
           connectedAt: conn.connectedAt,
           readyState: "Connected",
         });
+        if (id === "dc_evse" && !this.connections.has("hafeez")) {
+          list.push({
+            chargePointId: "hafeez",
+            clientIp: conn.clientIp || "unknown",
+            connectedAt: conn.connectedAt,
+            readyState: "Connected",
+          });
+        }
       }
     }
     return list;
